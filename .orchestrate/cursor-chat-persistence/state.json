@@ -81,13 +81,13 @@
       "handoffPath": "handoffs/explore-restore-risks.md",
       "startedAt": "2026-05-19T19:22:15.935Z",
       "finishedAt": "2026-05-19T19:24:37.067Z",
-      "lastUpdate": "2026-05-19T19:24:37.068Z",
+      "lastUpdate": "2026-05-19T19:24:38.671Z",
       "note": "respawned by self-planner (was error; attempts=2)",
       "attempts": 3,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null
+      "verification": "not-verified"
     },
     {
       "name": "verify-explore-store-db",
@@ -172,17 +172,18 @@
       "agentId": null,
       "runId": null,
       "parentAgentId": null,
-      "status": "pending",
+      "status": "running",
       "resultStatus": null,
       "handoffPath": null,
-      "startedAt": null,
+      "startedAt": "2026-05-19T19:24:40.210Z",
       "finishedAt": null,
-      "lastUpdate": null,
+      "lastUpdate": "2026-05-19T19:24:40.210Z",
       "note": null,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null
+      "verification": null,
+      "attempts": 1
     },
     {
       "name": "merge-persistence-doc",
@@ -346,6 +347,10 @@
     {
       "at": "2026-05-19T19:24:20.356Z",
       "message": "explore-workspace-mapping: verification self-reported (not-verified)"
+    },
+    {
+      "at": "2026-05-19T19:24:38.671Z",
+      "message": "explore-restore-risks: verification self-reported (not-verified)"
     }
   ]
 }
