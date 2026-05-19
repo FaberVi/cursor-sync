@@ -59,13 +59,13 @@
       "handoffPath": "handoffs/explore-workspace-mapping.md",
       "startedAt": "2026-05-19T19:22:12.305Z",
       "finishedAt": "2026-05-19T19:24:19.204Z",
-      "lastUpdate": "2026-05-19T19:24:19.204Z",
+      "lastUpdate": "2026-05-19T19:24:20.356Z",
       "note": "respawned by self-planner (was error; attempts=2)",
       "attempts": 3,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null
+      "verification": "not-verified"
     },
     {
       "name": "explore-restore-risks",
@@ -148,17 +148,18 @@
       "agentId": null,
       "runId": null,
       "parentAgentId": null,
-      "status": "pending",
+      "status": "running",
       "resultStatus": null,
       "handoffPath": null,
-      "startedAt": null,
+      "startedAt": "2026-05-19T19:24:25.537Z",
       "finishedAt": null,
-      "lastUpdate": null,
+      "lastUpdate": "2026-05-19T19:24:25.537Z",
       "note": null,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null
+      "verification": null,
+      "attempts": 1
     },
     {
       "name": "verify-explore-restore-risks",
@@ -341,6 +342,10 @@
     {
       "at": "2026-05-19T19:24:13.731Z",
       "message": "explore-state-vscdb: verification self-reported (not-verified)"
+    },
+    {
+      "at": "2026-05-19T19:24:20.356Z",
+      "message": "explore-workspace-mapping: verification self-reported (not-verified)"
     }
   ]
 }
