@@ -4,6 +4,7 @@
 
 - feat: add default sync glob `vsix/**` under the Cursor `User` directory so packaged `.vsix` files are backed up with settings; each `.vsix` may be up to 50 MiB regardless of `cursorSync.maxFileSizeKB`.
 - feat: add `Cursor Sync: Save Chat Locally` and `Cursor Sync: Load Chat from Local Bundle` using a bundled golden SQLite template and manifest-driven hydration.
+- feat: add `Cursor Sync: Export Chat to Private Gist` and `Import Chat from Private Gist` for single-conversation `chat-bundle.json` payloads (shared restore path with local load).
 - feat: add transcript import from a gist URL, state reconciliation commands for `chats.json`, and landing-zone preparation for sync.
 - feat: add sync manifest/engine layer, chat ID alignment, and composer payload merge helpers to support the above flows.
 

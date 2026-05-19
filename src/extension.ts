@@ -6,6 +6,8 @@ import { executeExport } from "./export.js";
 import { executeImport } from "./import.js";
 import { executeExportTranscripts, executeImportTranscripts } from "./transcripts.js";
 import { executeSaveChatLocal, executeLoadChatLocal } from "./chat-persistence.js";
+import { executeExportChatToGist } from "./export-gist-chat.js";
+import { executeImportChatFromGist } from "./import-gist-chat.js";
 import { executeImportTranscriptsFromGist } from "./import-gist-transcripts.js";
 import { showStatus } from "./diagnostics.js";
 import { resolveConflictsCommand } from "./conflicts.js";
@@ -101,6 +103,18 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.loadChatLocal", () =>
       executeLoadChatLocal(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.exportChatToGist", () =>
+      executeExportChatToGist(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.importChatFromGist", () =>
+      executeImportChatFromGist(context)
     )
   );
 

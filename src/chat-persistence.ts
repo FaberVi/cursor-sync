@@ -67,7 +67,40 @@ export interface LoadChatResult {
   warnings: string[];
 }
 
+export interface BuildChatBundleResult {
+  bundle: ChatBundle;
+  title: string;
+  warnings: string[];
+}
+
+export const CHAT_BUNDLE_GIST_FILE_NAME = "chat-bundle.json";
+
 const SQLITE_READ_RETRIES = 3;
+
+export function parseChatBundle(raw: string): ChatBundle {
+  const bundle = JSON.parse(raw) as ChatBundle;
+  if (bundle.type !== "chat-persistence" || bundle.schemaVersion !== 1) {
+    throw new Error("Invalid or unsupported chat bundle format.");
+  }
+  return bundle;
+}
+
+export async function offerReloadAfterChatImport(): Promise<void> {
+  const config = vscode.workspace.getConfiguration("cursorSync");
+  const autoReload = config.get<boolean>("transcripts.autoReloadAfterImport") ?? false;
+  if (autoReload) {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    return;
+  }
+  const reloadAction = "Reload Window";
+  const choice = await vscode.window.showInformationMessage(
+    "Cursor may need a reload to reflect imported chat in the sidebar.",
+    reloadAction
+  );
+  if (choice === reloadAction) {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+}
 
 /**
  * Save a chat conversation to a local JSON bundle file.
@@ -167,20 +200,7 @@ export async function executeLoadChatLocal(
 
         vscode.window.showInformationMessage(parts.join(" | "));
 
-        const config = vscode.workspace.getConfiguration("cursorSync");
-        const autoReload = config.get<boolean>("transcripts.autoReloadAfterImport") ?? false;
-        if (autoReload) {
-          await vscode.commands.executeCommand("workbench.action.reloadWindow");
-        } else {
-          const reloadAction = "Reload Window";
-          const choice = await vscode.window.showInformationMessage(
-            "Cursor may need a reload to reflect imported chat in the sidebar.",
-            reloadAction
-          );
-          if (choice === reloadAction) {
-            vscode.commands.executeCommand("workbench.action.reloadWindow");
-          }
-        }
+        await offerReloadAfterChatImport();
 
         for (const w of result.warnings) {
           logger.appendLine(`[${new Date().toISOString()}] [chat-load] ${w}`);
@@ -194,11 +214,10 @@ export async function executeLoadChatLocal(
   );
 }
 
-async function saveChat(
-  context: vscode.ExtensionContext,
+export async function buildChatBundle(
   conversationId: string,
   progress: vscode.Progress<{ message?: string; increment?: number }>
-): Promise<SaveChatResult> {
+): Promise<BuildChatBundleResult> {
   const warnings: string[] = [];
 
   progress.report({ message: "Locating store.db..." });
@@ -316,6 +335,16 @@ async function saveChat(
     transcriptFiles,
   };
 
+  return { bundle, title, warnings };
+}
+
+async function saveChat(
+  context: vscode.ExtensionContext,
+  conversationId: string,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<SaveChatResult> {
+  const { bundle, title, warnings } = await buildChatBundle(conversationId, progress);
+
   progress.report({ message: "Writing bundle..." });
   const safeName = conversationId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -335,16 +364,18 @@ async function loadChat(
   bundlePath: string,
   progress: vscode.Progress<{ message?: string; increment?: number }>
 ): Promise<LoadChatResult> {
-  const warnings: string[] = [];
-
   progress.report({ message: "Reading bundle..." });
   const raw = await fs.readFile(bundlePath, "utf-8");
-  const bundle = JSON.parse(raw) as ChatBundle;
+  const bundle = parseChatBundle(raw);
+  return restoreChatBundle(context, bundle, progress);
+}
 
-  if (bundle.type !== "chat-persistence" || bundle.schemaVersion !== 1) {
-    throw new Error("Invalid or unsupported chat bundle format.");
-  }
-
+export async function restoreChatBundle(
+  context: vscode.ExtensionContext,
+  bundle: ChatBundle,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<LoadChatResult> {
+  const warnings: string[] = [];
   const conversationId = bundle.conversationId;
   let transcriptsWritten = 0;
   let storeWritten = false;

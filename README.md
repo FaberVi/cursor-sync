@@ -76,6 +76,10 @@ The following are always excluded from sync:
 | `Cursor Sync: Reset Extension State` | Clear token, sync state, and reset extension settings to defaults |
 | `Cursor Sync: Export Settings to Private Gist` | Export selected files to a new **private** Gist; requires token; anyone with the URL can open the gist |
 | `Cursor Sync: Import Settings from Private Gist` | Import settings from a Gist by URL or ID using the GitHub API (configure a token for private gists) |
+| `Cursor Sync: Save Chat Locally` | Save one conversation (transcripts, optional `store.db`, sidebar snapshot) to a local JSON bundle |
+| `Cursor Sync: Load Chat from Local Bundle` | Restore a conversation from a local chat bundle file |
+| `Cursor Sync: Export Chat to Private Gist` | Export one conversation as `chat-bundle.json` on a new private Gist (requires token) |
+| `Cursor Sync: Import Chat from Private Gist` | Import a conversation from a Gist URL/ID that contains `chat-bundle.json` |
 
 ## Sidebar
 
@@ -119,6 +123,12 @@ Commands such as Resolve Conflicts and Reset are available from the Command Pale
 - **Fidelity guarantee**: Selected transcript JSONL files are preserved as exact UTF-8 bytes across export and import with checksum verification. Import remains backward compatible for `schemaVersion: 1` transcript-only manifests.
 - **Degraded restore visibility**: Completion output reports restored counts for transcript/store/sidebar/state merge and warns when sidebar state merge is partial or skipped.
 - **Verification**: Use [`docs/transcript-simulation-verification.md`](docs/transcript-simulation-verification.md) for checksum checks, path checks, and full-restore verification.
+
+## Single-Chat Export and Import (Gist or Local)
+
+- **Local save/load**: **Cursor Sync: Save Chat Locally** and **Load Chat from Local Bundle** write/read a `chat-persistence` JSON bundle under extension global storage or a path you choose on load.
+- **Gist export/import**: **Export Chat to Private Gist** uploads the same bundle format as a single `chat-bundle.json` file. **Import Chat from Private Gist** fetches that file and runs the same restore path as local load (project mapping, `store.db` workspace selection, sidebar merge).
+- **Not the same as transcript export**: Gists that only contain `transcript-manifest.json` are for **Import Agent Transcripts**; chat import requires `chat-bundle.json`.
 
 ## Extension List Sync
 

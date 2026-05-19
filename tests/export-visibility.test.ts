@@ -8,6 +8,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 describe("export gist visibility and copy", () => {
   const exportSrc = readFileSync(path.join(root, "src/export.ts"), "utf-8");
   const transcriptsSrc = readFileSync(path.join(root, "src/transcripts.ts"), "utf-8");
+  const chatGistExportSrc = readFileSync(path.join(root, "src/export-gist-chat.ts"), "utf-8");
 
   it("settings export calls createGist with two arguments only (no public flag)", () => {
     expect(exportSrc).toMatch(
@@ -32,6 +33,13 @@ describe("export gist visibility and copy", () => {
     expect(exportSrc).toContain("Creating private Gist...");
     expect(exportSrc).toContain("Export successful! Private Gist at");
     expect(exportSrc).toContain("Anyone with the link can open it.");
+  });
+
+  it("chat gist export calls createGist with two arguments only (no public flag)", () => {
+    expect(chatGistExportSrc).toMatch(/\.createGist\(\s*gistFiles\s*,\s*GIST_DESCRIPTION\s*\)/s);
+    expect(chatGistExportSrc).not.toMatch(
+      /\.createGist\(\s*gistFiles\s*,\s*GIST_DESCRIPTION\s*,\s*true/s
+    );
   });
 
   it("transcript export UI copy describes private gist and link caveat", () => {

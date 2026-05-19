@@ -132,6 +132,14 @@
         "title": "Cursor Sync: Load Chat from Local Bundle"
       },
       {
+        "command": "cursorSync.exportChatToGist",
+        "title": "Cursor Sync: Export Chat to Private Gist"
+      },
+      {
+        "command": "cursorSync.importChatFromGist",
+        "title": "Cursor Sync: Import Chat from Private Gist"
+      },
+      {
         "command": "cursorSync.refreshImportedTranscripts",
         "title": "Cursor Sync: Refresh Imported Transcripts",
         "icon": "$(refresh)"
