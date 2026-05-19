@@ -90,6 +90,7 @@
       "name": "verify-explore-store-db",
       "type": "verifier",
       "model": "composer-2.5-fast",
+      "verifies": "explore-store-db",
       "dependsOn": ["explore-store-db"],
       "scopedGoal": "Verify explore-store-db handoff and doc meet acceptance: schema coverage, encryption boundary, sources cited.",
       "acceptance": ["Verdict pass or fail with specific gaps"]
@@ -98,6 +99,7 @@
       "name": "verify-explore-state-vscdb",
       "type": "verifier",
       "model": "composer-2.5-fast",
+      "verifies": "explore-state-vscdb",
       "dependsOn": ["explore-state-vscdb"],
       "scopedGoal": "Verify explore-state-vscdb doc covers ItemTable composer keys, global vs workspace, merge semantics.",
       "acceptance": ["Verdict pass or fail with specific gaps"]
@@ -106,6 +108,7 @@
       "name": "verify-explore-workspace-mapping",
       "type": "verifier",
       "model": "composer-2.5-fast",
+      "verifies": "explore-workspace-mapping",
       "dependsOn": ["explore-workspace-mapping"],
       "scopedGoal": "Verify workspace mapping doc distinguishes identifiers and documents join keys.",
       "acceptance": ["Verdict pass or fail with specific gaps"]
@@ -114,6 +117,7 @@
       "name": "verify-explore-restore-risks",
       "type": "verifier",
       "model": "composer-2.5-fast",
+      "verifies": "explore-restore-risks",
       "dependsOn": ["explore-restore-risks"],
       "scopedGoal": "Verify restore risks doc covers safe constraints and cross-version hypothesis.",
       "acceptance": ["Verdict pass or fail with specific gaps"]
@@ -148,6 +152,7 @@
       "name": "verify-merge-persistence-doc",
       "type": "verifier",
       "model": "composer-2.5-fast",
+      "verifies": "merge-persistence-doc",
       "dependsOn": ["merge-persistence-doc"],
       "scopedGoal": "Verify merged docs/cursor-chat-persistence.md satisfies root acceptance criteria and integrates all explore findings.",
       "acceptance": ["Verdict pass or fail; list any missing sections"]
