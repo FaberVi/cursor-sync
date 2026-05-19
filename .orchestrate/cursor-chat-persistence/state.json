@@ -37,13 +37,13 @@
       "handoffPath": "handoffs/explore-state-vscdb.md",
       "startedAt": "2026-05-19T19:22:08.760Z",
       "finishedAt": "2026-05-19T19:24:11.269Z",
-      "lastUpdate": "2026-05-19T19:24:11.269Z",
+      "lastUpdate": "2026-05-19T19:24:13.731Z",
       "note": "respawned by self-planner (was error; attempts=2)",
       "attempts": 3,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null
+      "verification": "not-verified"
     },
     {
       "name": "explore-workspace-mapping",
@@ -54,12 +54,12 @@
       "agentId": "bc-06e5dab6-b81d-44f4-bc63-3873ec5fab3e",
       "runId": "run-7c54b66f-7dac-4ce1-905a-159e437e065d",
       "parentAgentId": "bc-fed8712f-1a76-4836-9988-80ecd183cfd7",
-      "status": "running",
-      "resultStatus": null,
-      "handoffPath": null,
+      "status": "handed-off",
+      "resultStatus": "finished",
+      "handoffPath": "handoffs/explore-workspace-mapping.md",
       "startedAt": "2026-05-19T19:22:12.305Z",
-      "finishedAt": null,
-      "lastUpdate": "2026-05-19T19:22:15.934Z",
+      "finishedAt": "2026-05-19T19:24:19.204Z",
+      "lastUpdate": "2026-05-19T19:24:19.204Z",
       "note": "respawned by self-planner (was error; attempts=2)",
       "attempts": 3,
       "slackTs": null,
@@ -121,15 +121,15 @@
       "dependsOn": [
         "explore-state-vscdb"
       ],
-      "agentId": null,
-      "runId": null,
-      "parentAgentId": null,
+      "agentId": "bc-89ee529c-94ea-4c4c-8d9c-e42e4006ca08",
+      "runId": "run-42a0ffde-9083-4906-b91c-aa1c9caa36c0",
+      "parentAgentId": "bc-fed8712f-1a76-4836-9988-80ecd183cfd7",
       "status": "running",
       "resultStatus": null,
       "handoffPath": null,
       "startedAt": "2026-05-19T19:24:12.433Z",
       "finishedAt": null,
-      "lastUpdate": "2026-05-19T19:24:12.433Z",
+      "lastUpdate": "2026-05-19T19:24:15.534Z",
       "note": null,
       "slackTs": null,
       "prNumber": null,
@@ -337,6 +337,10 @@
     {
       "at": "2026-05-19T19:24:04.209Z",
       "message": "explore-store-db: verification self-reported (not-verified)"
+    },
+    {
+      "at": "2026-05-19T19:24:13.731Z",
+      "message": "explore-state-vscdb: verification self-reported (not-verified)"
     }
   ]
 }
