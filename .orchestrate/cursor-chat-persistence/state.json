@@ -76,17 +76,17 @@
       "agentId": null,
       "runId": null,
       "parentAgentId": null,
-      "status": "error",
+      "status": "pending",
       "resultStatus": null,
       "handoffPath": null,
-      "startedAt": "2026-05-19T19:21:14.350Z",
+      "startedAt": null,
       "finishedAt": null,
-      "lastUpdate": "2026-05-19T19:21:14.547Z",
-      "note": "spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents.",
+      "lastUpdate": "2026-05-19T19:21:44.199Z",
+      "note": "respawned by self-planner (was error; attempts=2)",
       "attempts": 2,
       "slackTs": null,
       "prNumber": null,
-      "failureMode": "unknown",
+      "failureMode": null,
       "verification": null
     },
     {
@@ -323,6 +323,10 @@
     {
       "at": "2026-05-19T19:21:42.265Z",
       "message": "explore-state-vscdb: respawned by self-planner (was error)"
+    },
+    {
+      "at": "2026-05-19T19:21:43.811Z",
+      "message": "explore-workspace-mapping: respawned by self-planner (was error)"
     }
   ]
 }
