@@ -1,0 +1,156 @@
+{
+  "$schema": "/home/ubuntu/.cursor/plugins/cache/cursor-public/9333/d1cdb88a9eb33cf392395c87e3fd76419fc1010e/skills/orchestrate/schemas/plan.schema.json",
+  "goal": "cursor-chat-persistence: Spawn parallel explore subagents to reverse-engineer Cursor chat persistence (SQLite schemas, blob/encryption boundaries, per-workspace chat DBs vs VS Code global storage).\n\nContext:\nLive paths: ~/.cursor/chats/<workspaceHash>/<agentFolder>/store.db; ~/.config/Cursor/User/globalStorage/state.vscdb (Linux)\nHypothesis: chats are a middle layer between workspace storage and chat DBs; full-file backup/restore may revive old chats across Cursor versions if ID/hash schemes stay compatible\nRepo prior art: src/chat-persistence.ts, src/state-reconciliation.ts, src/transcripts.ts, src/sidebar.ts, src/store-template-hydrate.ts, resources/golden-store-template.sql, tests/chat-persistence.test.ts\nSplit work: (1) store.db tables, keys, blobs; (2) state.vscdb composer/sidebar keys; (3) workspaceHash <-> workspaceStorage mapping; (4) backup/overwrite/restore risks\nOutput: merged doc with schemas, join keys, encrypted vs plaintext fields, and safe sync/restore constraints (read-only; no commits)\nConstraint: use model composer-2.5-fast for every task (root, subplanners, workers, verifiers).",
+  "summary": "Reverse-engineer Cursor chat persistence (store.db + state.vscdb) and produce a merged restore/sync constraints doc",
+  "rootSlug": "cursor-chat-persistence",
+  "baseBranch": "orch/cursor-chat-persistence/root",
+  "repoUrl": "https://github.com/Marcelo-Barella/cursor-sync",
+  "selfAgentId": "bc-fed8712f-1a76-4836-9988-80ecd183cfd7",
+  "syncStateToGit": true,
+  "acceptanceCriteria": [
+    "Four explore handoffs cover store.db, state.vscdb, workspace mapping, and restore risks",
+    "Merged doc at docs/cursor-chat-persistence.md lists schemas, join keys, encryption boundaries, and safe sync constraints",
+    "No extension source files modified (read-only research)"
+  ],
+  "tasks": [
+    {
+      "name": "explore-store-db",
+      "type": "worker",
+      "model": "composer-2.5-fast",
+      "scopedGoal": "Reverse-engineer Cursor store.db layout: tables, keys, blob structure, versioning, and encryption boundaries. Read bootstrap at .orchestrate/cursor-chat-persistence/bootstrap-reference.md and repo prior art (resources/golden-store-template.sql, src/store-template-hydrate.ts, src/transcripts.ts findStoreDb paths). If live ~/.cursor/chats/**/store.db exists, inspect with sqlite3; otherwise document from repo/fixtures and flag gaps. Write .orchestrate/cursor-chat-persistence/docs/explore-store-db.md with sections: Schema, Keys and blob graph, Join keys to composerId, Encrypted vs plaintext, Unknowns, Sources. Read-only: do not modify src/.",
+      "pathsAllowed": [
+        ".orchestrate/cursor-chat-persistence/**",
+        "docs/**",
+        "src/**",
+        "resources/**",
+        "tests/**"
+      ],
+      "acceptance": [
+        "explore-store-db.md exists with all required sections",
+        "Documents meta/blobs tables and sample key patterns",
+        "States encryption status with evidence"
+      ],
+      "verify": "Confirm explore-store-db.md exists, cites repo sources, and covers meta/blobs schema plus encryption boundary."
+    },
+    {
+      "name": "explore-state-vscdb",
+      "type": "worker",
+      "model": "composer-2.5-fast",
+      "scopedGoal": "Reverse-engineer state.vscdb composer/sidebar persistence: ItemTable keys (composer.composerHeaders, composer.composerData, and any conversation-linked keys), global vs workspaceStorage copies, WAL handling. Read bootstrap-reference.md and src/transcripts.ts, src/sync-engine-ops.ts, src/composer-merge.ts, src/chats-manifest.ts. Inspect live globalStorage/state.vscdb or workspaceStorage/*/state.vscdb if present. Write .orchestrate/cursor-chat-persistence/docs/explore-state-vscdb.md with sections: Schema, Composer/sidebar keys, Global vs workspace targets, Join keys, Encrypted vs plaintext, Unknowns, Sources. Read-only.",
+      "pathsAllowed": [
+        ".orchestrate/cursor-chat-persistence/**",
+        "docs/**",
+        "src/**",
+        "tests/**"
+      ],
+      "acceptance": [
+        "explore-state-vscdb.md documents ItemTable and primary composer keys",
+        "Explains global vs workspace stateTarget",
+        "Encryption/plaintext boundary documented"
+      ],
+      "verify": "Confirm explore-state-vscdb.md lists composer.composerHeaders/composerData structure and merge semantics."
+    },
+    {
+      "name": "explore-workspace-mapping",
+      "type": "worker",
+      "model": "composer-2.5-fast",
+      "scopedGoal": "Map workspaceKey (~/.cursor/chats/<workspaceKey>/) to workspaceStorage folder ids and project paths. Read bootstrap-reference.md, src/chat-id-sync.ts, src/transcripts.ts (deriveStoreWorkspaceMapping, listChatsWorkspaceKeys), src/sync-engine-ops.ts, src/chats-manifest.ts. If live dirs exist, compare workspace.json in workspaceStorage folders to chats subdirs. Write .orchestrate/cursor-chat-persistence/docs/explore-workspace-mapping.md with sections: Identifier types, Mapping algorithm, Join keys across layers, How Cursor creates keys, Import/sync implications, Unknowns, Sources. Read-only.",
+      "pathsAllowed": [
+        ".orchestrate/cursor-chat-persistence/**",
+        "docs/**",
+        "src/**",
+        "tests/**"
+      ],
+      "acceptance": [
+        "explore-workspace-mapping.md distinguishes workspaceKey vs workspaceStorageFolderId",
+        "Documents composerId/conversation_id join across store.db and state.vscdb",
+        "Notes whether workspaceKey equals any hash"
+      ],
+      "verify": "Confirm mapping doc explains chats path layout and validation in chat-id-sync."
+    },
+    {
+      "name": "explore-restore-risks",
+      "type": "worker",
+      "model": "composer-2.5-fast",
+      "scopedGoal": "Document backup/overwrite/restore risks for full-file chat persistence sync across Cursor versions. Read bootstrap-reference.md, src/chat-persistence.ts, src/state-reconciliation.ts, src/rollback.ts, src/store-template-hydrate.ts, tests/chat-persistence.test.ts. Write .orchestrate/cursor-chat-persistence/docs/explore-restore-risks.md with sections: Backup surfaces, Overwrite mechanics, Version/schema drift, File locking and WAL, Safe restore procedure, Unsafe operations, Hypothesis verdict (cross-version full-file restore), Sources. Read-only.",
+      "pathsAllowed": [
+        ".orchestrate/cursor-chat-persistence/**",
+        "docs/**",
+        "src/**",
+        "tests/**"
+      ],
+      "acceptance": [
+        "explore-restore-risks.md covers pending-state-bundle flow",
+        "Lists safe vs unsafe restore constraints",
+        "Addresses cross-version compatibility hypothesis"
+      ],
+      "verify": "Confirm restore doc references state-reconciliation pending bundle and rollback backup behavior."
+    },
+    {
+      "name": "verify-explore-store-db",
+      "type": "verifier",
+      "model": "composer-2.5-fast",
+      "dependsOn": ["explore-store-db"],
+      "scopedGoal": "Verify explore-store-db handoff and doc meet acceptance: schema coverage, encryption boundary, sources cited.",
+      "acceptance": ["Verdict pass or fail with specific gaps"]
+    },
+    {
+      "name": "verify-explore-state-vscdb",
+      "type": "verifier",
+      "model": "composer-2.5-fast",
+      "dependsOn": ["explore-state-vscdb"],
+      "scopedGoal": "Verify explore-state-vscdb doc covers ItemTable composer keys, global vs workspace, merge semantics.",
+      "acceptance": ["Verdict pass or fail with specific gaps"]
+    },
+    {
+      "name": "verify-explore-workspace-mapping",
+      "type": "verifier",
+      "model": "composer-2.5-fast",
+      "dependsOn": ["explore-workspace-mapping"],
+      "scopedGoal": "Verify workspace mapping doc distinguishes identifiers and documents join keys.",
+      "acceptance": ["Verdict pass or fail with specific gaps"]
+    },
+    {
+      "name": "verify-explore-restore-risks",
+      "type": "verifier",
+      "model": "composer-2.5-fast",
+      "dependsOn": ["explore-restore-risks"],
+      "scopedGoal": "Verify restore risks doc covers safe constraints and cross-version hypothesis.",
+      "acceptance": ["Verdict pass or fail with specific gaps"]
+    },
+    {
+      "name": "merge-persistence-doc",
+      "type": "worker",
+      "model": "composer-2.5-fast",
+      "dependsOn": [
+        "explore-store-db",
+        "explore-state-vscdb",
+        "explore-workspace-mapping",
+        "explore-restore-risks",
+        "verify-explore-store-db",
+        "verify-explore-state-vscdb",
+        "verify-explore-workspace-mapping",
+        "verify-explore-restore-risks"
+      ],
+      "scopedGoal": "Merge the four explore docs (and verifier notes) into a single authoritative reference at docs/cursor-chat-persistence.md. Include: architecture overview, store.db schema, state.vscdb keys, workspace mapping table, join-key diagram (mermaid ok), encrypted vs plaintext summary, safe sync/restore constraints, open unknowns. Read upstream handoffs pasted in this prompt. Read-only for src/; only write docs/cursor-chat-persistence.md and optionally update .orchestrate/cursor-chat-persistence/docs/merge-notes.md.",
+      "pathsAllowed": [
+        ".orchestrate/cursor-chat-persistence/**",
+        "docs/**"
+      ],
+      "acceptance": [
+        "docs/cursor-chat-persistence.md exists and is self-contained",
+        "All four topic areas integrated without duplication",
+        "Safe sync/restore constraints section is actionable"
+      ],
+      "verify": "Open docs/cursor-chat-persistence.md and confirm schemas, join keys, encryption table, and restore constraints are present."
+    },
+    {
+      "name": "verify-merge-persistence-doc",
+      "type": "verifier",
+      "model": "composer-2.5-fast",
+      "dependsOn": ["merge-persistence-doc"],
+      "scopedGoal": "Verify merged docs/cursor-chat-persistence.md satisfies root acceptance criteria and integrates all explore findings.",
+      "acceptance": ["Verdict pass or fail; list any missing sections"]
+    }
+  ]
+}
