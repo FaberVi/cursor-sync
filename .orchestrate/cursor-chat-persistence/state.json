@@ -208,36 +208,37 @@
       "handoffPath": "handoffs/merge-persistence-doc.md",
       "startedAt": "2026-05-19T19:27:05.044Z",
       "finishedAt": "2026-05-19T19:28:56.634Z",
-      "lastUpdate": "2026-05-19T19:28:56.634Z",
+      "lastUpdate": "2026-05-19T19:28:57.768Z",
       "note": null,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null,
+      "verification": "not-verified",
       "attempts": 1
     },
     {
       "name": "verify-merge-persistence-doc",
       "type": "verifier",
       "branch": "orch/cursor-chat-persistence/verify-merge-persistence-doc",
-      "startingRef": "orch/cursor-chat-persistence/merge-persistence-doc",
+      "startingRef": "orch/cursor-chat-persistence/persistence-doc",
       "dependsOn": [
         "merge-persistence-doc"
       ],
       "agentId": null,
       "runId": null,
       "parentAgentId": null,
-      "status": "pending",
+      "status": "running",
       "resultStatus": null,
       "handoffPath": null,
-      "startedAt": null,
+      "startedAt": "2026-05-19T19:28:59.559Z",
       "finishedAt": null,
-      "lastUpdate": null,
+      "lastUpdate": "2026-05-19T19:28:59.559Z",
       "note": null,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null
+      "verification": null,
+      "attempts": 1
     }
   ],
   "attention": [
@@ -368,6 +369,14 @@
     {
       "at": "2026-05-19T19:27:06.061Z",
       "message": "explore-store-db: verification recorded (unit-test-verified) by verifier verify-explore-store-db"
+    },
+    {
+      "at": "2026-05-19T19:28:57.767Z",
+      "message": "verify-merge-persistence-doc: startingRef reconciled orch/cursor-chat-persistence/merge-persistence-doc -> orch/cursor-chat-persistence/persistence-doc (target merge-persistence-doc handed off on actual branch)"
+    },
+    {
+      "at": "2026-05-19T19:28:57.768Z",
+      "message": "merge-persistence-doc: verification self-reported (not-verified)"
     }
   ]
 }
