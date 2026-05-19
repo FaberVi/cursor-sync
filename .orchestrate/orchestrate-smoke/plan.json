@@ -1,0 +1,27 @@
+{
+  "$schema": "../../../home/ubuntu/.cursor/plugins/cache/cursor-public/9333/d1cdb88a9eb33cf392395c87e3fd76419fc1010e/skills/orchestrate/schemas/plan.schema.json",
+  "goal": "Smoke test orchestrate kickoff",
+  "summary": "smoke test of the orchestrate kickoff -> spawn -> handoff cycle",
+  "rootSlug": "orchestrate-smoke",
+  "baseBranch": "cursor/orchestrate-smoke-kickoff-a1cd",
+  "repoUrl": "https://github.com/Marcelo-Barella/cursor-sync",
+  "syncStateToGit": true,
+  "selfAgentId": "bc-8220589a-0573-4f82-bc2b-8cd5aea7a1cd",
+  "tasks": [
+    {
+      "name": "smoke-marker",
+      "type": "worker",
+      "scopedGoal": "Smoke test: prove the orchestrate spawn-and-handoff cycle works end-to-end. Create the file `.orchestrate-smoke/marker.md` containing exactly two lines: a top-level heading `# orchestrate smoke marker` on line 1 and a single body line `orchestrate kickoff smoke test ok` on line 2 (no trailing extras). Stage it with `git add`, commit with message `chore(orchestrate-smoke): add smoke marker`, and push your assigned cloud-agent branch. Do not modify any other file in the repository. Do not open a PR. End with the structured handoff exactly as instructed; that is the only thing the planner reads.",
+      "pathsAllowed": [".orchestrate-smoke/**"],
+      "acceptance": [
+        "File `.orchestrate-smoke/marker.md` exists on the worker's pushed branch",
+        "File contents are exactly: line 1 `# orchestrate smoke marker`, line 2 `orchestrate kickoff smoke test ok`",
+        "Worker commits and pushes its assigned branch with the marker commit",
+        "No files outside `.orchestrate-smoke/` are modified"
+      ],
+      "model": "composer-2-fast",
+      "openPR": false,
+      "maxAttempts": 2
+    }
+  ]
+}
