@@ -327,6 +327,10 @@
     {
       "at": "2026-05-19T19:21:43.811Z",
       "message": "explore-workspace-mapping: respawned by self-planner (was error)"
+    },
+    {
+      "at": "2026-05-19T19:21:45.292Z",
+      "message": "explore-restore-risks: respawned by self-planner (was error)"
     }
   ]
 }
