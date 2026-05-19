@@ -1,0 +1,12 @@
+[2026-05-19T19:19:00.394Z] explore-store-db: model "composer-2.5-fast" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs.
+[2026-05-19T19:19:09.213Z] explore-store-db: spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents.
+[2026-05-19T19:19:09.214Z] explore-state-vscdb: model "composer-2.5-fast" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs.
+[2026-05-19T19:19:17.639Z] explore-state-vscdb: spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents.
+[2026-05-19T19:19:17.640Z] explore-workspace-mapping: model "composer-2.5-fast" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs.
+[2026-05-19T19:19:26.097Z] explore-workspace-mapping: spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents.
+[2026-05-19T19:19:26.098Z] explore-restore-risks: model "composer-2.5-fast" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs.
+[2026-05-19T19:19:34.558Z] explore-restore-risks: spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents.
+[2026-05-19T19:20:23.389Z] explore-store-db: respawned by self-planner (was error)
+[2026-05-19T19:20:24.749Z] explore-state-vscdb: respawned by self-planner (was error)
+[2026-05-19T19:20:26.265Z] explore-workspace-mapping: respawned by self-planner (was error)
+[2026-05-19T19:20:27.794Z] explore-restore-risks: respawned by self-planner (was error)
