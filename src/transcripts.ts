@@ -323,6 +323,98 @@ export async function enumerateTranscriptFiles(
   return files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 }
 
+export interface ExportConversationCandidate {
+  projectKey: string;
+  conversationId: string;
+  transcriptFiles: TranscriptFileEntry[];
+  hasStore: boolean;
+  label: string;
+  description: string;
+  detail: string;
+}
+
+export async function enumerateTranscriptFilesInConversation(
+  projectDir: string,
+  conversationId: string,
+  maxBytes: number
+): Promise<TranscriptFileEntry[]> {
+  const transcriptsDir = path.join(projectDir, "agent-transcripts");
+  const convDir = path.join(transcriptsDir, conversationId);
+  const projectKey = path.basename(projectDir);
+  const files: TranscriptFileEntry[] = [];
+  const allFiles = await walkDir(convDir);
+  for (const absPath of allFiles) {
+    if (!absPath.endsWith(".jsonl")) continue;
+    try {
+      const stat = await fs.stat(absPath);
+      if (stat.size > maxBytes) continue;
+    } catch {
+      continue;
+    }
+    const rel = path.relative(transcriptsDir, absPath).split(path.sep).join("/");
+    files.push({ absolutePath: absPath, relativePath: rel, projectKey });
+  }
+  return files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+}
+
+export async function discoverExportConversationCandidates(
+  projects: ProjectInfo[],
+  maxBytes: number
+): Promise<ExportConversationCandidate[]> {
+  const out: ExportConversationCandidate[] = [];
+  for (const proj of projects) {
+    const base = path.join(proj.fullPath, "agent-transcripts");
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(base, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const conversationId = ent.name;
+      const transcriptFiles = await enumerateTranscriptFilesInConversation(
+        proj.fullPath,
+        conversationId,
+        maxBytes
+      );
+      const storeSnapshot = await findStoreDbForConversation(conversationId);
+      if (transcriptFiles.length === 0 && !storeSnapshot) {
+        continue;
+      }
+      let primaryContent = "";
+      const primaryFile =
+        transcriptFiles.find((f) => path.basename(f.relativePath, ".jsonl") === conversationId) ??
+        transcriptFiles[0];
+      if (primaryFile) {
+        try {
+          primaryContent = (await fs.readFile(primaryFile.absolutePath)).toString("utf-8");
+        } catch {
+          primaryContent = "";
+        }
+      }
+      const summary = summarizeTranscriptForSidebar(primaryContent, conversationId);
+      const parts = [
+        transcriptFiles.length > 0 ? `${transcriptFiles.length} jsonl` : "no jsonl",
+        storeSnapshot ? "store.db" : "no store.db",
+      ];
+      out.push({
+        projectKey: proj.folderName,
+        conversationId,
+        transcriptFiles,
+        hasStore: Boolean(storeSnapshot),
+        label: summary.title,
+        description: `${humanLabel(proj.folderName)} · ${conversationId}`,
+        detail: parts.join(" · "),
+      });
+    }
+  }
+  return out.sort((a, b) => {
+    const pc = a.projectKey.localeCompare(b.projectKey);
+    return pc !== 0 ? pc : a.conversationId.localeCompare(b.conversationId);
+  });
+}
+
 async function walkDir(dir: string): Promise<string[]> {
   const results: string[] = [];
   let entries: import("node:fs").Dirent[];
@@ -393,42 +485,49 @@ export async function executeExportTranscripts(
     selectedProjectItems.some((item) => item.description === p.folderName)
   );
 
-  const allFiles: TranscriptFileEntry[] = [];
-  for (const proj of selectedProjects) {
-    const files = await enumerateTranscriptFiles(proj.fullPath, maxBytes);
-    allFiles.push(...files);
-  }
-
-  if (allFiles.length === 0) {
-    vscode.window.showInformationMessage("No transcript files found in the selected projects.");
+  const candidates = await discoverExportConversationCandidates(selectedProjects, maxBytes);
+  if (candidates.length === 0) {
+    vscode.window.showInformationMessage(
+      "No conversations found. Expected ~/.cursor/projects/<project>/agent-transcripts/<conversation-id>/ with jsonl files and/or a matching ~/.cursor/chats/*/store.db."
+    );
     return;
   }
 
-  const filePicks: vscode.QuickPickItem[] = allFiles.map((f) => ({
-    label: f.relativePath,
-    description: f.projectKey,
+  const convPicks: Array<vscode.QuickPickItem & { conversationKey: string }> = candidates.map((c) => ({
+    conversationKey: `${c.projectKey}:${c.conversationId}`,
+    label: c.label,
+    description: c.description,
+    detail: c.detail,
     picked: true,
   }));
 
-  const selectedFileItems = await vscode.window.showQuickPick(filePicks, {
+  const selectedConvItems = await vscode.window.showQuickPick(convPicks, {
     canPickMany: true,
-    title: `Select transcript files to export (${allFiles.length} found)`,
-    placeHolder: "Deselect files you do not want to export",
+    title: `Select conversations to export (${candidates.length} found)`,
+    placeHolder: "Each selection includes all jsonl under that conversation, plus store.db and sidebar metadata when available",
   });
 
-  if (!selectedFileItems || selectedFileItems.length === 0) {
-    logger.appendLine(`[${new Date().toISOString()}] Transcript export cancelled: no files selected`);
+  if (!selectedConvItems || selectedConvItems.length === 0) {
+    logger.appendLine(`[${new Date().toISOString()}] Transcript export cancelled: no conversations selected`);
     return;
   }
 
-  const selectedFiles = allFiles.filter((f) =>
-    selectedFileItems.some(
-      (item) => item.label === f.relativePath && item.description === f.projectKey
-    )
+  const selectedKeys = new Set<string>();
+  for (const item of selectedConvItems) {
+    const ck = (item as { conversationKey?: string }).conversationKey;
+    if (ck) {
+      selectedKeys.add(ck);
+    }
+  }
+  const selectedPlans = candidates.filter((c) => selectedKeys.has(`${c.projectKey}:${c.conversationId}`));
+
+  const artifactCount = selectedPlans.reduce(
+    (n, p) => n + p.transcriptFiles.length + 1 + (p.hasStore ? 1 : 0),
+    0
   );
 
   const confirm = await vscode.window.showWarningMessage(
-    `This will create a private Gist with ${selectedFiles.length} transcript file(s). ` +
+    `This will create a private Gist with ${selectedPlans.length} conversation(s) (${artifactCount} artifact(s) including sidecars). ` +
       "It is not listed on your public profile, but anyone with the direct URL can still open it. " +
       "Transcripts may contain sensitive data (prompts, code, secrets). Continue?",
     { modal: true },
@@ -436,7 +535,7 @@ export async function executeExportTranscripts(
   );
   if (confirm !== "Export") return;
 
-  const { gistFiles } = await buildExportBundleV2(selectedFiles, selectedProjects);
+  const { gistFiles } = await buildExportBundleV2(selectedPlans, selectedProjects);
 
   const client = new GistClient(token);
 
@@ -601,7 +700,7 @@ function extractGistId(input: string): string | null {
 }
 
 async function buildExportBundleV2(
-  selectedFiles: TranscriptFileEntry[],
+  conversationPlans: ExportConversationCandidate[],
   selectedProjects: ProjectInfo[]
 ): Promise<{ gistFiles: Record<string, { content: string }>; manifest: TranscriptManifestV2 }> {
   const createdAt = new Date().toISOString();
@@ -610,10 +709,6 @@ async function buildExportBundleV2(
   const conversationStates = new Map<string, ExportConversationState>();
   const projectAccumulators = new Map<string, ExportProjectAccumulator>();
   const globalWarnings = new Set<string>();
-  const sortedFiles = [...selectedFiles].sort((a, b) => {
-    const projectCompare = a.projectKey.localeCompare(b.projectKey);
-    return projectCompare !== 0 ? projectCompare : a.relativePath.localeCompare(b.relativePath);
-  });
 
   for (const project of selectedProjects) {
     projectAccumulators.set(project.folderName, {
@@ -624,72 +719,100 @@ async function buildExportBundleV2(
     });
   }
 
-  for (const file of sortedFiles) {
-    const fileBuffer = await fs.readFile(file.absolutePath);
-    const fileContent = fileBuffer.toString("utf-8");
-    const conversationId = getConversationIdFromRelativePath(file.relativePath);
-    const conversationKey = `${file.projectKey}:${conversationId}`;
-    const projectAccumulator = projectAccumulators.get(file.projectKey) ?? {
-      folderName: file.projectKey,
-      fileCount: 0,
-      conversationIds: new Set<string>(),
-      artifactCount: 0,
-    };
+  const sortedPlans = [...conversationPlans].sort((a, b) => {
+    const pc = a.projectKey.localeCompare(b.projectKey);
+    return pc !== 0 ? pc : a.conversationId.localeCompare(b.conversationId);
+  });
 
-    projectAccumulator.fileCount += 1;
-    projectAccumulator.conversationIds.add(conversationId);
-    projectAccumulators.set(file.projectKey, projectAccumulator);
-
-    const stat = await fs.stat(file.absolutePath);
-    const fileUpdatedAt = stat.mtime.toISOString();
-    const conversationState = conversationStates.get(conversationKey) ?? {
-      projectKey: file.projectKey,
-      conversationId,
-      transcriptArtifacts: [],
-      transcriptRelativePaths: [],
-      primaryTranscriptContent: fileContent,
-      primaryTranscriptSelectedAt: "",
-      lastUpdatedAt: fileUpdatedAt,
-      warnings: [],
-    };
-
-    if (
-      conversationState.primaryTranscriptSelectedAt.length === 0 ||
-      path.basename(file.relativePath) === `${conversationId}.jsonl`
-    ) {
-      conversationState.primaryTranscriptContent = fileContent;
-      conversationState.primaryTranscriptSelectedAt = file.relativePath;
-    }
-
-    if (fileUpdatedAt > conversationState.lastUpdatedAt) {
-      conversationState.lastUpdatedAt = fileUpdatedAt;
-    }
-
-    conversationState.transcriptRelativePaths.push(file.relativePath);
-
-    const scopedRelativePath =
-      getConversationScopedRelativePath(file.relativePath) || path.basename(file.relativePath);
-    const artifactKey = bundleArtifactSyncKey(
-      file.projectKey,
-      conversationId,
-      "transcript",
-      scopedRelativePath
+  for (const plan of sortedPlans) {
+    const conversationKey = `${plan.projectKey}:${plan.conversationId}`;
+    const sortedFiles = [...plan.transcriptFiles].sort((a, b) =>
+      a.relativePath.localeCompare(b.relativePath)
     );
 
-    artifactContents.set(artifactKey, {
-      content: fileContent,
-    });
-    artifactEntries.set(artifactKey, {
-      projectKey: file.projectKey,
-      conversationId,
-      kind: "transcript",
-      checksum: computeArtifactChecksum(fileBuffer),
-      sizeBytes: fileBuffer.length,
-      contentType: "application/x-jsonlines",
-      sourceRelativePath: file.relativePath,
-    });
-    conversationState.transcriptArtifacts.push(artifactKey);
-    conversationStates.set(conversationKey, conversationState);
+    for (const file of sortedFiles) {
+      const fileBuffer = await fs.readFile(file.absolutePath);
+      const fileContent = fileBuffer.toString("utf-8");
+      const conversationId = getConversationIdFromRelativePath(file.relativePath);
+      const projectAccumulator = projectAccumulators.get(file.projectKey) ?? {
+        folderName: file.projectKey,
+        fileCount: 0,
+        conversationIds: new Set<string>(),
+        artifactCount: 0,
+      };
+
+      projectAccumulator.fileCount += 1;
+      projectAccumulator.conversationIds.add(conversationId);
+      projectAccumulators.set(file.projectKey, projectAccumulator);
+
+      const stat = await fs.stat(file.absolutePath);
+      const fileUpdatedAt = stat.mtime.toISOString();
+      const conversationState = conversationStates.get(conversationKey) ?? {
+        projectKey: plan.projectKey,
+        conversationId: plan.conversationId,
+        transcriptArtifacts: [],
+        transcriptRelativePaths: [],
+        primaryTranscriptContent: fileContent,
+        primaryTranscriptSelectedAt: "",
+        lastUpdatedAt: fileUpdatedAt,
+        warnings: [],
+      };
+
+      if (
+        conversationState.primaryTranscriptSelectedAt.length === 0 ||
+        path.basename(file.relativePath) === `${conversationId}.jsonl`
+      ) {
+        conversationState.primaryTranscriptContent = fileContent;
+        conversationState.primaryTranscriptSelectedAt = file.relativePath;
+      }
+
+      if (fileUpdatedAt > conversationState.lastUpdatedAt) {
+        conversationState.lastUpdatedAt = fileUpdatedAt;
+      }
+
+      conversationState.transcriptRelativePaths.push(file.relativePath);
+
+      const scopedRelativePath =
+        getConversationScopedRelativePath(file.relativePath) || path.basename(file.relativePath);
+      const artifactKey = bundleArtifactSyncKey(
+        file.projectKey,
+        conversationId,
+        "transcript",
+        scopedRelativePath
+      );
+
+      artifactContents.set(artifactKey, {
+        content: fileContent,
+      });
+      artifactEntries.set(artifactKey, {
+        projectKey: file.projectKey,
+        conversationId,
+        kind: "transcript",
+        checksum: computeArtifactChecksum(fileBuffer),
+        sizeBytes: fileBuffer.length,
+        contentType: "application/x-jsonlines",
+        sourceRelativePath: file.relativePath,
+      });
+      conversationState.transcriptArtifacts.push(artifactKey);
+      conversationStates.set(conversationKey, conversationState);
+    }
+
+    if (!conversationStates.has(conversationKey)) {
+      conversationStates.set(conversationKey, {
+        projectKey: plan.projectKey,
+        conversationId: plan.conversationId,
+        transcriptArtifacts: [],
+        transcriptRelativePaths: [],
+        primaryTranscriptContent: "",
+        primaryTranscriptSelectedAt: "",
+        lastUpdatedAt: createdAt,
+        warnings: [],
+      });
+      const pa = projectAccumulators.get(plan.projectKey);
+      if (pa) {
+        pa.conversationIds.add(plan.conversationId);
+      }
+    }
   }
 
   const conversationRecords = new Map<string, TranscriptBundleConversationEntry>();
@@ -1533,6 +1656,42 @@ function decodeTolerantStoreGistContent(raw: string): Buffer {
   return decodeTranscriptArtifact(trimmed, undefined);
 }
 
+async function resolveV1ImportStoreChatsWorkspaceKey(defaultKey: string): Promise<string> {
+  const keys = await listChatsWorkspaceKeys();
+  if (keys.length === 0) {
+    return defaultKey;
+  }
+  if (keys.length === 1) {
+    return keys[0]!;
+  }
+  const picks: vscode.QuickPickItem[] = keys.map((k) => ({ label: k, description: k }));
+  picks.unshift({ label: `Use default (${defaultKey})`, description: defaultKey });
+  picks.push({ label: "Enter custom workspace key…", description: "__custom__" });
+  const selected = await vscode.window.showQuickPick(picks, {
+    title: "Legacy bundle: restore store.db under which ~/.cursor/chats key?",
+    placeHolder: "Chats workspace hash is not the Cursor project folder name",
+  });
+  if (!selected?.description) {
+    return defaultKey;
+  }
+  if (selected.description === "__custom__") {
+    const raw = await vscode.window.showInputBox({
+      prompt: "Target directory name under ~/.cursor/chats/",
+      validateInput: (v) => {
+        if (!v || !isSafeWorkspaceKeySegment(v.trim())) {
+          return "Use one non-empty path segment without slashes.";
+        }
+        return undefined;
+      },
+    });
+    if (raw === undefined) {
+      return defaultKey;
+    }
+    return raw.trim();
+  }
+  return selected.description;
+}
+
 async function augmentV1ImportOperations(
   gistData: GistResponse,
   transcriptOperations: RestoreOperation[],
@@ -1578,6 +1737,14 @@ async function augmentV1ImportOperations(
       : a.conversationId.localeCompare(b.conversationId)
   );
 
+  const needsV1Store = sortedGroups.some((g) => {
+    const sk = bundleArtifactSyncKey(g.sourceProjectKey, g.conversationId, "store", "store.db");
+    return Boolean(gistData.files[syncKeyToGistFileName(sk)]);
+  });
+  const v1StoreChatsKey = needsV1Store
+    ? await resolveV1ImportStoreChatsWorkspaceKey(sortedGroups[0]!.targetProject.folderName)
+    : "";
+
   for (const g of sortedGroups) {
     const storeSyncKey = bundleArtifactSyncKey(
       g.sourceProjectKey,
@@ -1600,7 +1767,7 @@ async function augmentV1ImportOperations(
         extra.push({
           absolutePath: path.join(
             resolveChatsRoot(),
-            g.targetProject.folderName,
+            v1StoreChatsKey,
             g.conversationId,
             "store.db"
           ),
@@ -2053,11 +2220,9 @@ function stampWorkspaceIdentifierOnPayload(
   };
 }
 
-async function resolveStateDbCandidates(): Promise<string[]> {
-  const candidates = new Set<string>();
+async function listGlobalStateVscdbPaths(): Promise<string[]> {
   const home = os.homedir();
-
-  const platformCandidates =
+  const platformGlobal =
     process.platform === "darwin"
       ? [
           path.join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb"),
@@ -2088,15 +2253,63 @@ async function resolveStateDbCandidates(): Promise<string[]> {
             path.join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
             path.join(home, ".config", "Cursor Nightly", "User", "globalStorage", "state.vscdb"),
           ];
-
-  for (const candidate of platformCandidates) {
+  const out: string[] = [];
+  for (const candidate of platformGlobal) {
     try {
       await fs.access(candidate);
-      candidates.add(candidate);
+      out.push(candidate);
     } catch {}
   }
+  return out;
+}
 
-  return [...candidates].sort();
+async function listWorkspaceStateVscdbPaths(): Promise<string[]> {
+  const home = os.homedir();
+  const roots =
+    process.platform === "darwin"
+      ? [
+          path.join(home, "Library", "Application Support", "Cursor", "User", "workspaceStorage"),
+          path.join(home, "Library", "Application Support", "Cursor Nightly", "User", "workspaceStorage"),
+        ]
+      : process.platform === "win32"
+        ? [
+            path.join(home, "AppData", "Roaming", "Cursor", "User", "workspaceStorage"),
+            path.join(home, "AppData", "Roaming", "Cursor Nightly", "User", "workspaceStorage"),
+          ]
+        : [
+            path.join(home, ".config", "Cursor", "User", "workspaceStorage"),
+            path.join(home, ".config", "Cursor Nightly", "User", "workspaceStorage"),
+          ];
+  const out: string[] = [];
+  for (const root of roots) {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const p = path.join(root, ent.name, "state.vscdb");
+      try {
+        await fs.access(p);
+        out.push(p);
+      } catch {}
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+async function resolveStateDbCandidates(): Promise<string[]> {
+  const workspaceDbs = await listWorkspaceStateVscdbPaths();
+  const globalDbs = await listGlobalStateVscdbPaths();
+  return [...new Set([...workspaceDbs, ...globalDbs])];
+}
+
+async function resolveImportMergeStateDbCandidates(): Promise<string[]> {
+  const workspaceDbs = await listWorkspaceStateVscdbPaths();
+  const globalDbs = await listGlobalStateVscdbPaths();
+  return [...new Set([...globalDbs, ...workspaceDbs])];
 }
 
 function resolveChatsRoot(): string {
@@ -2389,14 +2602,14 @@ async function resolveSidebarImportStateDbPaths(
       await fs.access(sp);
       return { paths: [sp], usedFallback: false };
     } catch {
-      const candidates = await resolveStateDbCandidates();
+      const candidates = await resolveImportMergeStateDbCandidates();
       if (candidates.length > 0) {
         return { paths: [candidates[0]!], usedFallback: true };
       }
       return { paths: [], usedFallback: false };
     }
   }
-  const candidates = await resolveStateDbCandidates();
+  const candidates = await resolveImportMergeStateDbCandidates();
   return { paths: candidates.length > 0 ? [candidates[0]!] : [], usedFallback: false };
 }
 
@@ -2707,6 +2920,7 @@ export const __chatPersistenceInternals = {
   runSqliteScript,
   querySqliteRows,
   resolveStateDbCandidates,
+  listGlobalStateVscdbPaths,
   resolveChatsRoot,
   findStoreDbForConversation,
   escapeSqlLiteral,

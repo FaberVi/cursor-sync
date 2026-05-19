@@ -446,6 +446,65 @@ describe("transcript export and import fidelity", () => {
     vi.resetModules();
   });
 
+  it("exports store-only conversation when agent-transcripts has no jsonl but store.db exists", async () => {
+    const projectKey = "store-only-project";
+    const convId = "conv-store-only-uuid";
+    const chatsRoot = path.join(tmpRoot, ".cursor", "chats", "ws-aaa");
+    await fs.mkdir(path.join(chatsRoot, convId), { recursive: true });
+    await fs.writeFile(
+      path.join(chatsRoot, convId, "store.db"),
+      Buffer.from("SQLite format 3\0test-bytes", "utf-8")
+    );
+    const atDir = path.join(tmpRoot, ".cursor", "projects", projectKey, "agent-transcripts", convId);
+    await fs.mkdir(atDir, { recursive: true });
+
+    showQuickPickMock
+      .mockImplementationOnce(async (items: Array<{ description?: string }>) =>
+        items.filter((item) => item.description === projectKey)
+      )
+      .mockImplementationOnce(
+        async (items: Array<{ conversationKey?: string }>) =>
+          items.filter((item) => item.conversationKey === `${projectKey}:${convId}`)
+      );
+    showWarningMessageMock.mockResolvedValue("Export");
+    showInformationMessageMock.mockResolvedValue("Copy URL");
+    createGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-store-only",
+        html_url: "https://gist.github.com/example/gist-store-only",
+        description: "Cursor Sync - Agent Transcripts Export",
+        files: {},
+        created_at: "2026-03-30T12:00:00.000Z",
+        updated_at: "2026-03-30T12:00:00.000Z",
+      },
+    });
+
+    const { executeExportTranscripts } = await import("../src/transcripts.js");
+    await executeExportTranscripts(extensionContext as never);
+    await flushMicrotasks();
+
+    expect(createGistMock).toHaveBeenCalledTimes(1);
+    const [gistFiles] = createGistMock.mock.calls[0] as [
+      Record<string, { content: string }>,
+      string,
+    ];
+    const manifest = JSON.parse(gistFiles["transcript-manifest.json"].content) as {
+      schemaVersion: number;
+      conversations: Record<
+        string,
+        { transcriptArtifacts: string[]; storeArtifact?: string; conversationId: string }
+      >;
+    };
+    const conv = manifest.conversations[`${projectKey}:${convId}`];
+    expect(conv).toBeDefined();
+    expect(conv.transcriptArtifacts).toEqual([]);
+    expect(conv.storeArtifact).toBeDefined();
+    const storeKey = conv.storeArtifact!;
+    expect(manifest.schemaVersion).toBe(2);
+    expect(gistFiles[syncKeyToGistFileName(storeKey)]).toBeDefined();
+  });
+
   it("exports exact transcript bytes with a checksum-backed manifest", async () => {
     const projectKey = "source-project";
     const relativePath = "conversation-123/conversation-123.jsonl";
@@ -466,8 +525,9 @@ describe("transcript export and import fidelity", () => {
       .mockImplementationOnce(async (items: Array<{ description?: string }>) =>
         items.filter((item) => item.description === projectKey)
       )
-      .mockImplementationOnce(async (items: Array<{ label?: string }>) =>
-        items.filter((item) => item.label === relativePath)
+      .mockImplementationOnce(
+        async (items: Array<{ conversationKey?: string; description?: string }>) =>
+          items.filter((item) => item.conversationKey === `${projectKey}:conversation-123`)
       );
     showWarningMessageMock.mockResolvedValue("Export");
     showInformationMessageMock.mockResolvedValue("Copy URL");
