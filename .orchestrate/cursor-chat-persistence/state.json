@@ -81,13 +81,13 @@
       "handoffPath": "handoffs/explore-restore-risks.md",
       "startedAt": "2026-05-19T19:22:15.935Z",
       "finishedAt": "2026-05-19T19:24:37.067Z",
-      "lastUpdate": "2026-05-19T19:24:38.671Z",
+      "lastUpdate": "2026-05-19T19:26:09.972Z",
       "note": "respawned by self-planner (was error; attempts=2)",
       "attempts": 3,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": "not-verified"
+      "verification": "unit-test-verified"
     },
     {
       "name": "verify-explore-store-db",
@@ -140,7 +140,7 @@
     {
       "name": "verify-explore-workspace-mapping",
       "type": "verifier",
-      "branch": "orch/cursor-chat-persistence/verify-explore-workspace-mapping",
+      "branch": "orch/cursor-chat-persistence/explore-workspace-mapping",
       "startingRef": "orch/cursor-chat-persistence/explore-workspace-mapping",
       "dependsOn": [
         "explore-workspace-mapping"
@@ -148,12 +148,12 @@
       "agentId": "bc-9cca3874-de0a-4cad-b2d1-d42a49674b0d",
       "runId": "run-012f87aa-850e-4797-afaa-c4b6479004ff",
       "parentAgentId": "bc-fed8712f-1a76-4836-9988-80ecd183cfd7",
-      "status": "running",
-      "resultStatus": null,
-      "handoffPath": null,
+      "status": "handed-off",
+      "resultStatus": "finished",
+      "handoffPath": "handoffs/verify-explore-workspace-mapping.md",
       "startedAt": "2026-05-19T19:24:25.537Z",
-      "finishedAt": null,
-      "lastUpdate": "2026-05-19T19:24:30.208Z",
+      "finishedAt": "2026-05-19T19:26:29.139Z",
+      "lastUpdate": "2026-05-19T19:26:29.140Z",
       "note": null,
       "slackTs": null,
       "prNumber": null,
@@ -355,6 +355,10 @@
     {
       "at": "2026-05-19T19:26:03.207Z",
       "message": "explore-state-vscdb: verification recorded (unit-test-verified) by verifier verify-explore-state-vscdb"
+    },
+    {
+      "at": "2026-05-19T19:26:09.972Z",
+      "message": "explore-restore-risks: verification recorded (unit-test-verified) by verifier verify-explore-restore-risks"
     }
   ]
 }
