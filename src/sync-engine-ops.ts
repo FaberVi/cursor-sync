@@ -7,7 +7,7 @@ import {
 } from "./composer-merge.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
-const { querySqliteRows, runSqliteScript, resolveStateDbCandidates } = __chatPersistenceInternals;
+const { querySqliteRows, runSqliteScript, listGlobalStateVscdbPaths } = __chatPersistenceInternals;
 
 export function getWorkspaceStorageRootCandidates(): string[] {
   const home = os.homedir();
@@ -47,7 +47,7 @@ export interface StateTargetSpec {
 
 export async function resolveLiveStateDbPath(spec: StateTargetSpec): Promise<string | undefined> {
   if (spec.stateTarget === "global") {
-    const candidates = await resolveStateDbCandidates();
+    const candidates = await listGlobalStateVscdbPaths();
     return candidates[0];
   }
   const id = spec.workspaceStorageFolderId;
