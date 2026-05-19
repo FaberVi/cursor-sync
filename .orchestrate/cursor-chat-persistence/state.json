@@ -107,11 +107,11 @@
       "finishedAt": "2026-05-19T19:27:03.823Z",
       "lastUpdate": "2026-05-19T19:27:03.823Z",
       "note": null,
+      "attempts": 1,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null,
-      "attempts": 1
+      "verification": null
     },
     {
       "name": "verify-explore-state-vscdb",
@@ -131,11 +131,11 @@
       "finishedAt": "2026-05-19T19:26:01.480Z",
       "lastUpdate": "2026-05-19T19:26:01.481Z",
       "note": null,
+      "attempts": 1,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null,
-      "attempts": 1
+      "verification": null
     },
     {
       "name": "verify-explore-workspace-mapping",
@@ -155,11 +155,11 @@
       "finishedAt": "2026-05-19T19:26:29.139Z",
       "lastUpdate": "2026-05-19T19:26:29.140Z",
       "note": null,
+      "attempts": 1,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null,
-      "attempts": 1
+      "verification": null
     },
     {
       "name": "verify-explore-restore-risks",
@@ -179,11 +179,11 @@
       "finishedAt": "2026-05-19T19:26:08.220Z",
       "lastUpdate": "2026-05-19T19:26:08.220Z",
       "note": null,
+      "attempts": 1,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null,
-      "attempts": 1
+      "verification": null
     },
     {
       "name": "merge-persistence-doc",
@@ -208,13 +208,13 @@
       "handoffPath": "handoffs/merge-persistence-doc.md",
       "startedAt": "2026-05-19T19:27:05.044Z",
       "finishedAt": "2026-05-19T19:28:56.634Z",
-      "lastUpdate": "2026-05-19T19:28:57.768Z",
+      "lastUpdate": "2026-05-19T19:30:51.911Z",
       "note": null,
+      "attempts": 1,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": "not-verified",
-      "attempts": 1
+      "verification": "unit-test-verified"
     },
     {
       "name": "verify-merge-persistence-doc",
@@ -234,11 +234,11 @@
       "finishedAt": "2026-05-19T19:30:50.762Z",
       "lastUpdate": "2026-05-19T19:30:50.763Z",
       "note": null,
+      "attempts": 1,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null,
-      "attempts": 1
+      "verification": null
     }
   ],
   "attention": [
@@ -377,6 +377,10 @@
     {
       "at": "2026-05-19T19:28:57.768Z",
       "message": "merge-persistence-doc: verification self-reported (not-verified)"
+    },
+    {
+      "at": "2026-05-19T19:30:51.912Z",
+      "message": "merge-persistence-doc: verification recorded (unit-test-verified) by verifier verify-merge-persistence-doc"
     }
   ]
 }

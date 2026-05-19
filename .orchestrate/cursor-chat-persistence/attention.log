@@ -10,3 +10,26 @@
 [2026-05-19T19:20:24.749Z] explore-state-vscdb: respawned by self-planner (was error)
 [2026-05-19T19:20:26.265Z] explore-workspace-mapping: respawned by self-planner (was error)
 [2026-05-19T19:20:27.794Z] explore-restore-risks: respawned by self-planner (was error)
+[2026-05-19T19:20:38.422Z] explore-store-db: model "composer-2.5-fast" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs.
+[2026-05-19T19:20:49.065Z] explore-store-db: spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents.
+[2026-05-19T19:20:49.066Z] explore-state-vscdb: model "composer-2.5-fast" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs.
+[2026-05-19T19:20:58.201Z] explore-state-vscdb: spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents.
+[2026-05-19T19:20:58.202Z] explore-workspace-mapping: model "composer-2.5-fast" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs.
+[2026-05-19T19:21:06.924Z] explore-workspace-mapping: spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents.
+[2026-05-19T19:21:06.925Z] explore-restore-risks: model "composer-2.5-fast" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs.
+[2026-05-19T19:21:15.633Z] explore-restore-risks: spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents.
+[2026-05-19T19:21:40.674Z] explore-store-db: respawned by self-planner (was error)
+[2026-05-19T19:21:42.265Z] explore-state-vscdb: respawned by self-planner (was error)
+[2026-05-19T19:21:43.811Z] explore-workspace-mapping: respawned by self-planner (was error)
+[2026-05-19T19:21:45.292Z] explore-restore-risks: respawned by self-planner (was error)
+[2026-05-19T19:24:04.209Z] explore-store-db: verification self-reported (not-verified)
+[2026-05-19T19:24:13.731Z] explore-state-vscdb: verification self-reported (not-verified)
+[2026-05-19T19:24:20.356Z] explore-workspace-mapping: verification self-reported (not-verified)
+[2026-05-19T19:24:38.671Z] explore-restore-risks: verification self-reported (not-verified)
+[2026-05-19T19:26:03.207Z] explore-state-vscdb: verification recorded (unit-test-verified) by verifier verify-explore-state-vscdb
+[2026-05-19T19:26:09.972Z] explore-restore-risks: verification recorded (unit-test-verified) by verifier verify-explore-restore-risks
+[2026-05-19T19:26:30.478Z] explore-workspace-mapping: verification recorded (unit-test-verified) by verifier verify-explore-workspace-mapping
+[2026-05-19T19:27:06.061Z] explore-store-db: verification recorded (unit-test-verified) by verifier verify-explore-store-db
+[2026-05-19T19:28:57.767Z] verify-merge-persistence-doc: startingRef reconciled orch/cursor-chat-persistence/merge-persistence-doc -> orch/cursor-chat-persistence/persistence-doc (target merge-persistence-doc handed off on actual branch)
+[2026-05-19T19:28:57.768Z] merge-persistence-doc: verification self-reported (not-verified)
+[2026-05-19T19:30:51.912Z] merge-persistence-doc: verification recorded (unit-test-verified) by verifier verify-merge-persistence-doc
