@@ -32,17 +32,18 @@
       "agentId": null,
       "runId": null,
       "parentAgentId": null,
-      "status": "pending",
+      "status": "running",
       "resultStatus": null,
       "handoffPath": null,
-      "startedAt": null,
+      "startedAt": "2026-05-19T19:19:09.214Z",
       "finishedAt": null,
-      "lastUpdate": null,
+      "lastUpdate": "2026-05-19T19:19:09.214Z",
       "note": null,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null
+      "verification": null,
+      "attempts": 1
     },
     {
       "name": "explore-workspace-mapping",
@@ -236,6 +237,14 @@
     {
       "at": "2026-05-19T19:19:00.394Z",
       "message": "explore-store-db: model \"composer-2.5-fast\" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs."
+    },
+    {
+      "at": "2026-05-19T19:19:09.213Z",
+      "message": "explore-store-db: spawn failed after 3 transient sub-attempts: l: [invalid_model] Model 'composer-2.5-fast' is not available or invalid. run `bun cli.ts models --check` to re-probe the catalog against /v1/agents."
+    },
+    {
+      "at": "2026-05-19T19:19:09.214Z",
+      "message": "explore-state-vscdb: model \"composer-2.5-fast\" not in MODEL_CATALOG (spawning anyway). Run `bun cli.ts models` to see known slugs."
     }
   ]
 }
