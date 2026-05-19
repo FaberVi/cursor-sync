@@ -15,14 +15,19 @@
       "handoffPath": "handoffs/smoke-marker.md",
       "startedAt": "2026-05-19T19:05:33.308Z",
       "finishedAt": "2026-05-19T19:06:38.455Z",
-      "lastUpdate": "2026-05-19T19:06:38.456Z",
+      "lastUpdate": "2026-05-19T19:06:39.644Z",
       "note": null,
+      "attempts": 1,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": null,
-      "attempts": 1
+      "verification": "not-verified"
     }
   ],
-  "attention": []
+  "attention": [
+    {
+      "at": "2026-05-19T19:06:39.644Z",
+      "message": "smoke-marker: verification self-reported (not-verified)"
+    }
+  ]
 }
