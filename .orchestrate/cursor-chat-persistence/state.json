@@ -37,13 +37,13 @@
       "handoffPath": "handoffs/explore-state-vscdb.md",
       "startedAt": "2026-05-19T19:22:08.760Z",
       "finishedAt": "2026-05-19T19:24:11.269Z",
-      "lastUpdate": "2026-05-19T19:24:13.731Z",
+      "lastUpdate": "2026-05-19T19:26:03.207Z",
       "note": "respawned by self-planner (was error; attempts=2)",
       "attempts": 3,
       "slackTs": null,
       "prNumber": null,
       "failureMode": null,
-      "verification": "not-verified"
+      "verification": "unit-test-verified"
     },
     {
       "name": "explore-workspace-mapping",
@@ -164,7 +164,7 @@
     {
       "name": "verify-explore-restore-risks",
       "type": "verifier",
-      "branch": "orch/cursor-chat-persistence/verify-explore-restore-risks",
+      "branch": "`orch/cursor-chat-persistence/explore-restore-risks` (no verifier commits)",
       "startingRef": "orch/cursor-chat-persistence/explore-restore-risks",
       "dependsOn": [
         "explore-restore-risks"
@@ -172,12 +172,12 @@
       "agentId": "bc-bc3fa62f-7622-40d4-941b-10109aa5fb8d",
       "runId": "run-f6953bbd-6db2-4fc9-95a3-16a7a6f0c6be",
       "parentAgentId": "bc-fed8712f-1a76-4836-9988-80ecd183cfd7",
-      "status": "running",
-      "resultStatus": null,
-      "handoffPath": null,
+      "status": "handed-off",
+      "resultStatus": "finished",
+      "handoffPath": "handoffs/verify-explore-restore-risks.md",
       "startedAt": "2026-05-19T19:24:40.210Z",
-      "finishedAt": null,
-      "lastUpdate": "2026-05-19T19:24:43.887Z",
+      "finishedAt": "2026-05-19T19:26:08.220Z",
+      "lastUpdate": "2026-05-19T19:26:08.220Z",
       "note": null,
       "slackTs": null,
       "prNumber": null,
@@ -351,6 +351,10 @@
     {
       "at": "2026-05-19T19:24:38.671Z",
       "message": "explore-restore-risks: verification self-reported (not-verified)"
+    },
+    {
+      "at": "2026-05-19T19:26:03.207Z",
+      "message": "explore-state-vscdb: verification recorded (unit-test-verified) by verifier verify-explore-state-vscdb"
     }
   ]
 }
