@@ -119,7 +119,7 @@ describe("transcripts", () => {
         { folderName: "other-hash", fullPath: "/p/other", label: "other" },
         { folderName: "myapp-hash12", fullPath: "/p/myapp", label: "myapp" },
       ];
-      const ws = [{ uri: { fsPath: "C:\\projects\\myapp" } }] as import("vscode").WorkspaceFolder[];
+      const ws = [{ uri: { fsPath: path.join("C:", "projects", "myapp") } }] as import("vscode").WorkspaceFolder[];
       const r = findProjectMatchingOpenWorkspaceFolder(projects, ws);
       expect(r?.label).toBe("myapp");
     });

@@ -55,11 +55,6 @@ export interface TranscriptFileEntry {
 }
 
 const execFile = promisify(execFileCallback);
-const execFileWithInput = execFile as (
-  command: string,
-  args: readonly string[] | undefined,
-  options: { input: string; maxBuffer: number; timeout?: number }
-) => Promise<{ stdout: string; stderr: string }>;
 
 const SQLITE_SUBPROCESS_TIMEOUT_MS = 20_000;
 const SQLITE_BUSY_TIMEOUT_MS = 5000;
@@ -2040,40 +2035,35 @@ async function runSqliteQuery(
 
 async function runSqliteScript(dbPath: string, script: string): Promise<void> {
   const scriptWithBusy = `PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};\n${script}`;
-  // Sanitize lone surrogates that would cause UnicodeEncodeError when piped to Python stdin
   const sanitized = scriptWithBusy.replace(/[\ud800-\udfff]/g, "\ufffd");
-  const execOpts = {
-    input: sanitized,
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: SQLITE_SUBPROCESS_TIMEOUT_MS,
-  };
+  const tmpPath = path.join(os.tmpdir(), `cursor-sync-sql-${Date.now()}-${Math.random().toString(36).slice(2)}.sql`);
+  await fs.writeFile(tmpPath, sanitized, "utf-8");
+  const execOpts = { maxBuffer: 64 * 1024 * 1024, timeout: SQLITE_SUBPROCESS_TIMEOUT_MS };
   try {
-    await execFileWithInput("sqlite3", [dbPath], execOpts);
-    return;
-  } catch (error) {
-    if (!isCommandMissingError(error, "sqlite3")) {
-      throw error;
-    }
-    const pyScript = [
-      "import sqlite3, sys",
-      "db_path = sys.argv[1]",
-      "sql_path = sys.argv[2]",
-      "sql_script = open(sql_path, 'r', encoding='utf-8').read()",
-      "conn = sqlite3.connect(db_path)",
-      "cur = conn.cursor()",
-      "cur.executescript(sql_script)",
-      "conn.commit()",
-      "conn.close()",
-    ].join(";");
-    const py = await resolvePythonInterpreterForSqlite();
-    const tmpPath = path.join(os.tmpdir(), `cursor-sync-sql-${Date.now()}.sql`);
-    await fs.writeFile(tmpPath, sanitized, "utf-8");
-    const args = [...py.argvPrefix, "-c", pyScript, dbPath, tmpPath];
     try {
-      await execFile(py.command, args, { maxBuffer: 64 * 1024 * 1024, timeout: SQLITE_SUBPROCESS_TIMEOUT_MS });
-    } finally {
-      await fs.unlink(tmpPath).catch(() => {});
+      await execFile("sqlite3", [dbPath, `.read ${tmpPath}`], execOpts);
+      return;
+    } catch (error) {
+      if (!isCommandMissingError(error, "sqlite3")) {
+        throw error;
+      }
+      const pyScript = [
+        "import sqlite3, sys",
+        "db_path = sys.argv[1]",
+        "sql_path = sys.argv[2]",
+        "sql_script = open(sql_path, 'r', encoding='utf-8').read()",
+        "conn = sqlite3.connect(db_path)",
+        "cur = conn.cursor()",
+        "cur.executescript(sql_script)",
+        "conn.commit()",
+        "conn.close()",
+      ].join(";");
+      const py = await resolvePythonInterpreterForSqlite();
+      const args = [...py.argvPrefix, "-c", pyScript, dbPath, tmpPath];
+      await execFile(py.command, args, execOpts);
     }
+  } finally {
+    await fs.unlink(tmpPath).catch(() => {});
   }
 }
 
