@@ -44,7 +44,7 @@ import {
   selectGistExportFile,
   defaultLocalExportFilename,
 } from "./chat-bundle-format.js";
-import type { ChatExportSelection } from "./chat-export-ux.js";
+import { pickChatsForExport, type ChatExportSelection } from "./chat-export-ux.js";
 
 const {
   querySqliteRows,
@@ -78,13 +78,6 @@ export interface ChatBundle {
     checksum: string;
     sizeBytes: number;
   }>;
-}
-
-export interface SaveChatResult {
-  bundlePath: string;
-  conversationId: string;
-  title: string;
-  warnings: string[];
 }
 
 export interface LoadChatResult {
@@ -167,17 +160,10 @@ export async function executeSaveChatLocal(
 ): Promise<void> {
   const logger = getLogger();
 
-  const conversationId = await vscode.window.showInputBox({
-    prompt: "Enter the conversation ID (folder name under agent-transcripts or chats)",
-    placeHolder: "e.g. abc123-def456-...",
-    ignoreFocusOut: true,
-  });
-
-  if (!conversationId || conversationId.trim().length === 0) {
+  const selection = await pickChatsForExport();
+  if (!selection) {
     return;
   }
-
-  const trimmedId = conversationId.trim();
 
   await vscode.window.withProgress(
     {
@@ -187,15 +173,33 @@ export async function executeSaveChatLocal(
     },
     async (progress) => {
       try {
-        const result = await saveChat(context, trimmedId, progress);
+        const { jsonForFile, warnings, primaryTitle, bundles } = await buildChatExportPayload(
+          context,
+          selection,
+          progress
+        );
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const multi = bundles.length > 1;
+        const basename = multi
+          ? `chat-bundles_${timestamp}.json`
+          : `${selection.conversationIds[0]!.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60)}_${timestamp}.json`;
+        const bundlePath = path.join(context.globalStorageUri.fsPath, "chat-bundles", basename);
+        await fs.mkdir(path.dirname(bundlePath), { recursive: true });
+        await fs.writeFile(bundlePath, jsonForFile, "utf-8");
 
-        let msg = `Chat "${result.title}" saved to ${path.basename(result.bundlePath)}`;
-        if (result.warnings.length > 0) {
-          msg += ` (${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"})`;
+        const msg =
+          bundles.length === 1
+            ? `Chat "${primaryTitle}" saved to ${path.basename(bundlePath)}`
+            : `${bundles.length} chats saved to ${path.basename(bundlePath)}`;
+        if (warnings.length > 0) {
+          vscode.window.showInformationMessage(
+            `${msg} (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`
+          );
+        } else {
+          vscode.window.showInformationMessage(msg);
         }
-        vscode.window.showInformationMessage(msg);
 
-        for (const w of result.warnings) {
+        for (const w of warnings) {
           logger.appendLine(`[${new Date().toISOString()}] [chat-save] ${w}`);
         }
       } catch (err) {
@@ -296,17 +300,10 @@ export async function executeExportChatBundle(
 ): Promise<void> {
   const logger = getLogger();
 
-  const conversationId = await vscode.window.showInputBox({
-    prompt: "Enter the conversation ID to export",
-    placeHolder: "e.g. abc123-def456-...",
-    ignoreFocusOut: true,
-  });
-
-  if (!conversationId || conversationId.trim().length === 0) {
+  const selection = await pickChatsForExport();
+  if (!selection) {
     return;
   }
-
-  const trimmedId = conversationId.trim();
 
   await vscode.window.withProgress(
     {
@@ -316,15 +313,11 @@ export async function executeExportChatBundle(
     },
     async (progress) => {
       try {
-        const { bundle, title, warnings } = await buildChatBundle(
-          context,
-          trimmedId,
-          progress
-        );
+        const { jsonForFile, warnings, primaryTitle, bundles, defaultSaveBasename } =
+          await buildChatExportPayload(context, selection, progress);
 
-        const safeName = trimmedId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
         const defaultUri = vscode.Uri.file(
-          path.join(os.homedir(), "Downloads", `${safeName}-chat-bundle.json`)
+          path.join(os.homedir(), "Downloads", defaultSaveBasename)
         );
         const saveUri = await vscode.window.showSaveDialog({
           defaultUri,
@@ -338,13 +331,19 @@ export async function executeExportChatBundle(
 
         progress.report({ message: "Writing bundle..." });
         await fs.mkdir(path.dirname(saveUri.fsPath), { recursive: true });
-        await fs.writeFile(saveUri.fsPath, JSON.stringify(bundle, null, 2), "utf-8");
+        await fs.writeFile(saveUri.fsPath, jsonForFile, "utf-8");
 
-        let msg = `Chat "${title}" exported to ${path.basename(saveUri.fsPath)}`;
+        const msg =
+          bundles.length === 1
+            ? `Chat "${primaryTitle}" exported to ${path.basename(saveUri.fsPath)}`
+            : `${bundles.length} chats exported to ${path.basename(saveUri.fsPath)}`;
         if (warnings.length > 0) {
-          msg += ` (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`;
+          vscode.window.showInformationMessage(
+            `${msg} (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`
+          );
+        } else {
+          vscode.window.showInformationMessage(msg);
         }
-        vscode.window.showInformationMessage(msg);
 
         for (const w of warnings) {
           logger.appendLine(`[${new Date().toISOString()}] [chat-export] ${w}`);
@@ -571,27 +570,6 @@ export async function buildChatExportPayload(
     ),
     primaryTitle: bundles.length === 1 ? bundles[0]!.title : `${bundles.length} chats`,
   };
-}
-
-async function saveChat(
-  context: vscode.ExtensionContext,
-  conversationId: string,
-  progress: vscode.Progress<{ message?: string; increment?: number }>
-): Promise<SaveChatResult> {
-  const { bundle, title, warnings } = await buildChatBundle(context, conversationId, progress);
-
-  progress.report({ message: "Writing bundle..." });
-  const safeName = conversationId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const bundlePath = path.join(
-    context.globalStorageUri.fsPath,
-    "chat-bundles",
-    `${safeName}_${timestamp}.json`
-  );
-  await fs.mkdir(path.dirname(bundlePath), { recursive: true });
-  await fs.writeFile(bundlePath, JSON.stringify(bundle, null, 2), "utf-8");
-
-  return { bundlePath, conversationId, title, warnings };
 }
 
 export async function executeVerifyChatImport(

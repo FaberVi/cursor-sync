@@ -593,6 +593,7 @@ describe("restoreChatBundle in-process composer activation", () => {
       index: 0,
     });
     const vscodeMock = await import("./__mocks__/vscode.js");
+    vscodeMock.__resetVscodeCommandsMock();
     vscodeMock.__setRegisteredCommands(["composer.createComposer"]);
     vscodeMock.__setExecuteCommandImpl(async (command: string) => {
       if (command === "composer.createComposer") {
@@ -614,14 +615,21 @@ describe("restoreChatBundle in-process composer activation", () => {
   });
 
   it("writes result.json when composer.createComposer is available", async () => {
-    const { restoreChatBundle } = await import("../src/chat-persistence.js");
-    const conversationId = "conv-inprocess";
-    const context = {
-      globalStorageUri: { fsPath: path.join(tempHome, "global-storage") },
-      extensionUri: { fsPath: path.join(tempHome, "extension") },
-    } as import("vscode").ExtensionContext;
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.commands, "getCommands").mockResolvedValue([
+      "composer.createComposer",
+    ]);
+    const {
+      runComposerActivation,
+      buildActivationManifest,
+      normalizeActivationManifest,
+      composerCommandAvailable,
+    } = await import("../src/chat-import-activate.js");
+    const { requireWorkspaceContext } = await import("../src/chat-workspace-context.js");
+    expect(await composerCommandAvailable()).toBe(true);
 
-    await restoreChatBundle(context, {
+    const conversationId = "conv-inprocess";
+    const bundle: ChatBundle = {
       schemaVersion: 1,
       type: "chat-persistence",
       createdAt: "2026-05-21T00:00:00.000Z",
@@ -639,10 +647,13 @@ describe("restoreChatBundle in-process composer activation", () => {
       },
       storeSnapshot: null,
       transcriptFiles: [],
-    }, { report: () => {} }, {
-      activate: true,
-      workspaceFolder: FIXTURE_REPO,
-    });
+    };
+    const wsCtx = await requireWorkspaceContext({ workspaceFolder: FIXTURE_REPO });
+    const raw = buildActivationManifest(bundle, conversationId, wsCtx);
+    const manifest = normalizeActivationManifest(raw as unknown as Record<string, unknown>);
+
+    const outcome = await runComposerActivation(manifest);
+    expect(outcome.ok).toBe(true);
 
     const resultPath = path.join(
       tempHome,
