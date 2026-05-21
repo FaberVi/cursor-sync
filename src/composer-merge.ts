@@ -1,3 +1,7 @@
+import { __chatPersistenceInternals } from "./transcripts.js";
+
+const { querySqliteRows, resolveStateDbCandidates } = __chatPersistenceInternals;
+
 export function escapeSqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
@@ -27,6 +31,51 @@ export function parseComposerHeadersBlob(raw: string | undefined): {
 export function getComposerId(record: Record<string, unknown>): string {
   const id = record.composerId;
   return typeof id === "string" && id.length > 0 ? id : "";
+}
+
+export function buildComposerNameIndexFromHeadersRaw(
+  raw: string | undefined
+): Map<string, string> {
+  const map = new Map<string, string>();
+  const { allComposers } = parseComposerHeadersBlob(raw);
+  for (const record of allComposers) {
+    const id = getComposerId(record);
+    const name = record.name;
+    if (id && typeof name === "string") {
+      const trimmed = name.trim();
+      if (trimmed) {
+        map.set(id, trimmed);
+      }
+    }
+  }
+  return map;
+}
+
+export function getComposerDisplayName(
+  index: Map<string, string>,
+  conversationId: string
+): string | undefined {
+  const name = index.get(conversationId);
+  return name?.trim() ? name.trim() : undefined;
+}
+
+export async function loadComposerNameIndex(): Promise<Map<string, string>> {
+  const candidates = await resolveStateDbCandidates();
+  for (const dbPath of candidates) {
+    try {
+      const rows = await querySqliteRows(
+        dbPath,
+        "SELECT value FROM ItemTable WHERE key = 'composer.composerHeaders' LIMIT 1"
+      );
+      const raw = rows[0]?.value;
+      if (typeof raw === "string" && raw.length > 0) {
+        return buildComposerNameIndexFromHeadersRaw(raw);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return new Map();
 }
 
 function mergeComposerHeadersAdditive(
