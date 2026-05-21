@@ -24,6 +24,7 @@ import {
   isTranscriptManifestV2,
   parseTranscriptBundleManifest,
   summarizeTranscriptForSidebar,
+  resolveConversationDisplayTitle,
   syncKeyToGistFileName,
   type TranscriptBundleArtifactEntry,
   type TranscriptBundleArtifactKind,
@@ -38,6 +39,7 @@ import {
   extractComposerHeadersPayload,
   deriveComposerHeadersPayloadFromSidebarSnapshot,
   getComposerId,
+  loadComposerNameIndex,
   mergeComposerDataAdditive,
   mergeComposerHeadersChain,
 } from "./composer-merge.js";
@@ -356,6 +358,7 @@ export async function discoverExportConversationCandidates(
   projects: ProjectInfo[],
   maxBytes: number
 ): Promise<ExportConversationCandidate[]> {
+  const composerIndex = await loadComposerNameIndex();
   const out: ExportConversationCandidate[] = [];
   for (const proj of projects) {
     const base = path.join(proj.fullPath, "agent-transcripts");
@@ -388,7 +391,6 @@ export async function discoverExportConversationCandidates(
           primaryContent = "";
         }
       }
-      const summary = summarizeTranscriptForSidebar(primaryContent, conversationId);
       const parts = [
         transcriptFiles.length > 0 ? `${transcriptFiles.length} jsonl` : "no jsonl",
         storeSnapshot ? "store.db" : "no store.db",
@@ -398,7 +400,11 @@ export async function discoverExportConversationCandidates(
         conversationId,
         transcriptFiles,
         hasStore: Boolean(storeSnapshot),
-        label: summary.title,
+        label: resolveConversationDisplayTitle({
+          conversationId,
+          composerName: composerIndex.get(conversationId),
+          transcriptContent: primaryContent || null,
+        }),
         description: `${humanLabel(proj.folderName)} · ${conversationId}`,
         detail: parts.join(" · "),
       });

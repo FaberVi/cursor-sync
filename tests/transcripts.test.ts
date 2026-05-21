@@ -125,6 +125,35 @@ describe("transcripts", () => {
     });
   });
 
+  describe("discoverExportConversationCandidates", () => {
+    it("discoverExportConversationCandidates uses composer name for label", async () => {
+      const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "tx-labels-"));
+      const projectsRoot = path.join(tmp, ".cursor", "projects");
+      const projectDir = path.join(projectsRoot, "proj-one");
+      const convId = "conv-xyz";
+      const transcriptDir = path.join(projectDir, "agent-transcripts", convId);
+      await fs.mkdir(transcriptDir, { recursive: true });
+      await fs.writeFile(
+        path.join(transcriptDir, `${convId}.jsonl`),
+        JSON.stringify({
+          role: "user",
+          message: { content: [{ type: "text", text: "ignored when composer set" }] },
+        }),
+        "utf8"
+      );
+      const projects = [
+        { folderName: "proj-one", fullPath: projectDir, label: "proj-one" },
+      ];
+      const { discoverExportConversationCandidates } = await import("../src/transcripts.js");
+      vi.spyOn(
+        (await import("../src/composer-merge.js")),
+        "loadComposerNameIndex"
+      ).mockResolvedValue(new Map([[convId, "Export Picker Title"]]));
+      const candidates = await discoverExportConversationCandidates(projects, 5_000_000);
+      expect(candidates[0]!.label).toBe("Export Picker Title");
+    });
+  });
+
   describe("sidebar state helpers", () => {
     it("extracts composerData payload from sidebar snapshot object", async () => {
       const { __transcriptsTestUtils } = await import("../src/transcripts.js");

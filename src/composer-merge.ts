@@ -1,6 +1,18 @@
 import { __chatPersistenceInternals } from "./transcripts.js";
 
-const { querySqliteRows, resolveStateDbCandidates } = __chatPersistenceInternals;
+async function querySqliteRows(
+  dbPath: string,
+  sql: string,
+  opts?: { retries?: number }
+): Promise<Array<Record<string, unknown>>> {
+  return opts === undefined
+    ? __chatPersistenceInternals.querySqliteRows(dbPath, sql)
+    : __chatPersistenceInternals.querySqliteRows(dbPath, sql, opts);
+}
+
+async function resolveStateDbCandidates(): Promise<string[]> {
+  return __chatPersistenceInternals.resolveStateDbCandidates();
+}
 
 export function escapeSqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
