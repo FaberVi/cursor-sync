@@ -1,9 +1,11 @@
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { humanWorkspaceLabel } from "./chat-workspace-label.js";
-import { summarizeTranscriptForSidebar } from "./transcript-bundle.js";
+import { buildChatsKeyToFolderMap } from "./chat-workspace-context.js";
+import { workspaceQuickPickLabel } from "./chat-workspace-label.js";
+import { loadComposerNameIndex } from "./composer-merge.js";
+import { resolveConversationDisplayTitle } from "./transcript-bundle.js";
+import { resolveSyncRoots } from "./paths.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
 const { resolveChatsRoot } = __chatPersistenceInternals;
@@ -25,8 +27,13 @@ export interface ChatExportSelection {
   conversationIds: string[];
 }
 
+export interface ListConversationsOptions {
+  composerIndex?: Map<string, string>;
+}
+
 function resolveProjectsRoot(): string {
-  return path.join(os.homedir(), ".cursor", "projects");
+  const { dotCursor } = resolveSyncRoots();
+  return path.join(dotCursor, "projects");
 }
 
 export async function listChatsWorkspaceDirs(chatsRoot: string): Promise<WorkspaceDir[]> {
@@ -67,7 +74,7 @@ async function countJsonlForConversation(
   return count;
 }
 
-async function transcriptTitleForConversation(
+async function readTranscriptContentForConversation(
   projectsRoot: string,
   conversationId: string
 ): Promise<string | null> {
@@ -89,8 +96,7 @@ async function transcriptTitleForConversation(
     const jsonl = files.find((f) => f.endsWith(".jsonl"));
     if (!jsonl) continue;
     try {
-      const content = (await fs.readFile(path.join(transcriptDir, jsonl), "utf-8")).toString();
-      return summarizeTranscriptForSidebar(content, conversationId).title;
+      return (await fs.readFile(path.join(transcriptDir, jsonl), "utf-8")).toString();
     } catch {
       continue;
     }
@@ -101,8 +107,11 @@ async function transcriptTitleForConversation(
 export async function listConversationsForWorkspace(
   workspaceKey: string,
   chatsRoot: string,
-  projectsRoot: string
+  projectsRoot: string,
+  options: ListConversationsOptions = {}
 ): Promise<ConversationExportRow[]> {
+  const composerIndex =
+    options.composerIndex ?? (await loadComposerNameIndex());
   const workspacePath = path.join(chatsRoot, workspaceKey);
   let entries: import("node:fs").Dirent[];
   try {
@@ -122,8 +131,13 @@ export async function listConversationsForWorkspace(
       continue;
     }
     const jsonlCount = await countJsonlForConversation(projectsRoot, conversationId);
-    const title =
-      (await transcriptTitleForConversation(projectsRoot, conversationId)) ?? conversationId;
+    const transcriptContent =
+      (await readTranscriptContentForConversation(projectsRoot, conversationId)) ?? null;
+    const title = resolveConversationDisplayTitle({
+      conversationId,
+      composerName: composerIndex.get(conversationId),
+      transcriptContent,
+    });
     const parts = [
       jsonlCount > 0 ? `${jsonlCount} jsonl` : "no jsonl",
       "store.db",
@@ -149,16 +163,18 @@ export async function pickChatsForExport(): Promise<ChatExportSelection | null> 
     return null;
   }
 
+  const { cursorUser } = resolveSyncRoots();
+  const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+
   let workspaceKey: string;
   if (workspaces.length === 1) {
     workspaceKey = workspaces[0]!.name;
   } else {
     const pick = await vscode.window.showQuickPick(
-      workspaces.map((w) => ({
-        label: humanWorkspaceLabel(w.name),
-        description: w.name,
-        detail: w.fullPath,
-      })),
+      workspaces.map((w) => {
+        const row = workspaceQuickPickLabel(w.name, folderMap);
+        return { label: row.label, description: row.description, detail: w.fullPath };
+      }),
       {
         title: "Select workspace for chat export",
         placeHolder: "Choose the workspace whose chats you want to export",
