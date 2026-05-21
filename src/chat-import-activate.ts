@@ -1,0 +1,585 @@
+import { spawn } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as vscode from "vscode";
+import type { ChatBundle } from "./chat-persistence.js";
+import { bundleToPartialState, type PartialState } from "./chat-partial-state.js";
+import type { WorkspaceContext } from "./chat-workspace-context.js";
+
+export const CREATE_COMPOSER_COMMAND_ID = "composer.createComposer";
+export const MANIFEST_VERSION = 1;
+
+export const ACTIVATION_DIR = path.join(os.homedir(), ".cursor", "import-activation");
+export const ACTIVATION_PENDING_PATH = path.join(ACTIVATION_DIR, "pending.json");
+export const ACTIVATION_RESULT_PATH = path.join(ACTIVATION_DIR, "result.json");
+
+export interface ActivationPaths {
+  activationDir: string;
+  pendingPath: string;
+  resultPath: string;
+}
+
+export interface ActivationResult {
+  ok: boolean;
+  composerId?: string;
+}
+
+export interface ComposerActivationOutcome {
+  ok: boolean;
+  composerId?: string;
+  exitCode: number;
+  stagedOnly: boolean;
+}
+
+export interface RunComposerActivationOptions {
+  paths?: ActivationPaths;
+  waitResultMs?: number;
+  log?: (message: string) => void;
+}
+
+export interface RunPythonComposerBridgeOptions {
+  paths?: ActivationPaths;
+  waitResultMs?: number;
+  dryRun?: boolean;
+  bridgeScriptPath?: string | null;
+  extensionPath?: string;
+  log?: (message: string) => void;
+}
+
+export interface RunPostImportActivationOptions {
+  paths?: ActivationPaths;
+  activateStrict?: boolean;
+  bridgeWaitResultMs?: number;
+  dryRun?: boolean;
+  extensionPath?: string;
+  openInNewTab?: boolean;
+  log?: (message: string) => void;
+}
+
+export interface WaitForActivationResultOptions {
+  paths?: ActivationPaths;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
+export interface RawActivationManifest {
+  partialState: PartialState | Record<string, unknown>;
+  workspaceFolder: string;
+  openInNewTab?: boolean;
+  createComposerOptions?: Record<string, unknown>;
+}
+
+export interface ActivationManifest {
+  version: number;
+  composerId: string;
+  partialState: PartialState | Record<string, unknown>;
+  workspaceFolder: string;
+  openInNewTab: boolean;
+  createComposerOptions: Record<string, unknown>;
+  commandId: string;
+  stagedAt: string;
+}
+
+export function defaultActivationPaths(): ActivationPaths {
+  const activationDir = path.join(os.homedir(), ".cursor", "import-activation");
+  return {
+    activationDir,
+    pendingPath: path.join(activationDir, "pending.json"),
+    resultPath: path.join(activationDir, "result.json"),
+  };
+}
+
+export function utcNowIso(): string {
+  return new Date().toISOString();
+}
+
+function composerIdFromPartial(partial: Record<string, unknown>): string {
+  const cid = partial.composerId;
+  if (typeof cid !== "string" || !cid.trim()) {
+    throw new Error("partialState.composerId is required");
+  }
+  return cid.trim();
+}
+
+export function buildActivationManifest(
+  bundle: ChatBundle | Record<string, unknown>,
+  conversationId: string,
+  workspaceCtx: WorkspaceContext,
+  options: { openInNewTab?: boolean } = {}
+): RawActivationManifest {
+  const openInNewTab = options.openInNewTab ?? true;
+  const partial = bundleToPartialState(bundle, conversationId, {
+    workspaceIdentifier: workspaceCtx.workspaceIdentifier,
+  });
+  return {
+    partialState: partial,
+    workspaceFolder: workspaceCtx.folderFsPath,
+    openInNewTab,
+  };
+}
+
+export function normalizeActivationManifest(
+  raw: Record<string, unknown>
+): ActivationManifest {
+  const partial = raw.partialState;
+  if (!partial || typeof partial !== "object" || Array.isArray(partial)) {
+    throw new Error("manifest.partialState object is required");
+  }
+
+  const workspaceFolderRaw = raw.workspaceFolder;
+  if (
+    typeof workspaceFolderRaw !== "string" ||
+    !workspaceFolderRaw.trim()
+  ) {
+    throw new Error("manifest.workspaceFolder (absolute path) is required");
+  }
+  let folder = workspaceFolderRaw.trim();
+  if (folder === "~") {
+    folder = os.homedir();
+  } else if (folder.startsWith("~/")) {
+    folder = path.join(os.homedir(), folder.slice(2));
+  }
+  const workspaceFolder = path.resolve(folder);
+
+  let openInNewTab = raw.openInNewTab;
+  if (openInNewTab === undefined || openInNewTab === null) {
+    openInNewTab = true;
+  }
+  if (typeof openInNewTab !== "boolean") {
+    throw new Error("manifest.openInNewTab must be a boolean");
+  }
+
+  const composerId = composerIdFromPartial(partial as Record<string, unknown>);
+
+  let createComposerOptions: Record<string, unknown>;
+  const rawOptions = raw.createComposerOptions;
+  if (rawOptions === undefined || rawOptions === null) {
+    createComposerOptions = { openInNewTab, view: "editor" };
+  } else if (typeof rawOptions !== "object" || Array.isArray(rawOptions)) {
+    throw new Error("manifest.createComposerOptions must be an object when set");
+  } else {
+    createComposerOptions = { ...(rawOptions as Record<string, unknown>) };
+    if (!("openInNewTab" in createComposerOptions)) {
+      createComposerOptions.openInNewTab = openInNewTab;
+    }
+  }
+
+  return {
+    version: MANIFEST_VERSION,
+    composerId,
+    partialState: partial as PartialState,
+    workspaceFolder,
+    openInNewTab,
+    createComposerOptions,
+    commandId: CREATE_COMPOSER_COMMAND_ID,
+    stagedAt: utcNowIso(),
+  };
+}
+
+export async function stagePendingManifest(
+  manifest: ActivationManifest,
+  paths: ActivationPaths = defaultActivationPaths()
+): Promise<string> {
+  await fs.mkdir(paths.activationDir, { recursive: true });
+  const tmpPath = `${paths.pendingPath}.tmp`;
+  const payload = JSON.stringify(manifest, null, 2) + "\n";
+  await fs.writeFile(tmpPath, payload, "utf8");
+  await fs.rename(tmpPath, paths.pendingPath);
+  return paths.pendingPath;
+}
+
+export async function writeResultJson(
+  composerId: string,
+  ok = true,
+  paths: ActivationPaths = defaultActivationPaths()
+): Promise<void> {
+  await fs.mkdir(paths.activationDir, { recursive: true });
+  const payload: ActivationResult = {
+    ok,
+    composerId: composerId.trim(),
+  };
+  await fs.writeFile(
+    paths.resultPath,
+    JSON.stringify(payload, null, 2) + "\n",
+    "utf8"
+  );
+}
+
+export async function clearStaleResult(
+  paths: ActivationPaths = defaultActivationPaths()
+): Promise<void> {
+  try {
+    await fs.unlink(paths.resultPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      throw err;
+    }
+  }
+}
+
+export function parseComposerIdFromCommandResult(
+  result: unknown,
+  fallbackComposerId: string
+): string {
+  if (typeof result === "string" && result.trim()) {
+    return result.trim();
+  }
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const cid = (result as Record<string, unknown>).composerId;
+    if (typeof cid === "string" && cid.trim()) {
+      return cid.trim();
+    }
+  }
+  return fallbackComposerId.trim();
+}
+
+export async function composerCommandAvailable(
+  commandId: string = CREATE_COMPOSER_COMMAND_ID
+): Promise<boolean> {
+  const commands = await vscode.commands.getCommands(true);
+  return commands.includes(commandId);
+}
+
+export async function readActivationResult(
+  paths: ActivationPaths = defaultActivationPaths()
+): Promise<ActivationResult | null> {
+  try {
+    const text = await fs.readFile(paths.resultPath, "utf8");
+    const data = JSON.parse(text) as unknown;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return null;
+    }
+    const rec = data as Record<string, unknown>;
+    if (rec.ok === false) {
+      return null;
+    }
+    const cid = rec.composerId;
+    if (typeof cid === "string" && cid.trim()) {
+      return { ok: true, composerId: cid.trim() };
+    }
+    return null;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return null;
+    }
+    return null;
+  }
+}
+
+export function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function waitForActivationResult(
+  options: WaitForActivationResultOptions = {}
+): Promise<string | null> {
+  const paths = options.paths ?? defaultActivationPaths();
+  const timeoutMs = Math.max(0, options.timeoutMs ?? 0);
+  const pollIntervalMs = Math.max(50, options.pollIntervalMs ?? 250);
+
+  if (timeoutMs === 0) {
+    const one = await readActivationResult(paths);
+    return one?.composerId ?? null;
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await readActivationResult(paths);
+    if (result?.composerId) {
+      return result.composerId;
+    }
+    await delayMs(pollIntervalMs);
+  }
+  return null;
+}
+
+export function pingServerProbe(
+  conversationId: string,
+  log: (message: string) => void = () => {}
+): void {
+  log(
+    `note: --ping-server probe not implemented for ${conversationId} ` +
+      "(no agentClient HTTP contract in v1; see activation-architecture.md)"
+  );
+}
+
+export async function resolveComposerBridgeScript(
+  extensionPath?: string
+): Promise<string | null> {
+  const candidates: string[] = [];
+  if (extensionPath) {
+    candidates.push(
+      path.join(extensionPath, "scripts", "cursor_composer_bridge.py")
+    );
+    candidates.push(
+      path.join(extensionPath, "..", "scripts", "cursor_composer_bridge.py")
+    );
+  }
+  candidates.push(
+    path.join(process.cwd(), "scripts", "cursor_composer_bridge.py")
+  );
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return path.resolve(candidate);
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+export function parseBridgeStdout(stdout: string): string | null {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return null;
+  }
+  for (const line of trimmed.split("\n")) {
+    const row = line.trim();
+    if (!row) {
+      continue;
+    }
+    try {
+      const data = JSON.parse(row) as Record<string, unknown>;
+      const cid = data.composerId;
+      if (typeof cid === "string" && cid.trim()) {
+        return cid.trim();
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+export async function runPythonComposerBridge(
+  rawManifest: RawActivationManifest,
+  options: RunPythonComposerBridgeOptions = {}
+): Promise<ComposerActivationOutcome> {
+  const paths = options.paths ?? defaultActivationPaths();
+  const log = options.log ?? (() => {});
+  const waitResultMs = Math.max(0, options.waitResultMs ?? 0);
+  const partial = rawManifest.partialState as Record<string, unknown>;
+  const fallbackComposerId = composerIdFromPartial(partial);
+
+  if (options.dryRun) {
+    log("[dry-run] would run python cursor_composer_bridge.py --manifest <tmp>");
+    return {
+      ok: true,
+      composerId: fallbackComposerId,
+      exitCode: 0,
+      stagedOnly: false,
+    };
+  }
+
+  const scriptPath =
+    options.bridgeScriptPath ?? (await resolveComposerBridgeScript(options.extensionPath));
+  if (!scriptPath) {
+    log("error: bridge script missing (scripts/cursor_composer_bridge.py)");
+    const manifest = normalizeActivationManifest(
+      rawManifest as unknown as Record<string, unknown>
+    );
+    await clearStaleResult(paths);
+    await stagePendingManifest(manifest, paths);
+    return { ok: false, exitCode: 1, stagedOnly: false };
+  }
+
+  const tmpPath = path.join(
+    os.tmpdir(),
+    `cursor-sync-activation-${Date.now()}.json`
+  );
+  const args = [scriptPath, "--manifest", tmpPath];
+  if (waitResultMs > 0) {
+    args.push("--wait-result", String(waitResultMs / 1000));
+  }
+
+  try {
+    await fs.writeFile(
+      tmpPath,
+      JSON.stringify(rawManifest, null, 2) + "\n",
+      "utf8"
+    );
+
+    const { exitCode, stdout, stderr } = await new Promise<{
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+    }>((resolve, reject) => {
+      const proc = spawn("python3", args, { cwd: rawManifest.workspaceFolder });
+      let stdout = "";
+      let stderr = "";
+      proc.stdout?.on("data", (chunk: Buffer | string) => {
+        stdout += String(chunk);
+      });
+      proc.stderr?.on("data", (chunk: Buffer | string) => {
+        stderr += String(chunk);
+      });
+      proc.on("error", reject);
+      proc.on("close", (code) => {
+        resolve({ exitCode: code ?? 1, stdout, stderr });
+      });
+    });
+
+    if (stderr.trim()) {
+      for (const line of stderr.trim().split("\n")) {
+        log(`bridge: ${line}`);
+      }
+    }
+
+    const composerId = parseBridgeStdout(stdout) ?? fallbackComposerId;
+    if (exitCode === 0) {
+      await writeResultJson(composerId, true, paths);
+      log(`Activation OK (bridge): composerId=${composerId}`);
+      return {
+        ok: true,
+        composerId,
+        exitCode: 0,
+        stagedOnly: false,
+      };
+    }
+
+    if (exitCode === 2) {
+      log(
+        `Activation staged only (exit 2): manifest at ${paths.pendingPath}; Cursor must be open on the workspace.`
+      );
+      return {
+        ok: false,
+        composerId: fallbackComposerId,
+        exitCode: 2,
+        stagedOnly: true,
+      };
+    }
+
+    log(`error: bridge exited ${exitCode}`);
+    return { ok: false, exitCode: 1, stagedOnly: false };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`bridge subprocess failed: ${message}`);
+    return { ok: false, exitCode: 1, stagedOnly: false };
+  } finally {
+    try {
+      await fs.unlink(tmpPath);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export async function runPostImportActivation(
+  bundle: ChatBundle | Record<string, unknown>,
+  conversationId: string,
+  workspaceCtx: WorkspaceContext,
+  options: RunPostImportActivationOptions = {}
+): Promise<ComposerActivationOutcome> {
+  const log = options.log ?? (() => {});
+  const paths = options.paths ?? defaultActivationPaths();
+  const raw = buildActivationManifest(bundle, conversationId, workspaceCtx, {
+    openInNewTab: options.openInNewTab,
+  });
+  const manifest = normalizeActivationManifest(
+    raw as unknown as Record<string, unknown>
+  );
+
+  log(`Activating composer ${conversationId}...`);
+
+  const hasCommand = await composerCommandAvailable(manifest.commandId);
+  if (hasCommand) {
+    return runComposerActivation(manifest, {
+      paths,
+      waitResultMs: options.bridgeWaitResultMs,
+      log,
+    });
+  }
+
+  log(
+    `command ${manifest.commandId} unavailable; falling back to python bridge`
+  );
+  const bridgeOutcome = await runPythonComposerBridge(raw, {
+    paths,
+    waitResultMs: options.bridgeWaitResultMs,
+    dryRun: options.dryRun,
+    extensionPath: options.extensionPath,
+    log,
+  });
+
+  if (options.activateStrict && bridgeOutcome.stagedOnly) {
+    throw new Error(
+      "Activation staged only (--activate-strict requires confirmed activation)"
+    );
+  }
+
+  return bridgeOutcome;
+}
+
+export async function runComposerActivation(
+  manifest: ActivationManifest,
+  options: RunComposerActivationOptions = {}
+): Promise<ComposerActivationOutcome> {
+  const paths = options.paths ?? defaultActivationPaths();
+  const log = options.log ?? (() => {});
+
+  await clearStaleResult(paths);
+  await stagePendingManifest(manifest, paths);
+
+  const hasCommand = await composerCommandAvailable(manifest.commandId);
+  if (!hasCommand) {
+    log(
+      `IDE activation not available: command ${manifest.commandId} is not registered.`
+    );
+    log(`Staged manifest: ${paths.pendingPath}`);
+
+    const waitResultMs = Math.max(0, options.waitResultMs ?? 0);
+    if (waitResultMs > 0) {
+      const polled = await waitForActivationResult({
+        paths,
+        timeoutMs: waitResultMs,
+      });
+      if (polled) {
+        return {
+          ok: true,
+          composerId: polled,
+          exitCode: 0,
+          stagedOnly: false,
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      composerId: manifest.composerId,
+      exitCode: 2,
+      stagedOnly: true,
+    };
+  }
+
+  try {
+    const commandResult = await vscode.commands.executeCommand(
+      manifest.commandId,
+      manifest.partialState,
+      manifest.createComposerOptions
+    );
+    const composerId = parseComposerIdFromCommandResult(
+      commandResult,
+      manifest.composerId
+    );
+    await writeResultJson(composerId, true, paths);
+    log(`Activation OK: composerId=${composerId}`);
+    return {
+      ok: true,
+      composerId,
+      exitCode: 0,
+      stagedOnly: false,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`composer.createComposer failed: ${message}`);
+    return {
+      ok: false,
+      exitCode: 1,
+      stagedOnly: false,
+    };
+  }
+}

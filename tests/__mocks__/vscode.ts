@@ -46,7 +46,44 @@ export class EventEmitter<T> {
   dispose(): void {}
 }
 
+let mockWorkspaceFolders: Array<{ uri: { fsPath: string } }> = [];
+
+export function __setWorkspaceFolders(
+  folders: Array<{ uri: { fsPath: string } }>
+): void {
+  mockWorkspaceFolders = folders;
+}
+
+export class RelativePattern {
+  constructor(
+    public base: { fsPath?: string },
+    public pattern: string
+  ) {}
+}
+
+export class Disposable {
+  constructor(private callOnDispose?: () => void) {}
+  dispose(): void {
+    this.callOnDispose?.();
+  }
+}
+
 export const workspace = {
+  get workspaceFolders() {
+    return mockWorkspaceFolders.length ? mockWorkspaceFolders : undefined;
+  },
+  createFileSystemWatcher: (
+    _pattern: unknown,
+    _ignoreCreate?: boolean,
+    _ignoreChange?: boolean,
+    _ignoreDelete?: boolean
+  ) => ({
+    onDidCreate: (_cb: () => void) => ({ dispose: () => {} }),
+    onDidChange: (_cb: () => void) => ({ dispose: () => {} }),
+    onDidDelete: (_cb: () => void) => ({ dispose: () => {} }),
+    dispose: () => {},
+  }),
+  onDidChangeWorkspaceFolders: (_cb: () => void) => ({ dispose: () => {} }),
   getConfiguration: (_section?: string) => ({
     get: <T>(key: string, defaultValue?: T): T | undefined => {
       const defaults: Record<string, unknown> = {
@@ -87,8 +124,32 @@ export const window = {
   showQuickPick: async <T>(items: T[]) => items[0],
 };
 
+let registeredCommands = new Set<string>();
+let executeCommandImpl: (
+  command: string,
+  ...args: unknown[]
+) => Promise<unknown> = async () => undefined;
+
+export function __resetVscodeCommandsMock(): void {
+  registeredCommands = new Set();
+  executeCommandImpl = async () => undefined;
+  mockWorkspaceFolders = [];
+}
+
+export function __setRegisteredCommands(commandIds: string[]): void {
+  registeredCommands = new Set(commandIds);
+}
+
+export function __setExecuteCommandImpl(
+  impl: (command: string, ...args: unknown[]) => Promise<unknown>
+): void {
+  executeCommandImpl = impl;
+}
+
 export const commands = {
-  executeCommand: async (_command: string, ..._args: unknown[]) => {},
+  executeCommand: async (command: string, ...args: unknown[]) =>
+    executeCommandImpl(command, ...args),
+  getCommands: async (_filter?: boolean) => Array.from(registeredCommands),
   registerCommand: (_command: string, _callback: (...args: unknown[]) => unknown) => ({
     dispose: () => {},
   }),
@@ -104,6 +165,7 @@ export enum ExtensionKind {
 }
 
 export const Uri = {
-  file: (path: string) => ({ fsPath: path, scheme: "file" }),
+  file: (p: string) => ({ fsPath: p, scheme: "file" }),
   parse: (value: string) => ({ fsPath: value, scheme: "file" }),
 };
+

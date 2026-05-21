@@ -132,6 +132,30 @@
         "title": "Cursor Sync: Load Chat from Local Bundle"
       },
       {
+        "command": "cursorSync.importChatBundle",
+        "title": "Cursor Sync: Import Chat Bundle"
+      },
+      {
+        "command": "cursorSync.exportChatBundle",
+        "title": "Cursor Sync: Export Chat Bundle"
+      },
+      {
+        "command": "cursorSync.importChatBundleActivate",
+        "title": "Cursor Sync: Import Chat Bundle (Activate)"
+      },
+      {
+        "command": "cursorSync.verifyChatImport",
+        "title": "Cursor Sync: Verify Chat Import"
+      },
+      {
+        "command": "cursorSync.exportChatToGist",
+        "title": "Cursor Sync: Export Chat to Private Gist"
+      },
+      {
+        "command": "cursorSync.importChatFromGist",
+        "title": "Cursor Sync: Import Chat from Private Gist"
+      },
+      {
         "command": "cursorSync.refreshImportedTranscripts",
         "title": "Cursor Sync: Refresh Imported Transcripts",
         "icon": "$(refresh)"
@@ -245,6 +269,27 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically reload Cursor after importing transcripts (skips the reload prompt)"
+        },
+        "cursorSync.chatImport.activateDefault": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run composer.createComposer activation after disk restore when importing a chat bundle (import-v2)"
+        },
+        "cursorSync.chatImport.activateStrict": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fail import if activation is staged only (no confirmed composer.createComposer or result.json)"
+        },
+        "cursorSync.chatImport.bridgeWaitResultSeconds": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Seconds to poll ~/.cursor/import-activation/result.json after staging activation (0 = no wait)"
+        },
+        "cursorSync.chatImport.pingServer": {
+          "type": "boolean",
+          "default": false,
+          "description": "After activation, run agentClient server probe stub (v1: logs only, not implemented)"
         }
       }
     }

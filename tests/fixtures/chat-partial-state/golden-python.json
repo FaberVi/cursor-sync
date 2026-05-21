@@ -1,0 +1,88 @@
+{
+  "conversationId": "43aae2fb-71fc-4e9c-9add-3e995caaaa80",
+  "workspaceIdentifier": {
+    "id": "f038a5d2e2e5594b5e779064d4feac57",
+    "uri": {
+      "$mid": 1,
+      "fsPath": "/home/user/proj",
+      "_sep": 47,
+      "external": "file:///home/user/proj",
+      "path": "/home/user/proj",
+      "scheme": "file"
+    }
+  },
+  "partialHeaderOnly": {
+    "composerId": "43aae2fb-71fc-4e9c-9add-3e995caaaa80",
+    "name": "Orchestrator chat",
+    "type": "head",
+    "unifiedMode": "agent",
+    "forceMode": "edit",
+    "createdAt": 1716283200000,
+    "lastUpdatedAt": 1716283200000,
+    "lastOpenedAt": 1716283200000,
+    "workspaceIdentifier": {
+      "id": "f038a5d2e2e5594b5e779064d4feac57",
+      "uri": {
+        "$mid": 1,
+        "fsPath": "/home/user/proj",
+        "_sep": 47,
+        "external": "file:///home/user/proj",
+        "path": "/home/user/proj",
+        "scheme": "file"
+      }
+    }
+  },
+  "partialFull": {
+    "composerId": "43aae2fb-71fc-4e9c-9add-3e995caaaa80",
+    "name": "Store-backed chat",
+    "type": "head",
+    "unifiedMode": "agent",
+    "forceMode": "edit",
+    "createdAt": 1716283200000,
+    "lastUpdatedAt": 1716283300000,
+    "lastOpenedAt": 1716283300000,
+    "workspaceIdentifier": {
+      "id": "f038a5d2e2e5594b5e779064d4feac57",
+      "uri": {
+        "$mid": 1,
+        "fsPath": "/home/user/proj",
+        "_sep": 47,
+        "external": "file:///home/user/proj",
+        "path": "/home/user/proj",
+        "scheme": "file"
+      }
+    },
+    "fullConversationHeadersOnly": [
+      {
+        "bubbleId": "b1",
+        "type": 1
+      }
+    ],
+    "conversationMap": {
+      "b1": {
+        "id": "b1"
+      }
+    },
+    "conversationState": "encrypted-placeholder",
+    "hasLoaded": true,
+    "status": "completed",
+    "modelConfig": {
+      "modelName": "default"
+    }
+  },
+  "storeIndex": {
+    "meta": {
+      "0": {
+        "agentId": "ff80027c-12b6-4fe5-bb1a-e4d88bd2db05",
+        "latestRootBlobId": "root-blob-1",
+        "name": "New Agent",
+        "mode": "default",
+        "isRunEverywhere": true,
+        "createdAt": 1779369862871
+      }
+    },
+    "blobCount": 2
+  },
+  "sidebarHasComposerDataHeaderOnly": false,
+  "sidebarHasComposerDataFull": true
+}

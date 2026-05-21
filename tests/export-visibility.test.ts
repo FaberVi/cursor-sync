@@ -8,6 +8,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 describe("export gist visibility and copy", () => {
   const exportSrc = readFileSync(path.join(root, "src/export.ts"), "utf-8");
   const transcriptsSrc = readFileSync(path.join(root, "src/transcripts.ts"), "utf-8");
+  const exportGistChatSrc = readFileSync(path.join(root, "src/export-gist-chat.ts"), "utf-8");
 
   it("settings export calls createGist with two arguments only (no public flag)", () => {
     expect(exportSrc).toMatch(
@@ -27,6 +28,15 @@ describe("export gist visibility and copy", () => {
     );
   });
 
+  it("chat export calls createGist with two arguments only (no public flag)", () => {
+    expect(exportGistChatSrc).toMatch(
+      /\.createGist\(\s*gistFiles\s*,\s*"Cursor Sync - Chat Export"\s*\)/s
+    );
+    expect(exportGistChatSrc).not.toMatch(
+      /\.createGist\(\s*gistFiles\s*,\s*"Cursor Sync - Chat Export"\s*,\s*true/s
+    );
+  });
+
   it("settings export UI copy describes private gist and link caveat", () => {
     expect(exportSrc).toContain("Select files to export to a private Gist");
     expect(exportSrc).toContain("Creating private Gist...");
@@ -41,5 +51,12 @@ describe("export gist visibility and copy", () => {
     expect(transcriptsSrc).toContain("Creating private Gist with transcripts...");
     expect(transcriptsSrc).toContain("Transcript export successful! Private Gist:");
     expect(transcriptsSrc).toContain("Anyone with the link can open it.");
+  });
+
+  it("chat export UI copy describes private gist and link caveat", () => {
+    expect(exportGistChatSrc).toContain("Creating private Gist...");
+    expect(exportGistChatSrc).toContain("Export successful! Chat");
+    expect(exportGistChatSrc).toContain("private Gist");
+    expect(exportGistChatSrc).toContain("Anyone with the link can open it.");
   });
 });

@@ -12,17 +12,38 @@ import {
   summarizeTranscriptForSidebar,
   type TranscriptBundleArtifactEncoding,
 } from "./transcript-bundle.js";
+import { requireWorkspaceContext } from "./chat-workspace-context.js";
+import {
+  filterComposerDataForConversation,
+  filterComposerHeadersForConversation,
+  mergeTargetsForImport,
+  mergeSidebarIntoStateDb,
+  type WorkspaceIdentifier as MergeWorkspaceIdentifier,
+} from "./chat-import-merge.js";
+import { resolveSyncRoots } from "./paths.js";
+import {
+  pingServerProbe,
+  runPostImportActivation,
+} from "./chat-import-activate.js";
+import {
+  formatVerifyCheckLine,
+  formatVerifyReport,
+  runDiskAndActivationVerify,
+  verifyActivationChecks,
+  verifyChecksAllOk,
+  type VerifyCheck,
+} from "./chat-import-verify.js";
+import {
+  pickImportWorkspaceFolder,
+  presentChatImportOutcome,
+  promptChatImportOptions,
+} from "./chat-import-ux.js";
 
 const {
   querySqliteRows,
-  runSqliteScript,
   resolveStateDbCandidates,
   resolveChatsRoot,
   findStoreDbForConversation,
-  escapeSqlLiteral,
-  mergeComposerHeadersChain,
-  mergeComposerDataAdditive,
-  deriveComposerHeadersPayloadFromSidebarSnapshot,
   isExecFileTimeoutError,
 } = __chatPersistenceInternals;
 
@@ -63,11 +84,72 @@ export interface LoadChatResult {
   conversationId: string;
   transcriptsWritten: number;
   storeWritten: boolean;
+  storeWorkspaceKey?: string;
   sidebarMerged: boolean;
   warnings: string[];
+  verifyChecks?: VerifyCheck[];
+}
+
+export interface RestoreChatBundleOptions {
+  activate?: boolean;
+  activateStrict?: boolean;
+  bridgeWaitResultMs?: number;
+  pingServer?: boolean;
+  dryRun?: boolean;
+  syncGlobal?: boolean;
+  pinRecent?: boolean;
+  workspaceFolder?: string;
+  postActivate?: boolean;
+}
+
+export function restoreOptionsFromConfiguration(): RestoreChatBundleOptions {
+  const config = vscode.workspace.getConfiguration("cursorSync");
+  const bridgeWaitSeconds =
+    config.get<number>("chatImport.bridgeWaitResultSeconds") ?? 0;
+  return {
+    activate: config.get<boolean>("chatImport.activateDefault") ?? false,
+    activateStrict: config.get<boolean>("chatImport.activateStrict") ?? false,
+    bridgeWaitResultMs: Math.max(0, bridgeWaitSeconds) * 1000,
+    pingServer: config.get<boolean>("chatImport.pingServer") ?? false,
+  };
 }
 
 const SQLITE_READ_RETRIES = 3;
+
+function logChatRestoreDebug(line: string): void {
+  getLogger().appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`);
+}
+
+function composerPayloadDebug(payload: Record<string, unknown> | undefined): string {
+  if (!payload) {
+    return "absent";
+  }
+  const list = payload.allComposers;
+  if (!Array.isArray(list)) {
+    return "present keys=" + Object.keys(payload).join(",");
+  }
+  const ids = list
+    .filter((c): c is Record<string, unknown> => !!c && typeof c === "object" && !Array.isArray(c))
+    .map((c) => (typeof c.composerId === "string" ? c.composerId : ""))
+    .filter((id) => id.length > 0);
+  return `allComposers=${list.length} composerIds=[${ids.join(",")}]`;
+}
+
+function bundleArtifactsDebug(bundle: ChatBundle): string {
+  const tfSummary =
+    bundle.transcriptFiles.length === 0
+      ? "none"
+      : bundle.transcriptFiles
+          .map((t) => `${path.basename(t.relativePath)}:${t.sizeBytes}b`)
+          .join(",");
+  const store = bundle.storeSnapshot
+    ? `present ${bundle.storeSnapshot.sizeBytes}b src=${bundle.storeSnapshot.sourceWorkspaceKey}`
+    : "absent";
+  const sidebar = bundle.sidebarSnapshot
+    ? `present keys=${Object.keys(bundle.sidebarSnapshot).join(",")}`
+    : "absent";
+  return `transcriptFiles=${bundle.transcriptFiles.length} [${tfSummary}] storeSnapshot=${store} sidebarSnapshot=${sidebar}`;
+}
 
 /**
  * Save a chat conversation to a local JSON bundle file.
@@ -122,8 +204,10 @@ export async function executeSaveChatLocal(
  * Load a chat from a local JSON bundle file.
  * Restores: store.db, sidebar metadata into state.vscdb, and transcript JSONL files.
  */
-export async function executeLoadChatLocal(
-  context: vscode.ExtensionContext
+async function executeImportChatBundleCore(
+  context: vscode.ExtensionContext,
+  importUx: { forceActivate?: boolean; skipActivatePrompt?: boolean },
+  progressTitle: string
 ): Promise<void> {
   const logger = getLogger();
 
@@ -132,10 +216,15 @@ export async function executeLoadChatLocal(
     canSelectFolders: false,
     canSelectMany: false,
     filters: { "Chat Bundle": ["json"] },
-    title: "Select chat bundle to load",
+    title: "Select chat bundle to import",
   });
 
   if (!uris || uris.length === 0) {
+    return;
+  }
+
+  const promptResult = await promptChatImportOptions(importUx);
+  if (!promptResult) {
     return;
   }
 
@@ -144,61 +233,129 @@ export async function executeLoadChatLocal(
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: "Loading chat from bundle...",
+      title: progressTitle,
       cancellable: false,
     },
     async (progress) => {
       try {
-        const result = await loadChat(context, bundlePath, progress);
-
-        const parts: string[] = [`Chat "${result.conversationId}" loaded.`];
-        if (result.transcriptsWritten > 0) {
-          parts.push(`${result.transcriptsWritten} transcript file${result.transcriptsWritten === 1 ? "" : "s"}`);
-        }
-        if (result.storeWritten) {
-          parts.push("store.db restored");
-        }
-        if (result.sidebarMerged) {
-          parts.push("sidebar merged");
-        }
-        if (result.warnings.length > 0) {
-          parts.push(`${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}`);
-        }
-
-        vscode.window.showInformationMessage(parts.join(" | "));
-
-        const config = vscode.workspace.getConfiguration("cursorSync");
-        const autoReload = config.get<boolean>("transcripts.autoReloadAfterImport") ?? false;
-        if (autoReload) {
-          await vscode.commands.executeCommand("workbench.action.reloadWindow");
-        } else {
-          const reloadAction = "Reload Window";
-          const choice = await vscode.window.showInformationMessage(
-            "Cursor may need a reload to reflect imported chat in the sidebar.",
-            reloadAction
-          );
-          if (choice === reloadAction) {
-            vscode.commands.executeCommand("workbench.action.reloadWindow");
-          }
-        }
-
-        for (const w of result.warnings) {
-          logger.appendLine(`[${new Date().toISOString()}] [chat-load] ${w}`);
-        }
+        const result = await loadChat(
+          context,
+          bundlePath,
+          progress,
+          promptResult.restoreOptions
+        );
+        await presentChatImportOutcome(result, promptResult.restoreOptions, "chat-load");
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.appendLine(`[${new Date().toISOString()}] [chat-load] FAILED: ${msg}`);
-        vscode.window.showErrorMessage(`Chat load failed: ${msg}`);
+        vscode.window.showErrorMessage(`Chat import failed: ${msg}`);
       }
     }
   );
 }
 
-async function saveChat(
-  context: vscode.ExtensionContext,
+export async function executeLoadChatLocal(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  await executeImportChatBundleCore(
+    context,
+    {},
+    "Loading chat from bundle..."
+  );
+}
+
+export async function executeImportChatBundle(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  await executeImportChatBundleCore(
+    context,
+    {},
+    "Importing chat bundle..."
+  );
+}
+
+export async function executeImportChatBundleActivate(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  await executeImportChatBundleCore(
+    context,
+    { forceActivate: true },
+    "Importing chat bundle with activation..."
+  );
+}
+
+export async function executeExportChatBundle(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  const logger = getLogger();
+
+  const conversationId = await vscode.window.showInputBox({
+    prompt: "Enter the conversation ID to export",
+    placeHolder: "e.g. abc123-def456-...",
+    ignoreFocusOut: true,
+  });
+
+  if (!conversationId || conversationId.trim().length === 0) {
+    return;
+  }
+
+  const trimmedId = conversationId.trim();
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Exporting chat bundle...",
+      cancellable: false,
+    },
+    async (progress) => {
+      try {
+        const { bundle, title, warnings } = await buildChatBundle(
+          context,
+          trimmedId,
+          progress
+        );
+
+        const safeName = trimmedId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
+        const defaultUri = vscode.Uri.file(
+          path.join(os.homedir(), "Downloads", `${safeName}-chat-bundle.json`)
+        );
+        const saveUri = await vscode.window.showSaveDialog({
+          defaultUri,
+          filters: { "Chat Bundle": ["json"] },
+          title: "Save chat bundle as",
+        });
+
+        if (!saveUri) {
+          return;
+        }
+
+        progress.report({ message: "Writing bundle..." });
+        await fs.mkdir(path.dirname(saveUri.fsPath), { recursive: true });
+        await fs.writeFile(saveUri.fsPath, JSON.stringify(bundle, null, 2), "utf-8");
+
+        let msg = `Chat "${title}" exported to ${path.basename(saveUri.fsPath)}`;
+        if (warnings.length > 0) {
+          msg += ` (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`;
+        }
+        vscode.window.showInformationMessage(msg);
+
+        for (const w of warnings) {
+          logger.appendLine(`[${new Date().toISOString()}] [chat-export] ${w}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.appendLine(`[${new Date().toISOString()}] [chat-export] FAILED: ${msg}`);
+        vscode.window.showErrorMessage(`Chat export failed: ${msg}`);
+      }
+    }
+  );
+}
+
+export async function buildChatBundle(
+  _context: vscode.ExtensionContext,
   conversationId: string,
   progress: vscode.Progress<{ message?: string; increment?: number }>
-): Promise<SaveChatResult> {
+): Promise<{ bundle: ChatBundle; title: string; warnings: string[] }> {
   const warnings: string[] = [];
 
   progress.report({ message: "Locating store.db..." });
@@ -238,6 +395,26 @@ async function saveChat(
           }
         }
         sidebarSnapshot = snapshot;
+        const rawHeaders = snapshot.composerHeaders;
+        if (rawHeaders && typeof rawHeaders === "object" && !Array.isArray(rawHeaders)) {
+          const filtered = filterComposerHeadersForConversation(
+            rawHeaders as Record<string, unknown>,
+            conversationId
+          );
+          if (filtered.allComposers.length === 0) {
+            warnings.push(
+              `composer.composerHeaders has no row for conversation ${conversationId}; export may omit sidebar header metadata.`
+            );
+          }
+          snapshot.composerHeaders = filtered;
+        }
+        const rawData = snapshot.composerData;
+        if (rawData && typeof rawData === "object" && !Array.isArray(rawData)) {
+          snapshot.composerData = filterComposerDataForConversation(
+            rawData as Record<string, unknown>,
+            conversationId
+          );
+        }
       }
     } catch (err) {
       const isTimeout = isExecFileTimeoutError(err);
@@ -316,6 +493,20 @@ async function saveChat(
     transcriptFiles,
   };
 
+  logChatRestoreDebug(
+    `buildChatBundle conversationId=${conversationId} ${bundleArtifactsDebug(bundle)} composerHeaders=${composerPayloadDebug(sidebarSnapshot?.composerHeaders as Record<string, unknown> | undefined)} composerData=${composerPayloadDebug(sidebarSnapshot?.composerData as Record<string, unknown> | undefined)} warnings=${warnings.length}`
+  );
+
+  return { bundle, title, warnings };
+}
+
+async function saveChat(
+  context: vscode.ExtensionContext,
+  conversationId: string,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<SaveChatResult> {
+  const { bundle, title, warnings } = await buildChatBundle(context, conversationId, progress);
+
   progress.report({ message: "Writing bundle..." });
   const safeName = conversationId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -330,27 +521,117 @@ async function saveChat(
   return { bundlePath, conversationId, title, warnings };
 }
 
-async function loadChat(
-  context: vscode.ExtensionContext,
-  bundlePath: string,
-  progress: vscode.Progress<{ message?: string; increment?: number }>
-): Promise<LoadChatResult> {
-  const warnings: string[] = [];
+export async function executeVerifyChatImport(
+  _context: vscode.ExtensionContext
+): Promise<void> {
+  const logger = getLogger();
 
-  progress.report({ message: "Reading bundle..." });
+  const uris = await vscode.window.showOpenDialog({
+    canSelectFiles: true,
+    canSelectFolders: false,
+    canSelectMany: false,
+    filters: { "Chat Bundle": ["json"] },
+    title: "Select chat bundle to verify",
+  });
+
+  if (!uris || uris.length === 0) {
+    return;
+  }
+
+  const bundlePath = uris[0]!.fsPath;
   const raw = await fs.readFile(bundlePath, "utf-8");
   const bundle = JSON.parse(raw) as ChatBundle;
+  if (bundle.type !== "chat-persistence" || bundle.schemaVersion !== 1) {
+    vscode.window.showErrorMessage("Invalid or unsupported chat bundle format.");
+    return;
+  }
 
+  const folderFsPath = await pickImportWorkspaceFolder();
+  if (!folderFsPath) {
+    vscode.window.showErrorMessage(
+      "Open a workspace folder in Cursor before verifying a chat import."
+    );
+    return;
+  }
+
+  const postPick = await vscode.window.showQuickPick(
+    [
+      { label: "Disk checks only", postActivate: false },
+      { label: "Disk + activation checks", postActivate: true },
+    ],
+    {
+      title: "Verify scope",
+      placeHolder: "Include post-activate checks (pending.json, result.json)?",
+    }
+  );
+  if (!postPick) {
+    return;
+  }
+
+  try {
+    const wsCtx = await requireWorkspaceContext({ workspaceFolder: folderFsPath });
+    const checks = await runDiskAndActivationVerify(bundle.conversationId, wsCtx, {
+      bundle,
+      postActivate: postPick.postActivate,
+    });
+    const report = formatVerifyReport(checks);
+    for (const line of report.split("\n")) {
+      logger.appendLine(`[${new Date().toISOString()}] [chat-verify] ${line}`);
+    }
+    if (!verifyChecksAllOk(checks)) {
+      vscode.window.showErrorMessage(
+        `Chat import verify failed (${checks.filter((c) => c.status === "FAIL").length} FAIL). See Cursor Sync output.`
+      );
+      return;
+    }
+    vscode.window.showInformationMessage(
+      `Chat import verify passed (${checks.length} check${checks.length === 1 ? "" : "s"}). See Cursor Sync output.`
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.appendLine(`[${new Date().toISOString()}] [chat-verify] FAILED: ${msg}`);
+    vscode.window.showErrorMessage(`Chat verify failed: ${msg}`);
+  }
+}
+
+export async function restoreChatBundle(
+  context: vscode.ExtensionContext,
+  bundle: ChatBundle,
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  options: RestoreChatBundleOptions = {}
+): Promise<LoadChatResult> {
   if (bundle.type !== "chat-persistence" || bundle.schemaVersion !== 1) {
     throw new Error("Invalid or unsupported chat bundle format.");
   }
 
+  const warnings: string[] = [];
+  const verifyChecks: VerifyCheck[] = [];
   const conversationId = bundle.conversationId;
   let transcriptsWritten = 0;
   let storeWritten = false;
   let sidebarMerged = false;
 
-  // Collect unique source project keys from transcript relative paths
+  logChatRestoreDebug(
+    `restoreChatBundle start conversationId=${conversationId} ${bundleArtifactsDebug(bundle)}`
+  );
+
+  progress.report({ message: "Resolving workspace..." });
+  const folderFsPath =
+    options.workspaceFolder?.trim() || (await pickImportWorkspaceFolder());
+  if (!folderFsPath) {
+    throw new Error(
+      "Open a workspace folder in Cursor before importing a chat bundle (required for ~/.cursor/chats/<md5(folder)> store.db path)."
+    );
+  }
+  const wsCtx = await requireWorkspaceContext({ workspaceFolder: folderFsPath });
+  const storeWorkspaceKey = wsCtx.chatsWorkspaceKey;
+  const dryRun = options.dryRun === true;
+  const syncGlobal = options.syncGlobal !== false;
+  const pinRecent = options.pinRecent !== false;
+  logChatRestoreDebug(
+    `workspace context folder=${wsCtx.folderFsPath} chatsKey=${storeWorkspaceKey} storageId=${wsCtx.workspaceStorageId} dryRun=${dryRun} activate=${!!options.activate}`
+  );
+
   const sourceProjectKeys = new Set<string>();
   for (const tf of bundle.transcriptFiles) {
     const segments = tf.relativePath.split("/");
@@ -359,37 +640,23 @@ async function loadChat(
     }
   }
 
-  // Build project mapping: source project key -> target project folder name
   const projectMapping: Map<string, string> = new Map();
   if (sourceProjectKeys.size > 0 && bundle.transcriptFiles.length > 0) {
     progress.report({ message: "Mapping projects..." });
     const mapping = await promptForTargetProject([...sourceProjectKeys].sort());
     if (mapping === null) {
-      return { conversationId, transcriptsWritten: 0, storeWritten: false, sidebarMerged: false, warnings: ["Cancelled by user."] };
+      logChatRestoreDebug(`restoreChatBundle cancelled project mapping conversationId=${conversationId}`);
+      return {
+        conversationId,
+        transcriptsWritten: 0,
+        storeWritten: false,
+        storeWorkspaceKey,
+        sidebarMerged: false,
+        warnings: ["Cancelled by user."],
+      };
     }
     for (const [k, v] of mapping) {
       projectMapping.set(k, v);
-    }
-  }
-
-  // Build workspace mapping for store.db: source workspace key -> target workspace key
-  let targetWorkspaceKey: string | undefined;
-  if (bundle.storeSnapshot) {
-    const chatsRoot = resolveChatsRoot();
-    const sourceKey = bundle.storeSnapshot.sourceWorkspaceKey;
-    const localWorkspaces = await listChatsWorkspaceDirs(chatsRoot);
-
-    if (localWorkspaces.length === 0) {
-      warnings.push("No local chat workspaces found in ~/.cursor/chats/. store.db restore skipped.");
-    } else if (localWorkspaces.length === 1) {
-      targetWorkspaceKey = localWorkspaces[0]!.name;
-    } else {
-      progress.report({ message: "Selecting target workspace..." });
-      const picked = await promptForTargetWorkspace(sourceKey, localWorkspaces);
-      if (picked === null) {
-        return { conversationId, transcriptsWritten: 0, storeWritten: false, sidebarMerged: false, warnings: ["Cancelled by user."] };
-      }
-      targetWorkspaceKey = picked;
     }
   }
 
@@ -413,6 +680,14 @@ async function loadChat(
       const remappedPath = [mappedKey, ...segments.slice(1)].join("/");
       const targetPath = path.join(projectsRoot, remappedPath);
 
+      if (dryRun) {
+        logChatRestoreDebug(
+          `[dry-run] would write transcript ${targetPath} (${decoded.length} bytes)`
+        );
+        transcriptsWritten += 1;
+        continue;
+      }
+
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
 
       const { entries: backupEntries } = await createBackup(context, [targetPath]);
@@ -424,20 +699,30 @@ async function loadChat(
         warnings.push(`Failed to write ${remappedPath}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    logChatRestoreDebug(
+      `transcripts restore done conversationId=${conversationId} written=${transcriptsWritten} of=${bundle.transcriptFiles.length}`
+    );
   }
 
-  // Restore store.db (remapped to target workspace)
-  if (bundle.storeSnapshot && targetWorkspaceKey) {
+  if (bundle.storeSnapshot) {
     progress.report({ message: "Restoring store.db..." });
     const snap = bundle.storeSnapshot;
     const decoded = decodeTranscriptArtifact(snap.content, snap.encoding);
 
     const actualChecksum = computeArtifactChecksum(decoded);
     if (actualChecksum !== snap.checksum) {
-      warnings.push("store.db checksum mismatch; skipped.");
+      throw new Error("store.db checksum mismatch; import aborted.");
+    }
+
+    const chatsRoot = resolveChatsRoot();
+    const storeDbPath = path.join(chatsRoot, storeWorkspaceKey, conversationId, "store.db");
+
+    if (dryRun) {
+      logChatRestoreDebug(
+        `[dry-run] would write store ${storeDbPath} (${decoded.length} bytes)`
+      );
+      storeWritten = true;
     } else {
-      const chatsRoot = resolveChatsRoot();
-      const storeDbPath = path.join(chatsRoot, targetWorkspaceKey, conversationId, "store.db");
       await fs.mkdir(path.dirname(storeDbPath), { recursive: true });
 
       const { entries: backupEntries } = await createBackup(context, [storeDbPath]);
@@ -446,100 +731,196 @@ async function loadChat(
         storeWritten = true;
       } catch (err) {
         await rollbackFromBackup(backupEntries);
-        warnings.push(`Failed to write store.db: ${err instanceof Error ? err.message : String(err)}`);
+        throw new Error(
+          `Failed to write store.db: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
+    logChatRestoreDebug(
+      `store.db restore conversationId=${conversationId} storeWritten=${storeWritten} path=${storeDbPath} chatsKey=${storeWorkspaceKey}`
+    );
   }
 
-  // Merge sidebar metadata into state.vscdb
+  if (bundle.storeSnapshot && !storeWritten) {
+    throw new Error(
+      "Bundle contained storeSnapshot but store.db was not written (required for import parity)."
+    );
+  }
+
   if (bundle.sidebarSnapshot) {
     progress.report({ message: "Merging sidebar state..." });
-    const stateDbPaths = await resolveStateDbCandidates();
+    const { cursorUser } = resolveSyncRoots();
+    const workspaceStateDb = path.join(
+      cursorUser,
+      "workspaceStorage",
+      wsCtx.workspaceStorageId,
+      "state.vscdb"
+    );
+    const mergeTargets = await mergeTargetsForImport(workspaceStateDb, syncGlobal);
+    logChatRestoreDebug(
+      `sidebar merge conversationId=${conversationId} targets=${mergeTargets.length} [${mergeTargets.map((p) => path.basename(path.dirname(p)) + "/" + path.basename(p)).join(", ")}]`
+    );
 
-    if (stateDbPaths.length === 0) {
+    if (mergeTargets.length === 0) {
       warnings.push("state.vscdb not found; sidebar merge skipped.");
+    } else if (dryRun) {
+      logChatRestoreDebug(
+        `[dry-run] would merge sidebar into ${mergeTargets.length} state.vscdb target(s)`
+      );
+      sidebarMerged = mergeTargets.length > 0;
     } else {
-      const dbPath = stateDbPaths[0]!;
-      try {
-        const rows = await querySqliteRows(
-          dbPath,
-          "SELECT key, value FROM ItemTable WHERE key IN ('composer.composerHeaders', 'composer.composerData');",
-          { retries: SQLITE_READ_RETRIES }
-        );
-
-        let existingHeadersRaw: string | undefined;
-        let existingDataRaw: string | undefined;
-        for (const row of rows) {
-          const key = String(row.key ?? "");
-          const value = row.value;
-          if (key === "composer.composerHeaders") {
-            existingHeadersRaw = typeof value === "string" ? value : JSON.stringify(value);
-          }
-          if (key === "composer.composerData") {
-            existingDataRaw = typeof value === "string" ? value : JSON.stringify(value);
-          }
-        }
-
-        // Build import payload from the sidebar snapshot
-        const snap = bundle.sidebarSnapshot;
-        const headersPayload = snap.composerHeaders
-          ? (snap.composerHeaders as Record<string, unknown>)
-          : deriveComposerHeadersPayloadFromSidebarSnapshot({
-              ...snap,
-              title: bundle.title,
-              lastUpdatedAt: bundle.createdAt,
-            });
-
-        const dataPayload = snap.composerData
-          ? (snap.composerData as Record<string, unknown>)
-          : undefined;
-
-        const scriptParts: string[] = ["BEGIN IMMEDIATE;"];
-
-        if (headersPayload) {
-          const merged = mergeComposerHeadersChain(existingHeadersRaw, [headersPayload]);
-          const escaped = escapeSqlLiteral(JSON.stringify(merged));
-          scriptParts.push(
-            `UPDATE ItemTable SET value = '${escaped}' WHERE key = 'composer.composerHeaders';`,
-            `INSERT INTO ItemTable (key, value) SELECT 'composer.composerHeaders', '${escaped}' WHERE NOT EXISTS (SELECT 1 FROM ItemTable WHERE key = 'composer.composerHeaders');`
-          );
-        }
-
-        if (dataPayload) {
-          const merged = mergeComposerDataAdditive(existingDataRaw, [dataPayload]);
-          const escaped = escapeSqlLiteral(JSON.stringify(merged));
-          scriptParts.push(
-            `UPDATE ItemTable SET value = '${escaped}' WHERE key = 'composer.composerData';`,
-            `INSERT INTO ItemTable (key, value) SELECT 'composer.composerData', '${escaped}' WHERE NOT EXISTS (SELECT 1 FROM ItemTable WHERE key = 'composer.composerData');`
-          );
-        }
-
-        scriptParts.push("COMMIT;");
-
-        if (scriptParts.length > 2) {
+      for (const dbPath of mergeTargets) {
+        try {
           const { entries: backupEntries } = await createBackup(context, [dbPath]);
           try {
-            await runSqliteScript(dbPath, scriptParts.join("\n") + "\n");
-            sidebarMerged = true;
+            const mergeResult = await mergeSidebarIntoStateDb(
+              dbPath,
+              bundle,
+              wsCtx.workspaceIdentifier as unknown as MergeWorkspaceIdentifier,
+              { pinRecent }
+            );
+            warnings.push(...mergeResult.warnings);
+            if (mergeResult.merged) {
+              sidebarMerged = true;
+              logChatRestoreDebug(
+                `sidebar merge success conversationId=${conversationId} db=${path.basename(dbPath)}`
+              );
+            }
           } catch (err) {
             await rollbackFromBackup(backupEntries);
-            warnings.push(`state.vscdb write failed: ${err instanceof Error ? err.message : String(err)}; rolled back.`);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            warnings.push(`state.vscdb write failed for ${path.basename(dbPath)}: ${errMsg}; rolled back.`);
+            logChatRestoreDebug(
+              `sidebar merge failure conversationId=${conversationId} db=${path.basename(dbPath)} error=${errMsg}`
+            );
           }
+        } catch (err) {
+          const isTimeout = isExecFileTimeoutError(err);
+          const errMsg = err instanceof Error ? err.message : String(err);
+          warnings.push(
+            isTimeout
+              ? `state.vscdb timed out for ${path.basename(dbPath)} (database may be locked).`
+              : `state.vscdb merge failed for ${path.basename(dbPath)}: ${errMsg}`
+          );
+          logChatRestoreDebug(
+            `sidebar merge error conversationId=${conversationId} db=${path.basename(dbPath)} timeout=${isTimeout} error=${errMsg}`
+          );
         }
-      } catch (err) {
-        const isTimeout = isExecFileTimeoutError(err);
-        warnings.push(
-          isTimeout
-            ? "state.vscdb timed out (database may be locked); sidebar merge skipped."
-            : `state.vscdb read failed: ${err instanceof Error ? err.message : String(err)}`
-        );
       }
     }
   }
 
-  await pruneOldBackups(context);
+  if (!dryRun) {
+    progress.report({ message: "Verifying import..." });
+    const diskChecks = await runDiskAndActivationVerify(conversationId, wsCtx, {
+      bundle,
+      postActivate: false,
+    });
+    verifyChecks.push(...diskChecks);
+    for (const c of diskChecks) {
+      logChatRestoreDebug(`verify: ${formatVerifyCheckLine(c)}`);
+    }
+    if (!verifyChecksAllOk(diskChecks)) {
+      throw new Error(
+        `Import verify failed (see verify lines above):\n${formatVerifyReport(diskChecks)}`
+      );
+    }
 
-  return { conversationId, transcriptsWritten, storeWritten, sidebarMerged, warnings };
+    if (options.activate) {
+      progress.report({ message: "Activating composer..." });
+      const activationOutcome = await runPostImportActivation(
+        bundle,
+        conversationId,
+        wsCtx,
+        {
+          activateStrict: options.activateStrict,
+          bridgeWaitResultMs: options.bridgeWaitResultMs,
+          dryRun: false,
+          extensionPath: context.extensionUri.fsPath,
+          log: (line) => logChatRestoreDebug(line),
+        }
+      );
+      if (
+        options.activateStrict &&
+        activationOutcome.stagedOnly &&
+        !activationOutcome.ok
+      ) {
+        throw new Error(
+          "Activation staged only (--activate-strict requires confirmed activation)"
+        );
+      }
+      if (options.pingServer) {
+        pingServerProbe(conversationId, (line) => logChatRestoreDebug(line));
+      }
+      progress.report({ message: "Verifying activation..." });
+      const activationChecks = await verifyActivationChecks(conversationId);
+      verifyChecks.push(...activationChecks);
+      for (const c of activationChecks) {
+        logChatRestoreDebug(`verify: ${formatVerifyCheckLine(c)}`);
+      }
+      if (!verifyChecksAllOk(activationChecks)) {
+        throw new Error(
+          `Activation verify failed:\n${formatVerifyReport(activationChecks)}`
+        );
+      }
+    } else if (options.postActivate) {
+      progress.report({ message: "Verifying activation..." });
+      const activationChecks = await verifyActivationChecks(conversationId);
+      verifyChecks.push(...activationChecks);
+      for (const c of activationChecks) {
+        logChatRestoreDebug(`verify: ${formatVerifyCheckLine(c)}`);
+      }
+      if (!verifyChecksAllOk(activationChecks)) {
+        throw new Error(
+          `Activation verify failed:\n${formatVerifyReport(activationChecks)}`
+        );
+      }
+    }
+  } else {
+    logChatRestoreDebug("[dry-run] skipped disk and activation verify");
+    if (options.activate) {
+      await runPostImportActivation(bundle, conversationId, wsCtx, {
+        activateStrict: options.activateStrict,
+        bridgeWaitResultMs: options.bridgeWaitResultMs,
+        dryRun: true,
+        extensionPath: context.extensionUri.fsPath,
+        log: (line) => logChatRestoreDebug(line),
+      });
+    }
+    if (options.pingServer) {
+      pingServerProbe(conversationId, (line) => logChatRestoreDebug(line));
+    }
+  }
+
+  if (!dryRun) {
+    await pruneOldBackups(context);
+  }
+
+  const result: LoadChatResult = {
+    conversationId,
+    transcriptsWritten,
+    storeWritten,
+    storeWorkspaceKey,
+    sidebarMerged,
+    warnings,
+    verifyChecks: verifyChecks.length > 0 ? verifyChecks : undefined,
+  };
+  logChatRestoreDebug(
+    `restoreChatBundle done conversationId=${conversationId} transcriptsWritten=${transcriptsWritten} storeWritten=${storeWritten} storeWorkspaceKey=${storeWorkspaceKey} sidebarMerged=${sidebarMerged} warnings=${warnings.length}${warnings.length > 0 ? ` [${warnings.join("; ")}]` : ""}`
+  );
+  return result;
+}
+
+async function loadChat(
+  context: vscode.ExtensionContext,
+  bundlePath: string,
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  restoreOptions: RestoreChatBundleOptions = restoreOptionsFromConfiguration()
+): Promise<LoadChatResult> {
+  progress.report({ message: "Reading bundle..." });
+  const raw = await fs.readFile(bundlePath, "utf-8");
+  const bundle = JSON.parse(raw) as ChatBundle;
+  return restoreChatBundle(context, bundle, progress, restoreOptions);
 }
 
 function resolveProjectsRoot(): string {
@@ -552,24 +933,6 @@ function safeJsonParse(value: string): unknown {
   } catch {
     return value;
   }
-}
-
-interface WorkspaceDir {
-  name: string;
-  fullPath: string;
-}
-
-async function listChatsWorkspaceDirs(chatsRoot: string): Promise<WorkspaceDir[]> {
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = await fs.readdir(chatsRoot, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  return entries
-    .filter((e) => e.isDirectory())
-    .map((e) => ({ name: e.name, fullPath: path.join(chatsRoot, e.name) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function humanWorkspaceLabel(folderName: string): string {
@@ -631,28 +994,4 @@ async function promptForTargetProject(sourceProjectKeys: string[]): Promise<Map<
   }
 
   return mapping;
-}
-
-async function promptForTargetWorkspace(
-  sourceWorkspaceKey: string | undefined,
-  localWorkspaces: WorkspaceDir[]
-): Promise<string | null> {
-  const sourceLabel = sourceWorkspaceKey ? humanWorkspaceLabel(sourceWorkspaceKey) : "unknown";
-
-  const picks: vscode.QuickPickItem[] = localWorkspaces.map((w) => ({
-    label: humanWorkspaceLabel(w.name),
-    description: w.name,
-    detail: w.fullPath,
-  }));
-
-  const selected = await vscode.window.showQuickPick(picks, {
-    title: `Select target workspace for store.db (source: "${sourceLabel}")`,
-    placeHolder: "Choose the local workspace where chat data should be restored",
-  });
-
-  if (!selected) {
-    return null;
-  }
-
-  return selected.description!;
 }

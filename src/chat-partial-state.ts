@@ -1,0 +1,315 @@
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import type { ChatBundle } from "./chat-persistence.js";
+import type { WorkspaceIdentifier } from "./chat-workspace-context.js";
+import { __chatPersistenceInternals } from "./transcripts.js";
+
+const { querySqliteRows } = __chatPersistenceInternals;
+
+export const PARTIAL_STATE_STRIPPED = new Set([
+  "capabilities",
+  "conversationActionManager",
+  "agentSessionId",
+]);
+
+export type PartialState = Record<string, unknown>;
+
+export interface BundleToPartialStateOptions {
+  workspaceIdentifier?: WorkspaceIdentifier | Record<string, unknown> | null;
+}
+
+export interface StoreDbIndex {
+  meta: Record<string, unknown>;
+  blobCount: number;
+  error?: string;
+}
+
+function composerTimestampMs(record: Record<string, unknown>): number {
+  let best = 0;
+  for (const field of ["lastUpdatedAt", "lastOpenedAt", "createdAt"] as const) {
+    const raw = record[field];
+    if (typeof raw === "number" && raw > 0) {
+      const v = Math.trunc(raw);
+      best = Math.max(best, v >= 1_000_000_000_000 ? v : v * 1000);
+    } else if (typeof raw === "string" && raw.trim().length > 0) {
+      if (/^\d+$/.test(raw.trim())) {
+        const v = parseInt(raw.trim(), 10);
+        best = Math.max(best, v >= 1_000_000_000_000 ? v : v * 1000);
+      } else {
+        const parsed = Date.parse(raw.replace("Z", "+00:00"));
+        if (!Number.isNaN(parsed)) {
+          best = Math.max(best, parsed);
+        }
+      }
+    }
+  }
+  return best;
+}
+
+function bundleCreatedAtMs(bundle: Record<string, unknown>): number {
+  const rawTs = bundle.createdAt;
+  if (typeof rawTs === "string") {
+    const parsed = Date.parse(rawTs.replace("Z", "+00:00"));
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return Date.now();
+}
+
+function sidebarHeaderRow(
+  sidebarSnapshot: Record<string, unknown> | null | undefined,
+  conversationId: string
+): Record<string, unknown> | null {
+  if (!sidebarSnapshot || typeof sidebarSnapshot !== "object") {
+    return null;
+  }
+  const headers = sidebarSnapshot.composerHeaders;
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return null;
+  }
+  const allComposers = (headers as Record<string, unknown>).allComposers;
+  if (!Array.isArray(allComposers)) {
+    return null;
+  }
+  for (const entry of allComposers) {
+    if (
+      entry &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      (entry as Record<string, unknown>).composerId === conversationId
+    ) {
+      return entry as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function sidebarRichComposerBlob(
+  sidebarSnapshot: Record<string, unknown> | null | undefined,
+  conversationId: string
+): Record<string, unknown> | null {
+  if (!sidebarSnapshot || typeof sidebarSnapshot !== "object") {
+    return null;
+  }
+  const data = sidebarSnapshot.composerData;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+  const keyed = (data as Record<string, unknown>)[conversationId];
+  if (keyed && typeof keyed === "object" && !Array.isArray(keyed)) {
+    const obj = keyed as Record<string, unknown>;
+    if (Object.keys(obj).length > 0) {
+      return obj;
+    }
+    return null;
+  }
+  const composers = (data as Record<string, unknown>).allComposers;
+  if (Array.isArray(composers)) {
+    for (const entry of composers) {
+      if (
+        entry &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        (entry as Record<string, unknown>).composerId === conversationId
+      ) {
+        return entry as Record<string, unknown>;
+      }
+    }
+  }
+  return null;
+}
+
+function mergeRichComposerIntoPartial(
+  partial: PartialState,
+  rich: Record<string, unknown>,
+  conversationId: string
+): void {
+  for (const [key, value] of Object.entries(rich)) {
+    if (PARTIAL_STATE_STRIPPED.has(key) || key === "composerId") {
+      continue;
+    }
+    partial[key] = value;
+  }
+  partial.composerId = conversationId;
+}
+
+export function bundleToPartialState(
+  bundle: ChatBundle | Record<string, unknown>,
+  conversationId: string,
+  options: BundleToPartialStateOptions = {}
+): PartialState {
+  const cid = conversationId.trim();
+  const bundleRec = bundle as Record<string, unknown>;
+  const snap = bundleRec.sidebarSnapshot;
+  const snapDict =
+    snap && typeof snap === "object" && !Array.isArray(snap)
+      ? (snap as Record<string, unknown>)
+      : null;
+  const header = sidebarHeaderRow(snapDict, cid);
+
+  const title =
+    typeof bundleRec.title === "string"
+      ? bundleRec.title
+      : null;
+  const name =
+    title ??
+    (header && typeof header.name === "string" ? header.name : null) ??
+    cid;
+
+  let ts = bundleCreatedAtMs(bundleRec);
+  if (header) {
+    const headerTs = composerTimestampMs(header);
+    if (headerTs > 0) {
+      ts = headerTs;
+    }
+  }
+
+  const partial: PartialState = {
+    composerId: cid,
+    name,
+    type: (header?.type as string | undefined) ?? "head",
+    unifiedMode: (header?.unifiedMode as string | undefined) ?? "agent",
+    forceMode: (header?.forceMode as string | undefined) ?? "edit",
+    createdAt:
+      header?.createdAt !== undefined && header.createdAt !== null
+        ? header.createdAt
+        : ts,
+    lastUpdatedAt:
+      header?.lastUpdatedAt !== undefined && header.lastUpdatedAt !== null
+        ? header.lastUpdatedAt
+        : ts,
+    lastOpenedAt:
+      header?.lastOpenedAt !== undefined && header.lastOpenedAt !== null
+        ? header.lastOpenedAt
+        : ts,
+  };
+
+  let wi: WorkspaceIdentifier | Record<string, unknown> | null | undefined =
+    options.workspaceIdentifier;
+  if (wi == null && bundleRec.workspaceIdentifier != null) {
+    const bwi = bundleRec.workspaceIdentifier;
+    if (typeof bwi === "object" && !Array.isArray(bwi)) {
+      wi = bwi as Record<string, unknown>;
+    }
+  }
+  if (wi == null && header?.workspaceIdentifier != null) {
+    const hwi = header.workspaceIdentifier;
+    if (typeof hwi === "object" && !Array.isArray(hwi)) {
+      wi = hwi as Record<string, unknown>;
+    }
+  }
+  if (wi != null) {
+    partial.workspaceIdentifier = wi;
+  }
+
+  if (header) {
+    for (const field of [
+      "subtitle",
+      "hasUnreadMessages",
+      "isArchived",
+      "isDraft",
+      "contextUsagePercent",
+      "filesChangedCount",
+      "conversationCheckpointLastUpdatedAt",
+    ] as const) {
+      if (field in header) {
+        partial[field] = header[field];
+      }
+    }
+  }
+
+  const rich = sidebarRichComposerBlob(snapDict, cid);
+  if (rich) {
+    mergeRichComposerIntoPartial(partial, rich, cid);
+  }
+
+  return partial;
+}
+
+export function sidebarSnapshotHasComposerData(
+  bundle: ChatBundle | Record<string, unknown>,
+  conversationId: string
+): boolean {
+  const snap = (bundle as Record<string, unknown>).sidebarSnapshot;
+  if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
+    return false;
+  }
+  const cd = (snap as Record<string, unknown>).composerData;
+  if (!cd || typeof cd !== "object" || Array.isArray(cd)) {
+    return false;
+  }
+  const val = (cd as Record<string, unknown>)[conversationId];
+  return val != null && typeof val === "object" && !Array.isArray(val) && Object.keys(val as object).length > 0;
+}
+
+function parseMetaValue(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+export async function decodeStoreDbIndex(
+  storeBytes: Buffer | Uint8Array
+): Promise<StoreDbIndex> {
+  const out: StoreDbIndex = { meta: {}, blobCount: 0 };
+  if (!storeBytes || storeBytes.length === 0) {
+    return out;
+  }
+
+  const tmpPath = path.join(
+    os.tmpdir(),
+    `cursor-sync-store-index-${process.pid}-${Date.now()}.db`
+  );
+
+  try {
+    await fs.writeFile(tmpPath, storeBytes);
+    const tables = await querySqliteRows(
+      tmpPath,
+      "SELECT name FROM sqlite_master WHERE type='table'"
+    );
+    const tableNames = new Set(
+      tables
+        .map((r) => r.name)
+        .filter((n): n is string => typeof n === "string")
+    );
+
+    if (tableNames.has("meta")) {
+      const metaRows = await querySqliteRows(tmpPath, "SELECT key, value FROM meta");
+      const metaOut: Record<string, unknown> = {};
+      for (const row of metaRows) {
+        const key = row.key;
+        if (typeof key === "string" || typeof key === "number") {
+          metaOut[String(key)] = parseMetaValue(row.value);
+        }
+      }
+      out.meta = metaOut;
+    }
+
+    if (tableNames.has("blobs")) {
+      const countRows = await querySqliteRows(
+        tmpPath,
+        "SELECT COUNT(*) AS c FROM blobs"
+      );
+      const c = countRows[0]?.c;
+      out.blobCount =
+        typeof c === "number"
+          ? Math.trunc(c)
+          : typeof c === "string"
+            ? parseInt(c, 10) || 0
+            : 0;
+    }
+  } catch {
+    out.error = "unreadable";
+  } finally {
+    await fs.unlink(tmpPath).catch(() => {});
+  }
+
+  return out;
+}

@@ -120,6 +120,14 @@ Commands such as Resolve Conflicts and Reset are available from the Command Pale
 - **Degraded restore visibility**: Completion output reports restored counts for transcript/store/sidebar/state merge and warns when sidebar state merge is partial or skipped.
 - **Verification**: Use [`docs/transcript-simulation-verification.md`](docs/transcript-simulation-verification.md) for checksum checks, path checks, and full-restore verification.
 
+## Chat bundle import (import-v2)
+
+Import a single conversation bundle (transcripts, `store.db`, sidebar merge) and optionally register it in the IDE via `composer.createComposer`:
+
+- **Commands**: **Import Chat Bundle**, **Import Chat Bundle (Activate)**, **Export Chat Bundle**, **Verify Chat Import** (Command Palette).
+- **Settings**: `cursorSync.chatImport.activateDefault`, `activateStrict`, `bridgeWaitResultSeconds`, `pingServer` — mirror `python3 scripts/cursor_chat_io.py import` flags.
+- **Activation**: With the extension installed, Cursor Sync watches `~/.cursor/import-activation/pending.json` and writes `result.json`, superseding the Python bridge for CLI `--activate` runs. Details: [`docs/chat-import-activate.md`](docs/chat-import-activate.md).
+
 ## Extension List Sync
 
 On push, the extension generates an `extensions.json` file listing all installed non-builtin extensions with their IDs and versions. On pull:

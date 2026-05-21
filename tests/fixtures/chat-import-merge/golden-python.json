@@ -1,0 +1,145 @@
+{
+  "composerDataForFocus": {
+    "aaaa1111-bbbb-2222-cccc-333333333333": {
+      "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+      "rich": true
+    },
+    "bbbb2222-cccc-3333-dddd-444444444444": {
+      "composerId": "bbbb2222-cccc-3333-dddd-444444444444",
+      "rich": false
+    },
+    "customFlag": true,
+    "hasMigratedComposerData": true,
+    "hasMigratedMultipleComposers": true,
+    "lastFocusedComposerIds": [
+      "aaaa1111-bbbb-2222-cccc-333333333333"
+    ],
+    "selectedComposerIds": []
+  },
+  "filterComposerDataForConversation": {
+    "aaaa1111-bbbb-2222-cccc-333333333333": {
+      "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+      "rich": true
+    },
+    "bbbb2222-cccc-3333-dddd-444444444444": {
+      "composerId": "bbbb2222-cccc-3333-dddd-444444444444",
+      "rich": false
+    },
+    "hasMigratedComposerData": false,
+    "selectedComposerIds": [
+      "other"
+    ]
+  },
+  "filterComposerHeadersForConversation": {
+    "allComposers": [
+      {
+        "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+        "lastOpenedAt": 1710000000000,
+        "lastUpdatedAt": 1710000000000,
+        "name": "Golden Import Chat",
+        "subtitle": "from snapshot",
+        "type": "head"
+      }
+    ]
+  },
+  "headersPayloadForImport": {
+    "allComposers": [
+      {
+        "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+        "createdAt": 1774872000000,
+        "forceMode": "edit",
+        "hasUnreadMessages": false,
+        "isArchived": false,
+        "isDraft": false,
+        "lastOpenedAt": 1774872000000,
+        "lastUpdatedAt": 1774872000000,
+        "name": "Golden Import Chat",
+        "subtitle": "2 files",
+        "type": "head",
+        "unifiedMode": "agent"
+      }
+    ]
+  },
+  "pinComposerAsMostRecent": {
+    "allComposers": [
+      {
+        "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+        "createdAt": 1774872000000,
+        "forceMode": "edit",
+        "hasUnreadMessages": false,
+        "isArchived": false,
+        "isDraft": false,
+        "lastOpenedAt": 1774872000101,
+        "lastUpdatedAt": 1774872000101,
+        "name": "Golden Import Chat",
+        "subtitle": "2 files",
+        "type": "head",
+        "unifiedMode": "agent"
+      }
+    ]
+  },
+  "prepareHeadersForImport": {
+    "allComposers": [
+      {
+        "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+        "createdAt": 1774872000000,
+        "forceMode": "edit",
+        "hasUnreadMessages": false,
+        "isArchived": false,
+        "isDraft": false,
+        "lastOpenedAt": 1774872000101,
+        "lastUpdatedAt": 1774872000101,
+        "name": "Golden Import Chat",
+        "subtitle": "2 files",
+        "type": "head",
+        "unifiedMode": "agent",
+        "workspaceIdentifier": {
+          "id": "ws-storage-abc123",
+          "uri": {
+            "$mid": 1,
+            "_sep": 47,
+            "external": "file:///home/dev/my-repo",
+            "fsPath": "/home/dev/my-repo",
+            "path": "/home/dev/my-repo",
+            "scheme": "file"
+          }
+        }
+      },
+      {
+        "composerId": "keep-other-composer",
+        "lastUpdatedAt": 1680000000000,
+        "name": "Unrelated",
+        "type": "head"
+      }
+    ]
+  },
+  "stampWorkspaceIdentifierOnHeaders": {
+    "allComposers": [
+      {
+        "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+        "createdAt": 1774872000000,
+        "forceMode": "edit",
+        "hasUnreadMessages": false,
+        "isArchived": false,
+        "isDraft": false,
+        "lastOpenedAt": 1774872000101,
+        "lastUpdatedAt": 1774872000101,
+        "name": "Golden Import Chat",
+        "subtitle": "2 files",
+        "type": "head",
+        "unifiedMode": "agent",
+        "workspaceIdentifier": {
+          "id": "ws-storage-abc123",
+          "uri": {
+            "$mid": 1,
+            "_sep": 47,
+            "external": "file:///home/dev/my-repo",
+            "fsPath": "/home/dev/my-repo",
+            "path": "/home/dev/my-repo",
+            "scheme": "file"
+          }
+        }
+      }
+    ]
+  }
+}

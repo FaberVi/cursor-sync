@@ -1,0 +1,226 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as os from "node:os";
+import { createHash } from "node:crypto";
+import { pathToFileURL } from "node:url";
+import { resolveSyncRoots } from "./paths.js";
+
+export interface WorkspaceIdentifierUri {
+  $mid: number;
+  fsPath: string;
+  _sep: number;
+  external: string;
+  path: string;
+  scheme: string;
+}
+
+export interface WorkspaceIdentifier {
+  id: string;
+  uri: WorkspaceIdentifierUri;
+}
+
+export interface WorkspaceContext {
+  workspaceStorageId: string;
+  folderFsPath: string;
+  chatsWorkspaceKey: string;
+  workspaceIdentifier: WorkspaceIdentifier;
+}
+
+export interface ResolveWorkspaceContextOptions {
+  stateDbPath?: string;
+  workspaceFolder?: string;
+}
+
+export function md5FolderKey(folderFsPath: string): string {
+  return createHash("md5").update(folderFsPath, "utf8").digest("hex");
+}
+
+export function folderPathFromWorkspaceUri(uri: string): string {
+  if (uri.startsWith("file://")) {
+    const parsed = new URL(uri);
+    return decodeURIComponent(parsed.pathname);
+  }
+  return uri;
+}
+
+function expandUserFolder(folder: string): string {
+  if (folder === "~") {
+    return os.homedir();
+  }
+  if (folder.startsWith("~/")) {
+    return path.join(os.homedir(), folder.slice(2));
+  }
+  return folder;
+}
+
+function workspaceStorageIdFromStateDb(stateDbPath: string): string | undefined {
+  const parts = stateDbPath.split(path.sep);
+  const idx = parts.indexOf("workspaceStorage");
+  if (idx >= 0 && idx + 1 < parts.length) {
+    return parts[idx + 1];
+  }
+  return undefined;
+}
+
+async function folderFromWorkspaceJson(
+  workspaceJsonPath: string
+): Promise<string | undefined> {
+  try {
+    const raw = await fs.readFile(workspaceJsonPath, "utf8");
+    const data = JSON.parse(raw) as { folder?: unknown };
+    const folder = data.folder;
+    if (typeof folder === "string") {
+      return folderPathFromWorkspaceUri(folder);
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+async function scanWorkspaceStorageForId(
+  wsRoot: string,
+  folderFsPath: string
+): Promise<string | undefined> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(wsRoot);
+  } catch {
+    return undefined;
+  }
+
+  for (const ent of entries) {
+    const wj = path.join(wsRoot, ent, "workspace.json");
+    try {
+      const stat = await fs.stat(wj);
+      if (!stat.isFile()) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    const folder = await folderFromWorkspaceJson(wj);
+    if (folder === undefined) {
+      continue;
+    }
+    if (path.resolve(folder) === folderFsPath) {
+      return ent;
+    }
+  }
+  return undefined;
+}
+
+function buildWorkspaceIdentifier(
+  wsId: string,
+  folderFsPath: string
+): WorkspaceIdentifier {
+  const sep = process.platform === "win32" ? 1 : 47;
+  const external = pathToFileURL(folderFsPath).href;
+  return {
+    id: wsId,
+    uri: {
+      $mid: 1,
+      fsPath: folderFsPath,
+      _sep: sep,
+      external,
+      path: folderFsPath,
+      scheme: "file",
+    },
+  };
+}
+
+export async function resolveWorkspaceContext(
+  options: ResolveWorkspaceContextOptions = {}
+): Promise<WorkspaceContext | null> {
+  let folderFsPath: string | undefined;
+  let workspaceStorageId: string | undefined;
+
+  if (options.workspaceFolder?.trim()) {
+    folderFsPath = path.resolve(expandUserFolder(options.workspaceFolder.trim()));
+  }
+
+  if (options.stateDbPath) {
+    const stateDbPath = path.resolve(options.stateDbPath);
+    workspaceStorageId = workspaceStorageIdFromStateDb(stateDbPath);
+    if (!folderFsPath) {
+      const parentName = path.basename(path.dirname(stateDbPath));
+      if (parentName !== "globalStorage") {
+        const wj = path.join(path.dirname(stateDbPath), "workspace.json");
+        folderFsPath = await folderFromWorkspaceJson(wj);
+      }
+    }
+  }
+
+  if (!folderFsPath) {
+    return null;
+  }
+
+  folderFsPath = path.resolve(folderFsPath);
+  const chatsKey = md5FolderKey(folderFsPath);
+
+  if (!workspaceStorageId) {
+    const { cursorUser } = resolveSyncRoots();
+    const wsRoot = path.join(cursorUser, "workspaceStorage");
+    workspaceStorageId = await scanWorkspaceStorageForId(wsRoot, folderFsPath);
+  }
+
+  const wsId = workspaceStorageId ?? chatsKey;
+  return {
+    workspaceStorageId: wsId,
+    folderFsPath,
+    chatsWorkspaceKey: chatsKey,
+    workspaceIdentifier: buildWorkspaceIdentifier(wsId, folderFsPath),
+  };
+}
+
+export async function requireWorkspaceContext(
+  options: ResolveWorkspaceContextOptions = {}
+): Promise<WorkspaceContext> {
+  const ctx = await resolveWorkspaceContext(options);
+  if (ctx) {
+    return ctx;
+  }
+  throw new Error(
+    "Workspace folder is required for chat import: sets ~/.cursor/chats/<md5(folder)> store.db path and stamps workspaceIdentifier on composer headers."
+  );
+}
+
+export async function resolveChatsWorkspaceKey(
+  targetWorkspace: string | undefined,
+  stateDbPath: string | undefined,
+  workspaceFolder: string | undefined,
+  bundle: { storeSnapshot?: { sourceWorkspaceKey?: string } | null }
+): Promise<{ key: string; warnings: string[] }> {
+  const warnings: string[] = [];
+  const ctx = await resolveWorkspaceContext({
+    stateDbPath,
+    workspaceFolder,
+  });
+
+  if (ctx) {
+    if (targetWorkspace && targetWorkspace !== ctx.chatsWorkspaceKey) {
+      if (targetWorkspace === ctx.workspaceStorageId) {
+        warnings.push(
+          `--target-workspace ${targetWorkspace} is workspaceStorage id; using chats key md5(folder)=${ctx.chatsWorkspaceKey} for store.db.`
+        );
+      } else {
+        warnings.push(
+          `--target-workspace ${targetWorkspace} overrides resolved chats key ${ctx.chatsWorkspaceKey}.`
+        );
+        return { key: targetWorkspace, warnings };
+      }
+    }
+    return { key: ctx.chatsWorkspaceKey, warnings };
+  }
+
+  if (targetWorkspace) {
+    return { key: targetWorkspace, warnings };
+  }
+
+  const swk = bundle.storeSnapshot?.sourceWorkspaceKey;
+  if (typeof swk === "string" && swk.length > 0) {
+    return { key: swk, warnings };
+  }
+
+  return { key: "imported", warnings };
+}

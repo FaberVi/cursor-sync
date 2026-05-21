@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "type": "chat-persistence",
+  "createdAt": "2026-03-30T12:00:00.000Z",
+  "conversationId": "aaaa1111-bbbb-2222-cccc-333333333333",
+  "title": "Golden Import Chat",
+  "subtitle": "2 files",
+  "previewText": "Golden Import Chat",
+  "sidebarSnapshot": {
+    "conversationId": "aaaa1111-bbbb-2222-cccc-333333333333",
+    "composerHeaders": {
+      "allComposers": [
+        {
+          "type": "head",
+          "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+          "name": "Golden Import Chat",
+          "subtitle": "from snapshot",
+          "lastUpdatedAt": 1710000000000,
+          "lastOpenedAt": 1710000000000
+        },
+        {
+          "type": "head",
+          "composerId": "other-chat-id-should-drop",
+          "name": "Other Chat",
+          "lastUpdatedAt": 1700000000000
+        }
+      ]
+    },
+    "composerData": {
+      "aaaa1111-bbbb-2222-cccc-333333333333": {
+        "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+        "rich": true
+      },
+      "bbbb2222-cccc-3333-dddd-444444444444": {
+        "composerId": "bbbb2222-cccc-3333-dddd-444444444444",
+        "rich": false
+      },
+      "selectedComposerIds": ["other"],
+      "hasMigratedComposerData": false
+    }
+  },
+  "storeSnapshot": null,
+  "transcriptFiles": []
+}

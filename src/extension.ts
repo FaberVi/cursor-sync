@@ -5,7 +5,16 @@ import { executePull } from "./pull.js";
 import { executeExport } from "./export.js";
 import { executeImport } from "./import.js";
 import { executeExportTranscripts, executeImportTranscripts } from "./transcripts.js";
-import { executeSaveChatLocal, executeLoadChatLocal } from "./chat-persistence.js";
+import {
+  executeSaveChatLocal,
+  executeLoadChatLocal,
+  executeImportChatBundle,
+  executeExportChatBundle,
+  executeImportChatBundleActivate,
+  executeVerifyChatImport,
+} from "./chat-persistence.js";
+import { executeExportChatToGist } from "./export-gist-chat.js";
+import { executeImportChatFromGist } from "./import-gist-chat.js";
 import { executeImportTranscriptsFromGist } from "./import-gist-transcripts.js";
 import { showStatus } from "./diagnostics.js";
 import { resolveConflictsCommand } from "./conflicts.js";
@@ -23,6 +32,10 @@ import {
   notifyPendingStateBundleIfAny,
 } from "./state-reconciliation.js";
 import { executePrepareSyncFromLandingZone } from "./sync-engine.js";
+import {
+  disposeActivationWatcher,
+  registerActivationWatcher,
+} from "./chat-import-activate-watcher.js";
 
 let configListener: vscode.Disposable | undefined;
 
@@ -105,6 +118,42 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.importChatBundle", () =>
+      executeImportChatBundle(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.exportChatBundle", () =>
+      executeExportChatBundle(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.importChatBundleActivate", () =>
+      executeImportChatBundleActivate(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.verifyChatImport", () =>
+      executeVerifyChatImport(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.exportChatToGist", () =>
+      executeExportChatToGist(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.importChatFromGist", () =>
+      executeImportChatFromGist(context)
+    )
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.importTranscriptsFromGist", () =>
       executeImportTranscriptsFromGist(context)
     )
@@ -155,10 +204,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
   void notifyPendingStateBundleIfAny(context);
 
+  registerActivationWatcher(context);
+
   logger.appendLine(`[${new Date().toISOString()}] Cursor Sync activated`);
 }
 
 export function deactivate(): void {
+  disposeActivationWatcher();
   stopScheduler();
 }
 
