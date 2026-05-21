@@ -12,7 +12,10 @@ import {
   summarizeTranscriptForSidebar,
   type TranscriptBundleArtifactEncoding,
 } from "./transcript-bundle.js";
-import { requireWorkspaceContext } from "./chat-workspace-context.js";
+import {
+  buildChatsKeyToFolderMap,
+  requireWorkspaceContext,
+} from "./chat-workspace-context.js";
 import {
   filterComposerDataForConversation,
   filterComposerHeadersForConversation,
@@ -38,7 +41,7 @@ import {
   presentChatImportOutcome,
   promptChatImportOptions,
 } from "./chat-import-ux.js";
-import { humanWorkspaceLabel } from "./chat-workspace-label.js";
+import { humanWorkspaceLabel, projectQuickPickLabel } from "./chat-workspace-label.js";
 import {
   buildChatBundlesCollection,
   selectGistExportFile,
@@ -1031,12 +1034,15 @@ async function promptForTargetProject(sourceProjectKeys: string[]): Promise<Map<
     return null;
   }
 
+  const { cursorUser } = resolveSyncRoots();
+  const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+
   const mapping = new Map<string, string>();
 
   for (const sourceKey of sourceProjectKeys) {
     const sourceLabel = humanWorkspaceLabel(sourceKey);
     const picks: vscode.QuickPickItem[] = localProjects.map((p) => ({
-      label: humanWorkspaceLabel(p.name),
+      label: projectQuickPickLabel(p.name, folderMap),
       description: p.name,
       detail: path.join(projectsRoot, p.name),
     }));
@@ -1060,3 +1066,7 @@ async function promptForTargetProject(sourceProjectKeys: string[]): Promise<Map<
 
   return mapping;
 }
+
+export const __chatPersistenceTestUtils = {
+  promptForTargetProject,
+};
