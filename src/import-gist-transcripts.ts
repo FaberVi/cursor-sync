@@ -19,6 +19,8 @@ import {
   type TranscriptManifestV2,
 } from "./transcript-bundle.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
+import { humanWorkspaceLabel } from "./chat-workspace-label.js";
+import { listChatsWorkspaceDirs, type WorkspaceDir } from "./chat-export-ux.js";
 
 const {
   runSqliteScript,
@@ -46,11 +48,6 @@ interface ImportFromGistResult {
   sidebarMerged: boolean;
   conversationIds: string[];
   warnings: string[];
-}
-
-interface WorkspaceDir {
-  name: string;
-  fullPath: string;
 }
 
 /**
@@ -464,27 +461,6 @@ async function readExistingComposerState(
 }
 
 // --- Workspace & Project Selection ---
-
-async function listChatsWorkspaceDirs(chatsRoot: string): Promise<WorkspaceDir[]> {
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = await fs.readdir(chatsRoot, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  return entries
-    .filter((e) => e.isDirectory())
-    .map((e) => ({ name: e.name, fullPath: path.join(chatsRoot, e.name) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function humanWorkspaceLabel(folderName: string): string {
-  const parts = folderName.split("-");
-  if (parts.length <= 1) return folderName;
-  const last = parts[parts.length - 1]!;
-  const withoutHash = last.length === 40 || last.length === 8 ? parts.slice(0, -1) : parts;
-  return withoutHash.join("-");
-}
 
 async function promptForTargetWorkspace(
   localWorkspaces: WorkspaceDir[]

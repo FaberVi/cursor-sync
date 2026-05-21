@@ -38,6 +38,7 @@ import {
   presentChatImportOutcome,
   promptChatImportOptions,
 } from "./chat-import-ux.js";
+import { humanWorkspaceLabel } from "./chat-workspace-label.js";
 
 const {
   querySqliteRows,
@@ -933,14 +934,6 @@ function safeJsonParse(value: string): unknown {
   } catch {
     return value;
   }
-}
-
-function humanWorkspaceLabel(folderName: string): string {
-  const parts = folderName.split("-");
-  if (parts.length <= 1) return folderName;
-  const last = parts[parts.length - 1]!;
-  const withoutHash = last.length === 40 || last.length === 8 ? parts.slice(0, -1) : parts;
-  return withoutHash.join("-");
 }
 
 async function promptForTargetProject(sourceProjectKeys: string[]): Promise<Map<string, string> | null> {
