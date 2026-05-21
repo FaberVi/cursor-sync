@@ -1,6 +1,12 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
+import * as vscode from "vscode";
+import { humanWorkspaceLabel } from "./chat-workspace-label.js";
 import { summarizeTranscriptForSidebar } from "./transcript-bundle.js";
+import { __chatPersistenceInternals } from "./transcripts.js";
+
+const { resolveChatsRoot } = __chatPersistenceInternals;
 
 export interface WorkspaceDir {
   name: string;
@@ -12,6 +18,15 @@ export interface ConversationExportRow {
   label: string;
   description: string;
   detail: string;
+}
+
+export interface ChatExportSelection {
+  workspaceKey: string;
+  conversationIds: string[];
+}
+
+function resolveProjectsRoot(): string {
+  return path.join(os.homedir(), ".cursor", "projects");
 }
 
 export async function listChatsWorkspaceDirs(chatsRoot: string): Promise<WorkspaceDir[]> {
@@ -121,4 +136,71 @@ export async function listConversationsForWorkspace(
     });
   }
   return rows.sort((a, b) => a.conversationId.localeCompare(b.conversationId));
+}
+
+export async function pickChatsForExport(): Promise<ChatExportSelection | null> {
+  const chatsRoot = resolveChatsRoot();
+  const workspaces = await listChatsWorkspaceDirs(chatsRoot);
+
+  if (workspaces.length === 0) {
+    vscode.window.showErrorMessage(
+      "No local chat workspaces found. Open a workspace in Cursor first."
+    );
+    return null;
+  }
+
+  let workspaceKey: string;
+  if (workspaces.length === 1) {
+    workspaceKey = workspaces[0]!.name;
+  } else {
+    const pick = await vscode.window.showQuickPick(
+      workspaces.map((w) => ({
+        label: humanWorkspaceLabel(w.name),
+        description: w.name,
+        detail: w.fullPath,
+      })),
+      {
+        title: "Select workspace for chat export",
+        placeHolder: "Choose the workspace whose chats you want to export",
+        ignoreFocusOut: true,
+      }
+    );
+    if (!pick?.description) return null;
+    workspaceKey = pick.description;
+  }
+
+  const projectsRoot = resolveProjectsRoot();
+  const conversations = await listConversationsForWorkspace(
+    workspaceKey,
+    chatsRoot,
+    projectsRoot
+  );
+
+  if (conversations.length === 0) {
+    vscode.window.showInformationMessage("No conversations found in this workspace.");
+    return null;
+  }
+
+  const convPicks = await vscode.window.showQuickPick(
+    conversations.map((c) => ({
+      label: c.label,
+      description: c.conversationId,
+      detail: c.detail,
+      picked: true,
+    })),
+    {
+      canPickMany: true,
+      title: `Select conversations to export (${conversations.length} found)`,
+      placeHolder:
+        "Each selection exports store.db (scoped workspace), transcripts, and sidebar metadata when available",
+      ignoreFocusOut: true,
+    }
+  );
+
+  if (!convPicks || convPicks.length === 0) return null;
+
+  return {
+    workspaceKey,
+    conversationIds: convPicks.map((p) => p.description!).filter(Boolean),
+  };
 }

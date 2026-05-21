@@ -1,16 +1,38 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-describe("chat-export-ux disk helpers", () => {
+const showQuickPickMock = vi.fn();
+const showErrorMessageMock = vi.fn();
+const showInformationMessageMock = vi.fn();
+
+let mockedHome = "";
+
+vi.mock("vscode", () => ({
+  window: {
+    showQuickPick: showQuickPickMock,
+    showErrorMessage: showErrorMessageMock,
+    showInformationMessage: showInformationMessageMock,
+  },
+}));
+
+vi.mock("node:os", async () => {
+  const actual = await vi.importActual<typeof import("node:os")>("node:os");
+  return { ...actual, homedir: () => mockedHome };
+});
+
+describe("chat-export-ux", () => {
   let tmpRoot: string;
   let chatsRoot: string;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "chat-export-ux-"));
-    chatsRoot = path.join(tmpRoot, "chats");
+    mockedHome = tmpRoot;
+    chatsRoot = path.join(tmpRoot, ".cursor", "chats");
     await fs.mkdir(chatsRoot, { recursive: true });
+    vi.resetModules();
   });
 
   it("listChatsWorkspaceDirs returns sorted workspace dirs", async () => {
@@ -30,9 +52,33 @@ describe("chat-export-ux disk helpers", () => {
     await fs.mkdir(withStore, { recursive: true });
     await fs.mkdir(withoutStore, { recursive: true });
     await fs.writeFile(path.join(withStore, "store.db"), "sqlite", "utf-8");
-    const projectsRoot = path.join(tmpRoot, "projects");
+    const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
     const { listConversationsForWorkspace } = await import("../src/chat-export-ux.js");
     const rows = await listConversationsForWorkspace(wk, chatsRoot, projectsRoot);
     expect(rows.map((r) => r.conversationId)).toEqual(["conv-a"]);
+  });
+
+  it("returns null when workspace picker dismissed", async () => {
+    await fs.mkdir(path.join(chatsRoot, "wk-a"), { recursive: true });
+    await fs.mkdir(path.join(chatsRoot, "wk-b"), { recursive: true });
+    showQuickPickMock.mockResolvedValueOnce(undefined);
+    const { pickChatsForExport } = await import("../src/chat-export-ux.js");
+    await expect(pickChatsForExport()).resolves.toBeNull();
+  });
+
+  it("returns workspaceKey and conversationIds on success", async () => {
+    const wk = "wk-md5";
+    await fs.mkdir(path.join(chatsRoot, wk, "conv-1"), { recursive: true });
+    await fs.writeFile(path.join(chatsRoot, wk, "conv-1", "store.db"), "x");
+    await fs.mkdir(path.join(chatsRoot, wk, "wk-b"), { recursive: true });
+    await fs.mkdir(path.join(chatsRoot, "wk-other"), { recursive: true });
+    showQuickPickMock
+      .mockResolvedValueOnce({ description: wk })
+      .mockResolvedValueOnce([{ description: "conv-1" }]);
+    const { pickChatsForExport } = await import("../src/chat-export-ux.js");
+    await expect(pickChatsForExport()).resolves.toEqual({
+      workspaceKey: wk,
+      conversationIds: ["conv-1"],
+    });
   });
 });
