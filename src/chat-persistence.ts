@@ -355,13 +355,30 @@ export async function executeExportChatBundle(
 export async function buildChatBundle(
   _context: vscode.ExtensionContext,
   conversationId: string,
-  progress: vscode.Progress<{ message?: string; increment?: number }>
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  options?: { workspaceKey?: string }
 ): Promise<{ bundle: ChatBundle; title: string; warnings: string[] }> {
   const warnings: string[] = [];
 
   progress.report({ message: "Locating store.db..." });
   let storeSnapshot: ChatBundle["storeSnapshot"] = null;
-  const storeInfo = await findStoreDbForConversation(conversationId);
+  let storeInfo: { absolutePath: string; workspaceKey: string } | undefined;
+  if (options?.workspaceKey) {
+    const candidate = path.join(
+      resolveChatsRoot(),
+      options.workspaceKey,
+      conversationId,
+      "store.db"
+    );
+    try {
+      const stat = await fs.stat(candidate);
+      if (stat.isFile()) {
+        storeInfo = { absolutePath: candidate, workspaceKey: options.workspaceKey };
+      }
+    } catch {}
+  } else {
+    storeInfo = await findStoreDbForConversation(conversationId);
+  }
   if (storeInfo) {
     const raw = await fs.readFile(storeInfo.absolutePath);
     const checksum = computeArtifactChecksum(raw);
@@ -373,7 +390,11 @@ export async function buildChatBundle(
       sourceWorkspaceKey: storeInfo.workspaceKey,
     };
   } else {
-    warnings.push(`store.db not found for conversation ${conversationId}; only transcripts will be saved.`);
+    warnings.push(
+      options?.workspaceKey
+        ? `store.db not found at ~/.cursor/chats/${options.workspaceKey}/${conversationId}/store.db; only transcripts will be saved.`
+        : `store.db not found for conversation ${conversationId}; only transcripts will be saved.`
+    );
   }
 
   progress.report({ message: "Reading sidebar metadata from state.vscdb..." });

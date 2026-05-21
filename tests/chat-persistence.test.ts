@@ -13,6 +13,16 @@ import type { ChatBundle } from "../src/chat-persistence.js";
 
 const FIXTURE_REPO = "/tmp/cursor-sync-fixture-repo";
 
+const mockHomedir = vi.hoisted(() => ({ home: undefined as string | undefined }));
+
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return {
+    ...actual,
+    homedir: () => mockHomedir.home ?? actual.homedir(),
+  };
+});
+
 const mockWorkspaceFolders = vi.hoisted(() => [
   {
     uri: { fsPath: "/tmp/cursor-sync-fixture-repo", scheme: "file" },
@@ -179,6 +189,59 @@ describe("chat-persistence bundle format", () => {
       deserialized.storeSnapshot!.encoding
     );
     expect(decodedStore.equals(storeContent)).toBe(true);
+  });
+});
+
+describe("buildChatBundle scoped store lookup", () => {
+  let tempHome: string;
+
+  beforeEach(async () => {
+    tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-scoped-store-"));
+    mockHomedir.home = tempHome;
+  });
+
+  afterEach(async () => {
+    mockHomedir.home = undefined;
+    await fs.rm(tempHome, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it("buildChatBundle uses workspaceKey store only without fallback", async () => {
+    const conversationId = "conv-scoped";
+    const wkA = "wk-a";
+    const wkB = "wk-b";
+    await fs.mkdir(path.join(tempHome, ".cursor", "chats", wkA, conversationId), {
+      recursive: true,
+    });
+    await fs.mkdir(path.join(tempHome, ".cursor", "chats", wkB, conversationId), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(tempHome, ".cursor", "chats", wkB, conversationId, "store.db"),
+      "from-b"
+    );
+    const transcriptDir = path.join(
+      tempHome,
+      ".cursor",
+      "projects",
+      "proj-a",
+      "agent-transcripts",
+      conversationId
+    );
+    await fs.mkdir(transcriptDir, { recursive: true });
+    await fs.writeFile(
+      path.join(transcriptDir, "main.jsonl"),
+      '{"role":"user","content":"hello"}\n'
+    );
+
+    const { buildChatBundle } = await import("../src/chat-persistence.js");
+    const context = {
+      globalStorageUri: { fsPath: path.join(tempHome, "global-storage") },
+    } as import("vscode").ExtensionContext;
+    const { bundle } = await buildChatBundle(context, conversationId, { report: () => {} }, {
+      workspaceKey: wkA,
+    });
+    expect(bundle.storeSnapshot).toBeNull();
   });
 });
 
