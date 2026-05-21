@@ -3,9 +3,10 @@ import { GistClient } from "./gist.js";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { getLogger } from "./diagnostics.js";
-import { buildChatBundle } from "./chat-persistence.js";
+import { pickChatsForExport } from "./chat-export-ux.js";
+import { buildChatExportPayload } from "./chat-persistence.js";
 
-export const CHAT_BUNDLE_GIST_FILE_NAME = "chat-bundle.json";
+export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 
 export async function executeExportChatToGist(
   context: vscode.ExtensionContext
@@ -13,17 +14,10 @@ export async function executeExportChatToGist(
   const logger = getLogger();
   logger.appendLine(`[${new Date().toISOString()}] Chat export to Gist started`);
 
-  const conversationId = await vscode.window.showInputBox({
-    prompt: "Enter the conversation ID (folder name under agent-transcripts or chats)",
-    placeHolder: "e.g. abc123-def456-...",
-    ignoreFocusOut: true,
-  });
-
-  if (!conversationId || conversationId.trim().length === 0) {
+  const selection = await pickChatsForExport();
+  if (!selection) {
     return;
   }
-
-  const trimmedId = conversationId.trim();
 
   const token = await requireToken(context);
   if (!token) {
@@ -41,15 +35,17 @@ export async function executeExportChatToGist(
     },
     async (progress) => {
       try {
-        const { bundle, title, warnings } = await buildChatBundle(context, trimmedId, progress);
+        const { gistPayload, warnings, primaryTitle, bundles } = await buildChatExportPayload(
+          context,
+          selection,
+          progress
+        );
         logger.appendLine(
-          `[${new Date().toISOString()}] [chat-restore-debug] gist export bundle conversationId=${bundle.conversationId} title=${title} transcriptFiles=${bundle.transcriptFiles.length} storeSnapshot=${bundle.storeSnapshot ? `${bundle.storeSnapshot.sizeBytes}b` : "absent"} sidebarSnapshot=${bundle.sidebarSnapshot ? Object.keys(bundle.sidebarSnapshot).join(",") : "absent"} warnings=${warnings.length}`
+          `[${new Date().toISOString()}] Chat gist export workspace=${selection.workspaceKey} count=${bundles.length}`
         );
 
         const gistFiles: Record<string, { content: string }> = {
-          [CHAT_BUNDLE_GIST_FILE_NAME]: {
-            content: JSON.stringify(bundle, null, 2),
-          },
+          [gistPayload.fileName]: { content: gistPayload.content },
         };
 
         const result = await withRetry(() =>
@@ -71,10 +67,12 @@ export async function executeExportChatToGist(
           logger.appendLine(`[${new Date().toISOString()}] [chat-export-gist] ${w}`);
         }
 
-        const action = await vscode.window.showInformationMessage(
-          `Export successful! Chat "${title}" in private Gist at ${gistUrl}. Anyone with the link can open it.`,
-          "Copy URL"
-        );
+        const successMsg =
+          bundles.length === 1
+            ? `Export successful! Chat "${primaryTitle}" in private Gist at ${gistUrl}. Anyone with the link can open it.`
+            : `Export successful! ${bundles.length} chats in private Gist at ${gistUrl}. Anyone with the link can open it.`;
+
+        const action = await vscode.window.showInformationMessage(successMsg, "Copy URL");
 
         if (action === "Copy URL") {
           await vscode.env.clipboard.writeText(gistUrl);

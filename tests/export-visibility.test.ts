@@ -59,4 +59,9 @@ describe("export gist visibility and copy", () => {
     expect(exportGistChatSrc).toContain("private Gist");
     expect(exportGistChatSrc).toContain("Anyone with the link can open it.");
   });
+
+  it("multi-chat export success copy mentions private gist and link caveat", () => {
+    expect(exportGistChatSrc).toContain("${bundles.length} chats in private Gist");
+    expect(exportGistChatSrc).toContain("Anyone with the link can open it.");
+  });
 });

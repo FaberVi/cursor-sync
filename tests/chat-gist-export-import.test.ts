@@ -11,6 +11,7 @@ import {
 import type { ChatBundle } from "../src/chat-persistence.js";
 
 const CHAT_BUNDLE_GIST_FILE_NAME = "chat-bundle.json";
+const CHAT_BUNDLES_GIST_FILE_NAME = "chat-bundles.json";
 
 const createGistMock = vi.fn();
 const getGistMock = vi.fn();
@@ -176,6 +177,42 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function mockExportPicker(workspaceKey: string, conversationIds: string[]) {
+  showQuickPickMock.mockResolvedValueOnce(
+    conversationIds.map((id) => ({ description: id, label: id }))
+  );
+}
+
+async function setupExportConversation(
+  root: string,
+  workspaceKey: string,
+  conversationId: string,
+  options?: { projectKey?: string; transcriptContent?: string }
+): Promise<void> {
+  await fs.mkdir(
+    path.join(root, ".cursor", "chats", workspaceKey, conversationId),
+    { recursive: true }
+  );
+  await fs.writeFile(
+    path.join(root, ".cursor", "chats", workspaceKey, conversationId, "store.db"),
+    "sqlite",
+    "utf-8"
+  );
+  if (options?.projectKey) {
+    const transcriptPath = path.join(
+      root,
+      ".cursor",
+      "projects",
+      options.projectKey,
+      "agent-transcripts",
+      conversationId,
+      `${conversationId}.jsonl`
+    );
+    await fs.mkdir(path.dirname(transcriptPath), { recursive: true });
+    await fs.writeFile(transcriptPath, options.transcriptContent ?? transcriptFixture, "utf-8");
+  }
+}
+
 describe("chat gist export and import", () => {
   let tmpRoot: string;
   let extensionContext: { globalStorageUri: { fsPath: string } };
@@ -217,21 +254,13 @@ describe("chat gist export and import", () => {
   });
 
   it("exports chat bundle to private gist with chat-bundle.json only", async () => {
+    const workspaceKey = "chat-export-wk";
     const projectKey = "chat-export-project";
     const conversationId = "conv-gist-export-001";
-    const transcriptPath = path.join(
-      tmpRoot,
-      ".cursor",
-      "projects",
+    await setupExportConversation(tmpRoot, workspaceKey, conversationId, {
       projectKey,
-      "agent-transcripts",
-      conversationId,
-      `${conversationId}.jsonl`
-    );
-    await fs.mkdir(path.dirname(transcriptPath), { recursive: true });
-    await fs.writeFile(transcriptPath, transcriptFixture, "utf-8");
-
-    showInputBoxMock.mockResolvedValue(conversationId);
+    });
+    mockExportPicker(workspaceKey, [conversationId]);
     showInformationMessageMock.mockResolvedValue("Copy URL");
     createGistMock.mockResolvedValue({
       ok: true,
@@ -269,21 +298,13 @@ describe("chat gist export and import", () => {
   });
 
   it("calls createGist with two arguments only (no public flag)", async () => {
+    const workspaceKey = "chat-two-arg-wk";
     const projectKey = "chat-two-arg-project";
     const conversationId = "conv-two-arg-001";
-    const transcriptPath = path.join(
-      tmpRoot,
-      ".cursor",
-      "projects",
+    await setupExportConversation(tmpRoot, workspaceKey, conversationId, {
       projectKey,
-      "agent-transcripts",
-      conversationId,
-      `${conversationId}.jsonl`
-    );
-    await fs.mkdir(path.dirname(transcriptPath), { recursive: true });
-    await fs.writeFile(transcriptPath, transcriptFixture, "utf-8");
-
-    showInputBoxMock.mockResolvedValue(conversationId);
+    });
+    mockExportPicker(workspaceKey, [conversationId]);
     showInformationMessageMock.mockResolvedValue(undefined);
     createGistMock.mockResolvedValue({
       ok: true,
@@ -376,22 +397,15 @@ describe("chat gist export and import", () => {
   });
 
   it("round-trips export gist bundle through import restore", async () => {
+    const workspaceKey = "roundtrip-wk";
     const projectKey = "roundtrip-project";
     const conversationId = "conv-roundtrip-001";
-    const transcriptPath = path.join(
-      tmpRoot,
-      ".cursor",
-      "projects",
+    await setupExportConversation(tmpRoot, workspaceKey, conversationId, {
       projectKey,
-      "agent-transcripts",
-      conversationId,
-      `${conversationId}.jsonl`
-    );
-    await fs.mkdir(path.dirname(transcriptPath), { recursive: true });
-    await fs.writeFile(transcriptPath, transcriptFixture, "utf-8");
+    });
 
     let exportedBundleJson = "";
-    showInputBoxMock.mockResolvedValueOnce(conversationId);
+    mockExportPicker(workspaceKey, [conversationId]);
     showInformationMessageMock.mockResolvedValue(undefined);
     createGistMock.mockImplementation(async (gistFiles: Record<string, { content: string }>) => {
       exportedBundleJson = gistFiles[CHAT_BUNDLE_GIST_FILE_NAME].content;
@@ -418,7 +432,18 @@ describe("chat gist export and import", () => {
     const importTargetKey = "roundtrip-target";
     const importTargetDir = path.join(tmpRoot, ".cursor", "projects", importTargetKey);
     await fs.mkdir(importTargetDir, { recursive: true });
-    await fs.rm(transcriptPath, { force: true });
+    await fs.rm(
+      path.join(
+        tmpRoot,
+        ".cursor",
+        "projects",
+        projectKey,
+        "agent-transcripts",
+        conversationId,
+        `${conversationId}.jsonl`
+      ),
+      { force: true }
+    );
 
     getGistMock.mockResolvedValue({
       ok: true,
@@ -553,5 +578,48 @@ describe("chat gist export and import", () => {
       'Gist chat import failed: Invalid chat bundle: expected type "chat-persistence", got "agent-transcripts".'
     );
     restoreSpy.mockRestore();
+  });
+
+  it("exports multiple chats to chat-bundles.json", async () => {
+    const workspaceKey = "multi-export-wk";
+    const id1 = "conv-multi-001";
+    const id2 = "conv-multi-002";
+    await setupExportConversation(tmpRoot, workspaceKey, id1);
+    await setupExportConversation(tmpRoot, workspaceKey, id2);
+    mockExportPicker(workspaceKey, [id1, id2]);
+    showInformationMessageMock.mockResolvedValue(undefined);
+    createGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-multi-export",
+        html_url: "https://gist.github.com/example/gist-multi-export",
+        description: "Cursor Sync - Chat Export",
+        files: {},
+        created_at: "2026-05-20T12:00:00.000Z",
+        updated_at: "2026-05-20T12:00:00.000Z",
+      },
+    });
+
+    const { executeExportChatToGist } = await import("../src/export-gist-chat.js");
+    await executeExportChatToGist(extensionContext as never);
+    await flushMicrotasks();
+
+    expect(createGistMock).toHaveBeenCalledTimes(1);
+    const [gistFiles] = createGistMock.mock.calls[0] as [
+      Record<string, { content: string }>,
+      string,
+    ];
+    expect(Object.keys(gistFiles)).toEqual([CHAT_BUNDLES_GIST_FILE_NAME]);
+    const collection = JSON.parse(gistFiles[CHAT_BUNDLES_GIST_FILE_NAME].content) as {
+      type: string;
+      bundles: unknown[];
+    };
+    expect(collection.type).toBe("chat-bundles-collection");
+    expect(collection.bundles).toHaveLength(2);
+    expect(
+      showInformationMessageMock.mock.calls.some((c) =>
+        String(c[0]).includes("2 chats in private Gist")
+      )
+    ).toBe(true);
   });
 });
