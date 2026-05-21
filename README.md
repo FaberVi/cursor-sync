@@ -108,6 +108,20 @@ Commands such as Resolve Conflicts and Reset are available from the Command Pale
 - **Export**: Run **Cursor Sync: Export Settings to Private Gist**. You choose which synced files to include; a new **private** Gist is created and the URL can be copied to share (e.g. with others or for backup). Requires a configured GitHub token. Anyone with the link can open the gist.
 - **Import**: Run **Cursor Sync: Import Settings from Private Gist** and enter a Gist URL or ID. You choose which files to apply locally. The extension uses your configured token to fetch the gist via the GitHub API (required for private gists).
 
+## Chat Export and Import
+
+Single-conversation chat bundles (`type: chat-persistence`, `schemaVersion: 1`) capture transcript JSONL files, an optional `store.db` snapshot, and sidebar metadata for restore into the current workspace.
+
+### Local bundle
+
+- **Save**: Run **Cursor Sync: Save Chat Locally**. Enter a conversation ID (folder name under `agent-transcripts` or `~/.cursor/chats`). The extension builds a `ChatBundle` JSON file under extension global storage (`chat-bundles/`).
+- **Load**: Run **Cursor Sync: Load Chat from Local Bundle** and pick a saved bundle file. Transcripts, store, and sidebar state are restored; project mapping is prompted when transcript paths span multiple source projects.
+
+### Private Gist
+
+- **Export**: Run **Cursor Sync: Export Chat to Private Gist** (`cursorSync.exportChatToGist`). Enter a conversation ID; requires a configured GitHub token. Creates a **private** Gist with `chat-bundle.json` only (description: `Cursor Sync - Chat Export`). Copy the URL to share; anyone with the link can open the gist.
+- **Import**: Run **Cursor Sync: Import Chat from Private Gist** (`cursorSync.importChatFromGist`). Enter a Gist URL or ID; uses your token for private gists. Fetches and validates `chat-bundle.json`, then restores the conversation. Gists that contain only a transcript manifest are rejected—use **Import Agent Transcripts from Private Gist** for those. Offers **Reload Window** after import because Cursor may not hot-reload sidebar state.
+
 ## Agent Transcript Export and Import
 
 - **Export**: Run **Cursor Sync: Export Agent Transcripts to Private Gist**. The extension exports selected `~/.cursor/projects/*/agent-transcripts/**/*.jsonl` files and writes a `transcript-manifest.json` (`schemaVersion: 2`) with transcript/store/sidebar artifact metadata and checksums.
