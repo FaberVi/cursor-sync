@@ -62,7 +62,7 @@ function workspaceStorageIdFromStateDb(stateDbPath: string): string | undefined 
   return undefined;
 }
 
-async function folderFromWorkspaceJson(
+export async function folderFromWorkspaceJson(
   workspaceJsonPath: string
 ): Promise<string | undefined> {
   try {
@@ -76,6 +76,29 @@ async function folderFromWorkspaceJson(
     return undefined;
   }
   return undefined;
+}
+
+export async function buildChatsKeyToFolderMap(
+  cursorUser: string
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const wsRoot = path.join(cursorUser, "workspaceStorage");
+  let entries: string[];
+  try {
+    entries = await fs.readdir(wsRoot);
+  } catch {
+    return map;
+  }
+  for (const ent of entries) {
+    const wj = path.join(wsRoot, ent, "workspace.json");
+    const folder = await folderFromWorkspaceJson(wj);
+    if (!folder) {
+      continue;
+    }
+    const folderFsPath = path.resolve(folder);
+    map.set(md5FolderKey(folderFsPath), folderFsPath);
+  }
+  return map;
 }
 
 async function scanWorkspaceStorageForId(

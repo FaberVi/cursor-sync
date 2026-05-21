@@ -20,6 +20,7 @@ import {
   resolveWorkspaceContext,
   requireWorkspaceContext,
   resolveChatsWorkspaceKey,
+  buildChatsKeyToFolderMap,
 } from "../src/chat-workspace-context.js";
 
 const mockResolveSyncRoots = vi.mocked(resolveSyncRoots);
@@ -149,6 +150,27 @@ describe("chat-workspace-context", () => {
       expect(ctx!.folderFsPath).toBe(path.resolve(folder));
       expect(ctx!.chatsWorkspaceKey).toBe(md5FolderKey(path.resolve(folder)));
       expect(ctx!.workspaceIdentifier.id).toBe(storageId);
+    });
+
+    describe("buildChatsKeyToFolderMap", () => {
+      it("maps md5(folder) to resolved folder path from workspace.json entries", async () => {
+        const folder = path.join(tempRoot, "mapped-repo");
+        await fs.mkdir(folder, { recursive: true });
+        const resolved = path.resolve(folder);
+        const storageId = "map-storage-1";
+        const wsDir = path.join(cursorUser, "workspaceStorage", storageId);
+        await fs.mkdir(wsDir, { recursive: true });
+        await fs.writeFile(
+          path.join(wsDir, "workspace.json"),
+          JSON.stringify({ folder: pathToFileUri(folder) }),
+          "utf8"
+        );
+        await fs.writeFile(path.join(wsDir, "broken.json"), "not-json", "utf8");
+
+        const map = await buildChatsKeyToFolderMap(cursorUser);
+        expect(map.get(md5FolderKey(resolved))).toBe(resolved);
+        expect(map.size).toBe(1);
+      });
     });
   });
 
