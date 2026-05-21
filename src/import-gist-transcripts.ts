@@ -19,8 +19,14 @@ import {
   type TranscriptManifestV2,
 } from "./transcript-bundle.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
-import { humanWorkspaceLabel } from "./chat-workspace-label.js";
+import { buildChatsKeyToFolderMap } from "./chat-workspace-context.js";
+import {
+  humanWorkspaceLabel,
+  projectQuickPickLabel,
+  workspaceQuickPickLabel,
+} from "./chat-workspace-label.js";
 import { listChatsWorkspaceDirs, type WorkspaceDir } from "./chat-export-ux.js";
+import { resolveSyncRoots } from "./paths.js";
 
 const {
   runSqliteScript,
@@ -465,11 +471,12 @@ async function readExistingComposerState(
 async function promptForTargetWorkspace(
   localWorkspaces: WorkspaceDir[]
 ): Promise<string | null> {
-  const picks: vscode.QuickPickItem[] = localWorkspaces.map((w) => ({
-    label: humanWorkspaceLabel(w.name),
-    description: w.name,
-    detail: w.fullPath,
-  }));
+  const { cursorUser } = resolveSyncRoots();
+  const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+  const picks: vscode.QuickPickItem[] = localWorkspaces.map((w) => {
+    const row = workspaceQuickPickLabel(w.name, folderMap);
+    return { label: row.label, description: row.description, detail: w.fullPath };
+  });
 
   const selected = await vscode.window.showQuickPick(picks, {
     title: "Select target workspace for imported chats",
@@ -508,12 +515,14 @@ async function promptForProjectMapping(
     return null;
   }
 
+  const { cursorUser } = resolveSyncRoots();
+  const folderMap = await buildChatsKeyToFolderMap(cursorUser);
   const mapping = new Map<string, string>();
 
   for (const sourceKey of sourceProjectKeys) {
     const sourceLabel = humanWorkspaceLabel(sourceKey);
     const picks: vscode.QuickPickItem[] = localProjects.map((p) => ({
-      label: humanWorkspaceLabel(p.name),
+      label: projectQuickPickLabel(p.name, folderMap),
       description: p.name,
       detail: path.join(projectsRoot, p.name),
     }));
@@ -533,3 +542,8 @@ async function promptForProjectMapping(
 
   return mapping;
 }
+
+export const __importGistTranscriptsTestUtils = {
+  promptForTargetWorkspace,
+  promptForProjectMapping,
+};
