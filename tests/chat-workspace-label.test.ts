@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
 describe("humanWorkspaceLabel", () => {
   it("strips 40-char hex suffix", async () => {
@@ -40,5 +42,51 @@ describe("formatDisplayPath", () => {
     const { formatDisplayPath } = await import("../src/chat-workspace-label.js");
     const abs = "/var/lib/cursor/proj";
     expect(formatDisplayPath(abs, "/home/user")).toBe(abs);
+  });
+});
+
+import { md5FolderKey } from "../src/chat-workspace-context.js";
+
+describe("workspaceQuickPickLabel", () => {
+  it("uses tilde path when key resolves in map", async () => {
+    const { workspaceQuickPickLabel } = await import("../src/chat-workspace-label.js");
+    const home = os.homedir();
+    const folder = path.join(home, "dev", "app");
+    const key = md5FolderKey(folder);
+    const map = new Map([[key, folder]]);
+    const row = workspaceQuickPickLabel(key, map, home);
+    expect(row.label).toBe("~/dev/app");
+    expect(row.description).toBe(key);
+  });
+
+  it("falls back to humanWorkspaceLabel for unknown key", async () => {
+    const { workspaceQuickPickLabel, humanWorkspaceLabel } = await import(
+      "../src/chat-workspace-label.js"
+    );
+    const key = "573b4babd5b2f206e06d748cd840b177";
+    const row = workspaceQuickPickLabel(key, new Map(), os.homedir());
+    expect(row.label).toBe(humanWorkspaceLabel(key));
+    expect(row.description).toBe(key);
+  });
+});
+
+describe("projectQuickPickLabel", () => {
+  it("uses tilde path when project dir matches map folder basename", async () => {
+    const { projectQuickPickLabel } = await import("../src/chat-workspace-label.js");
+    const home = os.homedir();
+    const folder = path.join(home, "dev", "cursor-sync");
+    const map = new Map([[md5FolderKey(folder), folder]]);
+    const projectDir = "home-user-dev-cursor-sync-abcdef12";
+    expect(projectQuickPickLabel(projectDir, map, home)).toBe("~/dev/cursor-sync");
+  });
+
+  it("falls back to humanWorkspaceLabel when no match", async () => {
+    const { projectQuickPickLabel, humanWorkspaceLabel } = await import(
+      "../src/chat-workspace-label.js"
+    );
+    const name = "orphan-project-abcdef12";
+    expect(projectQuickPickLabel(name, new Map(), os.homedir())).toBe(
+      humanWorkspaceLabel(name)
+    );
   });
 });
