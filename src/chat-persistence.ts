@@ -43,6 +43,8 @@ import {
   buildChatBundlesCollection,
   selectGistExportFile,
   defaultLocalExportFilename,
+  parseChatBundleOrCollection,
+  pickBundleFromCollection,
 } from "./chat-bundle-format.js";
 import { pickChatsForExport, type ChatExportSelection } from "./chat-export-ux.js";
 
@@ -591,9 +593,19 @@ export async function executeVerifyChatImport(
 
   const bundlePath = uris[0]!.fsPath;
   const raw = await fs.readFile(bundlePath, "utf-8");
-  const bundle = JSON.parse(raw) as ChatBundle;
-  if (bundle.type !== "chat-persistence" || bundle.schemaVersion !== 1) {
-    vscode.window.showErrorMessage("Invalid or unsupported chat bundle format.");
+  let bundle: ChatBundle;
+  try {
+    const parsed = parseChatBundleOrCollection(raw);
+    if (parsed.kind === "collection") {
+      vscode.window.showErrorMessage(
+        "Select a single chat bundle for verify, or pick one conversation from a multi-chat export file."
+      );
+      return;
+    }
+    bundle = parsed.bundle;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    vscode.window.showErrorMessage(`Invalid or unsupported chat bundle format: ${msg}`);
     return;
   }
 
@@ -970,7 +982,17 @@ async function loadChat(
 ): Promise<LoadChatResult> {
   progress.report({ message: "Reading bundle..." });
   const raw = await fs.readFile(bundlePath, "utf-8");
-  const bundle = JSON.parse(raw) as ChatBundle;
+  const parsed = parseChatBundleOrCollection(raw);
+  let bundle: ChatBundle;
+  if (parsed.kind === "single") {
+    bundle = parsed.bundle;
+  } else {
+    const picked = await pickBundleFromCollection(parsed.collection);
+    if (!picked) {
+      throw new Error("Chat import cancelled.");
+    }
+    bundle = picked;
+  }
   return restoreChatBundle(context, bundle, progress, restoreOptions);
 }
 

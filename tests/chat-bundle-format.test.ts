@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const showQuickPickMock = vi.fn();
+
+vi.mock("vscode", () => ({
+  window: {
+    showQuickPick: showQuickPickMock,
+  },
+}));
 import type { ChatBundle } from "../src/chat-persistence.js";
 
 const singleBundle: ChatBundle = {
@@ -15,6 +23,10 @@ const singleBundle: ChatBundle = {
 };
 
 describe("chat-bundle-format", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("parseChatBundleOrCollection returns single", async () => {
     const { parseChatBundleOrCollection } = await import("../src/chat-bundle-format.js");
     const raw = JSON.stringify(singleBundle);
@@ -68,6 +80,19 @@ describe("chat-bundle-format", () => {
     const { selectGistExportFile } = await import("../src/chat-bundle-format.js");
     const { fileName } = selectGistExportFile(1, singleBundle);
     expect(fileName).toBe("chat-bundle.json");
+  });
+
+  it("pickBundleFromCollection returns chosen bundle", async () => {
+    showQuickPickMock.mockResolvedValueOnce({ description: "conv-2" });
+    const { pickBundleFromCollection, buildChatBundlesCollection } = await import(
+      "../src/chat-bundle-format.js"
+    );
+    const collection = buildChatBundlesCollection("wk", [
+      { ...singleBundle, conversationId: "conv-1", title: "One" },
+      { ...singleBundle, conversationId: "conv-2", title: "Two" },
+    ]);
+    const picked = await pickBundleFromCollection(collection);
+    expect(picked?.conversationId).toBe("conv-2");
   });
 
   it("selectGistExportFile uses chat-bundles.json for multiple", async () => {

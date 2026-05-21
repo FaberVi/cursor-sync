@@ -1,3 +1,4 @@
+import * as vscode from "vscode";
 import type { ChatBundle } from "./chat-persistence.js";
 
 export const CHAT_BUNDLE_GIST_FILE_NAME = "chat-bundle.json";
@@ -124,4 +125,23 @@ export function defaultLocalExportFilename(
 
 export function defaultGlobalStorageFilename(timestamp: string, multi: boolean): string | undefined {
   return multi ? `chat-bundles_${timestamp}.json` : undefined;
+}
+
+export async function pickBundleFromCollection(
+  collection: ChatBundlesCollection
+): Promise<ChatBundle | null> {
+  const pick = await vscode.window.showQuickPick(
+    collection.bundles.map((b) => ({
+      label: b.title,
+      description: b.conversationId,
+      detail: b.subtitle,
+    })),
+    {
+      title: "Select chat to import",
+      placeHolder: "This export contains multiple conversations",
+      ignoreFocusOut: true,
+    }
+  );
+  if (!pick?.description) return null;
+  return collection.bundles.find((b) => b.conversationId === pick.description) ?? null;
 }
