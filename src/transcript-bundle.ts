@@ -254,6 +254,93 @@ export function summarizeTranscriptForSidebar(
   };
 }
 
+export const BOILERPLATE_PREFIXES = [
+  "The user has manually attached the following skills",
+  "<manually_attached_skills>",
+  "<EXTREMELY_IMPORTANT>",
+  "You have superpowers",
+  "Below is the full content of your",
+];
+
+export function isTranscriptBoilerplate(text: string): boolean {
+  const line = normalizePreviewLine(text);
+  if (!line) {
+    return true;
+  }
+  for (const prefix of BOILERPLATE_PREFIXES) {
+    if (line.startsWith(prefix)) {
+      return true;
+    }
+  }
+  const nonSpace = line.replace(/\s/g, "");
+  if (!nonSpace) {
+    return true;
+  }
+  const tagMatches = line.match(/<[^>]+>/g) ?? [];
+  const tagChars = tagMatches.join("").replace(/\s/g, "").length;
+  if (tagChars / nonSpace.length > 0.5) {
+    return true;
+  }
+  return false;
+}
+
+export function firstMeaningfulTranscriptTitle(
+  transcriptContent: string,
+  conversationId: string
+): string | null {
+  const userSnippets: string[] = [];
+  const anySnippets: string[] = [];
+
+  for (const rawLine of transcriptContent.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    let parsedLine: Record<string, unknown>;
+    try {
+      parsedLine = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const role =
+      typeof parsedLine.role === "string" ? parsedLine.role.trim().toLowerCase() : "";
+    for (const snippet of collectTranscriptSnippets(parsedLine)) {
+      const normalized = normalizePreviewLine(snippet);
+      if (!normalized || isTranscriptBoilerplate(normalized)) {
+        continue;
+      }
+      anySnippets.push(normalized);
+      if (role === "user") {
+        userSnippets.push(normalized);
+      }
+    }
+  }
+
+  const first = userSnippets[0] ?? anySnippets[0];
+  return first ? truncateText(first, 96) : null;
+}
+
+export function resolveConversationDisplayTitle(options: {
+  conversationId: string;
+  composerName?: string | null;
+  transcriptContent?: string | null;
+}): string {
+  const trimmed = options.composerName?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  if (options.transcriptContent) {
+    const fromTranscript = firstMeaningfulTranscriptTitle(
+      options.transcriptContent,
+      options.conversationId
+    );
+    if (fromTranscript) {
+      return fromTranscript;
+    }
+  }
+  return options.conversationId;
+}
+
 function collectTranscriptSnippets(value: unknown): string[] {
   if (typeof value === "string") {
     return [value];

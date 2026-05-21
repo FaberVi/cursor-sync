@@ -3,11 +3,14 @@ import {
   bundleArtifactSyncKey,
   decodeTranscriptArtifact,
   encodeTranscriptArtifact,
+  firstMeaningfulTranscriptTitle,
   getConversationIdFromRelativePath,
   getConversationScopedRelativePath,
   gistFileNameToSyncKey,
+  isTranscriptBoilerplate,
   isTranscriptManifestV2,
   parseTranscriptBundleManifest,
+  resolveConversationDisplayTitle,
   summarizeTranscriptForSidebar,
   syncKeyToGistFileName,
 } from "../src/transcript-bundle.js";
@@ -185,5 +188,67 @@ describe("transcript bundle helpers", () => {
       `artifacts/${projectKey}/${conversationId}/store/store.db`,
       `artifacts/${projectKey}/${conversationId}/transcript/c.jsonl`,
     ]);
+  });
+});
+
+describe("picker conversation title helpers", () => {
+  it("detects known skills/system preamble as boilerplate", () => {
+    expect(
+      isTranscriptBoilerplate("The user has manually attached the following skills to their message.")
+    ).toBe(true);
+    expect(isTranscriptBoilerplate("<manually_attached_skills>")).toBe(true);
+    expect(isTranscriptBoilerplate("You have superpowers.")).toBe(true);
+    expect(isTranscriptBoilerplate("What is the best way to export chats?")).toBe(false);
+  });
+
+  it("prefers first meaningful user line over preamble", () => {
+    const transcript = [
+      JSON.stringify({
+        role: "user",
+        message: {
+          content: [
+            {
+              type: "text",
+              text: "The user has manually attached the following skills to their message.",
+            },
+          ],
+        },
+      }),
+      JSON.stringify({
+        role: "user",
+        message: {
+          content: [{ type: "text", text: "Export chats with readable titles" }],
+        },
+      }),
+    ].join("\n");
+    expect(firstMeaningfulTranscriptTitle(transcript, "conv-1")).toContain(
+      "Export chats with readable titles"
+    );
+  });
+
+  it("resolveConversationDisplayTitle applies composer > transcript > id", () => {
+    expect(
+      resolveConversationDisplayTitle({
+        conversationId: "id-1",
+        composerName: "  My Chat  ",
+        transcriptContent: "",
+      })
+    ).toBe("My Chat");
+    const transcript = JSON.stringify({
+      role: "user",
+      message: { content: [{ type: "text", text: "Hello from user" }] },
+    });
+    expect(
+      resolveConversationDisplayTitle({
+        conversationId: "id-2",
+        transcriptContent: transcript,
+      })
+    ).toContain("Hello from user");
+    expect(
+      resolveConversationDisplayTitle({
+        conversationId: "id-3",
+        transcriptContent: "",
+      })
+    ).toBe("id-3");
   });
 });
