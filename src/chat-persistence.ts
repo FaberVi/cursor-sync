@@ -39,6 +39,12 @@ import {
   promptChatImportOptions,
 } from "./chat-import-ux.js";
 import { humanWorkspaceLabel } from "./chat-workspace-label.js";
+import {
+  buildChatBundlesCollection,
+  selectGistExportFile,
+  defaultLocalExportFilename,
+} from "./chat-bundle-format.js";
+import type { ChatExportSelection } from "./chat-export-ux.js";
 
 const {
   querySqliteRows,
@@ -520,6 +526,51 @@ export async function buildChatBundle(
   );
 
   return { bundle, title, warnings };
+}
+
+export async function buildChatExportPayload(
+  context: vscode.ExtensionContext,
+  selection: ChatExportSelection,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<{
+  bundles: ChatBundle[];
+  warnings: string[];
+  gistPayload: { fileName: string; content: string };
+  jsonForFile: string;
+  defaultSaveBasename: string;
+  primaryTitle: string;
+}> {
+  const bundles: ChatBundle[] = [];
+  const warnings: string[] = [];
+  for (const conversationId of selection.conversationIds) {
+    const { bundle, warnings: w } = await buildChatBundle(context, conversationId, progress, {
+      workspaceKey: selection.workspaceKey,
+    });
+    bundles.push(bundle);
+    warnings.push(...w);
+  }
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  let jsonForFile: string;
+  let gistPayload: { fileName: string; content: string };
+  if (bundles.length === 1) {
+    gistPayload = selectGistExportFile(1, bundles[0]!);
+    jsonForFile = gistPayload.content;
+  } else {
+    const collection = buildChatBundlesCollection(selection.workspaceKey, bundles);
+    gistPayload = selectGistExportFile(bundles.length, collection);
+    jsonForFile = gistPayload.content;
+  }
+  return {
+    bundles,
+    warnings,
+    gistPayload,
+    jsonForFile,
+    defaultSaveBasename: defaultLocalExportFilename(
+      selection.conversationIds,
+      timestamp
+    ),
+    primaryTitle: bundles.length === 1 ? bundles[0]!.title : `${bundles.length} chats`,
+  };
 }
 
 async function saveChat(
