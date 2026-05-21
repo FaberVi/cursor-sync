@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Chat export QuickPick: select workspace and multiple conversations from disk instead of typing IDs.
+- Batch chat export/import via `chat-bundles.json` / `ChatBundlesCollection` wrapper.
+
 ## v0.5.0
 
 - feat: import-v2 `ChatBundle` restore with modular merge, partial state, workspace context, and disk/activation verification.
