@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.0
+
+- feat: import-v2 `ChatBundle` restore with modular merge, partial state, workspace context, and disk/activation verification.
+- feat: `composer.createComposer` activation via pending.json watcher and Python bridge fallback (`docs/chat-import-activate.md`).
+- feat: export/import single-conversation chat bundles to private Gists (`chat-bundle.json`) using the same pipeline as local save/load.
+- fix: run SQLite scripts through a temp file and `sqlite3 .read` so hydration and store updates work reliably on Linux (stdin piping to `sqlite3` was timing out).
+
 ## v0.4.9
 
 - feat: add default sync glob `vsix/**` under the Cursor `User` directory so packaged `.vsix` files are backed up with settings; each `.vsix` may be up to 50 MiB regardless of `cursorSync.maxFileSizeKB`.
