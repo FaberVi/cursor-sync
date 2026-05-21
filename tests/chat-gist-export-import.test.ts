@@ -399,16 +399,20 @@ describe("chat gist export and import", () => {
   it("round-trips export gist bundle through import restore", async () => {
     const workspaceKey = "roundtrip-wk";
     const projectKey = "roundtrip-project";
-    const conversationId = "conv-roundtrip-001";
-    await setupExportConversation(tmpRoot, workspaceKey, conversationId, {
+    const conversationId1 = "conv-roundtrip-001";
+    const conversationId2 = "conv-roundtrip-002";
+    await setupExportConversation(tmpRoot, workspaceKey, conversationId1, {
+      projectKey,
+    });
+    await setupExportConversation(tmpRoot, workspaceKey, conversationId2, {
       projectKey,
     });
 
-    let exportedBundleJson = "";
-    mockExportPicker(workspaceKey, [conversationId]);
+    let exportedCollectionJson = "";
+    mockExportPicker(workspaceKey, [conversationId1, conversationId2]);
     showInformationMessageMock.mockResolvedValue(undefined);
     createGistMock.mockImplementation(async (gistFiles: Record<string, { content: string }>) => {
-      exportedBundleJson = gistFiles[CHAT_BUNDLE_GIST_FILE_NAME].content;
+      exportedCollectionJson = gistFiles[CHAT_BUNDLES_GIST_FILE_NAME].content;
       return {
         ok: true,
         data: {
@@ -426,24 +430,31 @@ describe("chat gist export and import", () => {
     await executeExportChatToGist(extensionContext as never);
     await flushMicrotasks();
 
-    expect(exportedBundleJson).not.toBe("");
-    const exportedBundle = JSON.parse(exportedBundleJson) as ChatBundle;
+    expect(exportedCollectionJson).not.toBe("");
+    const exportedCollection = JSON.parse(exportedCollectionJson) as {
+      type: string;
+      bundles: ChatBundle[];
+    };
+    expect(exportedCollection.type).toBe("chat-bundles-collection");
+    expect(exportedCollection.bundles).toHaveLength(2);
 
     const importTargetKey = "roundtrip-target";
     const importTargetDir = path.join(tmpRoot, ".cursor", "projects", importTargetKey);
     await fs.mkdir(importTargetDir, { recursive: true });
-    await fs.rm(
-      path.join(
-        tmpRoot,
-        ".cursor",
-        "projects",
-        projectKey,
-        "agent-transcripts",
-        conversationId,
-        `${conversationId}.jsonl`
-      ),
-      { force: true }
-    );
+    for (const conversationId of [conversationId1, conversationId2]) {
+      await fs.rm(
+        path.join(
+          tmpRoot,
+          ".cursor",
+          "projects",
+          projectKey,
+          "agent-transcripts",
+          conversationId,
+          `${conversationId}.jsonl`
+        ),
+        { force: true }
+      );
+    }
 
     getGistMock.mockResolvedValue({
       ok: true,
@@ -452,7 +463,7 @@ describe("chat gist export and import", () => {
         html_url: "https://gist.github.com/example/gist-roundtrip",
         description: "Cursor Sync - Chat Export",
         files: {
-          [CHAT_BUNDLE_GIST_FILE_NAME]: { content: exportedBundleJson },
+          [CHAT_BUNDLES_GIST_FILE_NAME]: { content: exportedCollectionJson },
         },
         created_at: "2026-05-20T12:00:00.000Z",
         updated_at: "2026-05-20T12:00:00.000Z",
@@ -462,6 +473,10 @@ describe("chat gist export and import", () => {
     showInputBoxMock.mockResolvedValueOnce("https://gist.github.com/user/gist-roundtrip");
     showQuickPickMock.mockImplementation(
       async (items: Array<{ description?: string; activate?: boolean }>) => {
+        const pickedBundle = items.find((item) => item.description === conversationId1);
+        if (pickedBundle) {
+          return pickedBundle;
+        }
         const activateItem = items.find((item) => item.activate === false);
         if (activateItem) {
           return activateItem;
@@ -477,10 +492,17 @@ describe("chat gist export and import", () => {
     const importedPath = path.join(
       importTargetDir,
       "agent-transcripts",
-      exportedBundle.conversationId,
-      `${exportedBundle.conversationId}.jsonl`
+      conversationId1,
+      `${conversationId1}.jsonl`
     );
     expect(await fs.readFile(importedPath, "utf-8")).toBe(transcriptFixture);
+    const notImportedPath = path.join(
+      importTargetDir,
+      "agent-transcripts",
+      conversationId2,
+      `${conversationId2}.jsonl`
+    );
+    await expect(fs.access(notImportedPath)).rejects.toThrow();
     expect(showErrorMessageMock).not.toHaveBeenCalled();
   });
 
@@ -575,8 +597,81 @@ describe("chat gist export and import", () => {
 
     expect(restoreSpy).not.toHaveBeenCalled();
     expect(showErrorMessageMock).toHaveBeenCalledWith(
-      'Gist chat import failed: Invalid chat bundle: expected type "chat-persistence", got "agent-transcripts".'
+      'Gist chat import failed: Invalid chat export: expected type "chat-persistence" or "chat-bundles-collection", got "agent-transcripts".'
     );
+    restoreSpy.mockRestore();
+  });
+
+  it("imports one chat from chat-bundles.json collection gist", async () => {
+    const sourceProjectKey = "source-multi-project";
+    const targetProjectKey = "target-multi-project";
+    const conv1 = "conv-multi-001";
+    const conv2 = "conv-multi-002";
+    const targetProjectDir = path.join(tmpRoot, ".cursor", "projects", targetProjectKey);
+    await fs.mkdir(targetProjectDir, { recursive: true });
+
+    const collection = {
+      schemaVersion: 1 as const,
+      type: "chat-bundles-collection" as const,
+      createdAt: "2026-05-20T12:00:00.000Z",
+      sourceWorkspaceKey: "multi-wk",
+      bundles: [
+        buildChatBundleFixture({ conversationId: conv1, projectKey: sourceProjectKey }),
+        buildChatBundleFixture({ conversationId: conv2, projectKey: sourceProjectKey }),
+      ],
+    };
+
+    getGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-multi-import",
+        html_url: "https://gist.github.com/example/gist-multi-import",
+        description: "Cursor Sync - Chat Export",
+        files: {
+          [CHAT_BUNDLES_GIST_FILE_NAME]: {
+            content: JSON.stringify(collection, null, 2),
+          },
+        },
+        created_at: "2026-05-20T12:00:00.000Z",
+        updated_at: "2026-05-20T12:00:00.000Z",
+      },
+    });
+
+    showInputBoxMock.mockResolvedValue("gist-multi-import");
+    showQuickPickMock.mockImplementation(
+      async (items: Array<{ description?: string; activate?: boolean }>) => {
+        const pickedBundle = items.find((item) => item.description === conv2);
+        if (pickedBundle) {
+          return pickedBundle;
+        }
+        const activateItem = items.find((item) => item.activate === false);
+        if (activateItem) {
+          return activateItem;
+        }
+        return items.find((item) => item.description === targetProjectKey);
+      }
+    );
+    showInformationMessageMock.mockResolvedValue(undefined);
+
+    const chatMod = await import("../src/chat-persistence.js");
+    const restoreSpy = vi.spyOn(chatMod, "restoreChatBundle");
+
+    const { executeImportChatFromGist } = await import("../src/import-gist-chat.js");
+    await executeImportChatFromGist(extensionContext as never);
+
+    expect(restoreSpy).toHaveBeenCalledTimes(1);
+    const [, restoredBundle] = restoreSpy.mock.calls[0]!;
+    expect(restoredBundle.conversationId).toBe(conv2);
+
+    const importedPath = path.join(
+      targetProjectDir,
+      "agent-transcripts",
+      conv2,
+      `${conv2}.jsonl`
+    );
+    expect(await fs.readFile(importedPath, "utf-8")).toBe(transcriptFixture);
+    expect(showErrorMessageMock).not.toHaveBeenCalled();
+
     restoreSpy.mockRestore();
   });
 

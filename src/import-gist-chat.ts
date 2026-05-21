@@ -5,8 +5,14 @@ import { getToken } from "./auth.js";
 import { restoreChatBundle, type ChatBundle } from "./chat-persistence.js";
 import { presentChatImportOutcome, promptChatImportOptions } from "./chat-import-ux.js";
 import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
+import {
+  CHAT_BUNDLE_GIST_FILE_NAME,
+  CHAT_BUNDLES_GIST_FILE_NAME,
+  parseChatBundleOrCollection,
+  pickBundleFromCollection,
+} from "./chat-bundle-format.js";
 
-export const CHAT_BUNDLE_GIST_FILE_NAME = "chat-bundle.json";
+export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 
 export async function executeImportChatFromGist(
   context: vscode.ExtensionContext
@@ -93,7 +99,34 @@ async function fetchAndParseGistBundle(
 
   progress.report({ message: "Reading chat bundle..." });
   const bundleRaw = gist.files?.[CHAT_BUNDLE_GIST_FILE_NAME]?.content;
-  if (!bundleRaw) {
+  const collectionRaw = gist.files?.[CHAT_BUNDLES_GIST_FILE_NAME]?.content;
+
+  let bundle: ChatBundle;
+
+  if (bundleRaw) {
+    const parsed = parseChatBundleOrCollection(bundleRaw);
+    if (parsed.kind === "single") {
+      bundle = parsed.bundle;
+    } else {
+      progress.report({ message: "Select chat to import..." });
+      const picked = await pickBundleFromCollection(parsed.collection);
+      if (!picked) {
+        throw new Error("Chat import cancelled.");
+      }
+      bundle = picked;
+    }
+  } else if (collectionRaw) {
+    const parsed = parseChatBundleOrCollection(collectionRaw);
+    if (parsed.kind !== "collection") {
+      throw new Error("Invalid chat-bundles.json: expected chat-bundles-collection.");
+    }
+    progress.report({ message: "Select chat to import..." });
+    const picked = await pickBundleFromCollection(parsed.collection);
+    if (!picked) {
+      throw new Error("Chat import cancelled.");
+    }
+    bundle = picked;
+  } else {
     if (gist.files?.[TRANSCRIPT_MANIFEST_FILE_NAME]) {
       throw new Error(
         "Gist does not contain a chat bundle (chat-bundle.json). This Gist is an agent transcript export. Use Cursor Sync: Import Agent Transcripts from Private Gist."
@@ -110,8 +143,6 @@ async function fetchAndParseGistBundle(
   }
 
   progress.report({ message: "Validating chat bundle..." });
-  const bundle = parseChatBundle(bundleRaw);
-
   const tfCount = bundle.transcriptFiles?.length ?? 0;
   const storeBytes = bundle.storeSnapshot?.sizeBytes ?? 0;
   const sidebarKeys = bundle.sidebarSnapshot ? Object.keys(bundle.sidebarSnapshot).join(",") : "none";
@@ -119,36 +150,6 @@ async function fetchAndParseGistBundle(
     `[${new Date().toISOString()}] [chat-restore-debug] gist import validated gistId=${gistId} conversationId=${bundle.conversationId} transcriptFiles=${tfCount} storeSnapshot=${bundle.storeSnapshot ? `${storeBytes}b` : "absent"} sidebarSnapshot=${sidebarKeys}`
   );
   return bundle;
-}
-
-function parseChatBundle(raw: string): ChatBundle {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("Invalid chat-bundle.json: not valid JSON.");
-  }
-
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("Invalid chat-bundle.json: expected an object.");
-  }
-
-  const bundle = parsed as Partial<ChatBundle>;
-  if (bundle.type !== "chat-persistence") {
-    throw new Error(
-      `Invalid chat bundle: expected type "chat-persistence", got "${String(bundle.type)}".`
-    );
-  }
-  if (bundle.schemaVersion !== 1) {
-    throw new Error(
-      `Invalid or unsupported chat bundle schema version: ${String(bundle.schemaVersion)}.`
-    );
-  }
-  if (!bundle.conversationId || typeof bundle.conversationId !== "string") {
-    throw new Error("Invalid chat bundle: missing conversationId.");
-  }
-
-  return bundle as ChatBundle;
 }
 
 async function fetchGist(
