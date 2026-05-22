@@ -1,0 +1,20 @@
+{
+  "allComposers": [
+    {
+      "type": "head",
+      "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+      "name": "Existing Local Title",
+      "lastUpdatedAt": 1690000000000,
+      "workspaceIdentifier": {
+        "id": "old-ws",
+        "uri": { "fsPath": "/old/path" }
+      }
+    },
+    {
+      "type": "head",
+      "composerId": "keep-other-composer",
+      "name": "Unrelated",
+      "lastUpdatedAt": 1680000000000
+    }
+  ]
+}

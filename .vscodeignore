@@ -2,6 +2,7 @@
 !dist/extension.js
 !assets/icon.png
 !resources/golden-chat-store.template.db
+!resources/transport-chat/**
 !package.json
 !README.md
 !CHANGELOG.md

@@ -1,0 +1,11 @@
+{
+  "id": "ws-storage-abc123",
+  "uri": {
+    "$mid": 1,
+    "fsPath": "/home/dev/my-repo",
+    "_sep": 47,
+    "external": "file:///home/dev/my-repo",
+    "path": "/home/dev/my-repo",
+    "scheme": "file"
+  }
+}

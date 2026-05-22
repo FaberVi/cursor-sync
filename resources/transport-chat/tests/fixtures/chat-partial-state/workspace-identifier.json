@@ -1,0 +1,11 @@
+{
+  "id": "f038a5d2e2e5594b5e779064d4feac57",
+  "uri": {
+    "$mid": 1,
+    "fsPath": "/home/user/proj",
+    "_sep": 47,
+    "external": "file:///home/user/proj",
+    "path": "/home/user/proj",
+    "scheme": "file"
+  }
+}
