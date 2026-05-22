@@ -77,6 +77,8 @@ The following are always excluded from sync:
 | `Cursor Sync: Export Settings to Private Gist` | Export selected files to a new **private** Gist; requires token; anyone with the URL can open the gist |
 | `Cursor Sync: Import Settings from Private Gist` | Import settings from a Gist by URL or ID using the GitHub API (configure a token for private gists) |
 
+- Cursor Sync: Install Skill - Transport Chat - copies the bundled transport-chat skill into ~/.cursor/skills/transport-chat/ (Linux only).
+
 ## Sidebar
 
 The **Cursor Sync** view in the activity bar provides a rich webview panel:
@@ -136,11 +138,14 @@ Single-conversation chat bundles (`type: chat-persistence`, `schemaVersion: 1`) 
 
 ## Chat bundle import (import-v2)
 
-Import a single conversation bundle (transcripts, `store.db`, sidebar merge) and optionally register it in the IDE via `composer.createComposer`:
+Works with the **transport-chat** skill (`~/.cursor/skills/transport-chat`):
+
+- **Disk** (transcripts, `store.db`, `state.vscdb`) — Python `cursor_chat_io.py` via `src/chat-transport-scripts.ts`; the extension does not merge `state.vscdb` when the skill is installed.
+- **IDE** (`composer.createComposer`, `pending.json`, `result.json`) — this extension only.
 
 - **Commands**: **Import Chat Bundle**, **Import Chat Bundle (Activate)**, **Export Chat Bundle**, **Verify Chat Import** (Command Palette).
-- **Settings**: `cursorSync.chatImport.activateDefault`, `activateStrict`, `bridgeWaitResultSeconds`, `pingServer` — mirror `python3 scripts/cursor_chat_io.py import` flags.
-- **Activation**: With the extension installed, Cursor Sync watches `~/.cursor/import-activation/pending.json` and writes `result.json`, superseding the Python bridge for CLI `--activate` runs. Details: [`docs/chat-import-activate.md`](docs/chat-import-activate.md).
+- **Settings**: `cursorSync.chatImport.*` — mirror transport-chat `import` flags for activation timing.
+- **CLI agents**: use `/transport-chat` or `transport_chat.py run`; Phase B completes via the extension watcher. Details: [`docs/chat-import-activate.md`](docs/chat-import-activate.md).
 
 ## Extension List Sync
 

@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .worktrees/
+resources/*.db-shm
+resources/*.db-wal
 *.vsix
 .cursor/
 coordenation/

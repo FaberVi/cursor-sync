@@ -2,9 +2,17 @@
 
 ## [Unreleased]
 
+## v0.6.0
+
 ### Added
-- Chat export QuickPick: select workspace and multiple conversations from disk instead of typing IDs.
-- Batch chat export/import via `chat-bundles.json` / `ChatBundlesCollection` wrapper.
+- Chat export QuickPick: select workspace and multiple conversations from disk instead of typing IDs; human-readable workspace and conversation labels.
+- Batch chat export/import via `chat-bundles.json` / `ChatBundlesCollection` wrapper (gist and local save/load).
+- `Cursor Sync: Install Skill - Transport Chat` command (Linux only): copies bundled `resources/transport-chat` into `~/.cursor/skills/transport-chat/`.
+- Golden store template v2 (`PRAGMA user_version = 2`): `blobs(id, data)` and content-addressed hydration from manifest or `ChatBundle` transcripts.
+
+### Changed
+- import-v2 disk restore (`store.db`, `state.vscdb`) runs through bundled transport-chat Python scripts when the skill is installed; extension retains IDE activation (`composer.createComposer`, pending.json watcher).
+- Composer activation: `composer.getComposerHandleById` fallback, pending-manifest fingerprint matching, and optional `skipPythonBridge` for extension-only activation.
 
 ## v0.5.0
 
