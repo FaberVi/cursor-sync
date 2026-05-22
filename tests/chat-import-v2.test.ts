@@ -148,18 +148,34 @@ function loadMergeBundleFixture(): ChatBundle {
 
 async function buildGoldenBundleWithStore(): Promise<ChatBundle> {
   const base = loadMergeBundleFixture();
-  const storeBytes = await fs.readFile(templatePath);
-  const encoded = encodeTranscriptArtifact(storeBytes, true);
-  return {
-    ...base,
-    storeSnapshot: {
-      content: encoded.content,
-      encoding: encoded.encoding,
-      checksum: computeArtifactChecksum(storeBytes),
-      sizeBytes: storeBytes.length,
-      sourceWorkspaceKey: "must-not-use-this-key",
-    },
-  };
+  const { hydrateGoldenStoreTemplate, chatManifestFromBundle } = await import(
+    "../src/store-template-hydrate.js"
+  );
+  const outDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "cursor-sync-import-v2-store-")
+  );
+  const storePath = path.join(outDir, "store.db");
+  try {
+    await hydrateGoldenStoreTemplate({
+      templatePath,
+      outputPath: storePath,
+      chat: chatManifestFromBundle(base),
+    });
+    const storeBytes = await fs.readFile(storePath);
+    const encoded = encodeTranscriptArtifact(storeBytes, true);
+    return {
+      ...base,
+      storeSnapshot: {
+        content: encoded.content,
+        encoding: encoded.encoding,
+        checksum: computeArtifactChecksum(storeBytes),
+        sizeBytes: storeBytes.length,
+        sourceWorkspaceKey: "must-not-use-this-key",
+      },
+    };
+  } finally {
+    await fs.rm(outDir, { recursive: true, force: true });
+  }
 }
 
 describe("chat-import-v2 integration", () => {
