@@ -14,8 +14,17 @@ import {
 } from "./transcript-bundle.js";
 import {
   buildChatsKeyToFolderMap,
+  folderToProjectKey,
   requireWorkspaceContext,
 } from "./chat-workspace-context.js";
+import {
+  chatManifestFromBundle,
+  hydrateGoldenStoreTemplate,
+} from "./store-template-hydrate.js";
+import {
+  discoverProjects,
+  findProjectMatchingOpenWorkspaceFolder,
+} from "./transcripts.js";
 import {
   filterComposerDataForConversation,
   filterComposerHeadersForConversation,
@@ -28,6 +37,10 @@ import {
   pingServerProbe,
   runPostImportActivation,
 } from "./chat-import-activate.js";
+import {
+  resolveTransportChatScript,
+  runPythonDiskImport,
+} from "./chat-transport-scripts.js";
 import {
   formatVerifyCheckLine,
   formatVerifyReport,
@@ -154,6 +167,123 @@ function bundleArtifactsDebug(bundle: ChatBundle): string {
     ? `present keys=${Object.keys(bundle.sidebarSnapshot).join(",")}`
     : "absent";
   return `transcriptFiles=${bundle.transcriptFiles.length} [${tfSummary}] storeSnapshot=${store} sidebarSnapshot=${sidebar}`;
+}
+
+async function resolveImportProjectMapping(
+  sourceProjectKeys: string[],
+  folderFsPath: string
+): Promise<Map<string, string>> {
+  const mapping = new Map<string, string>();
+  if (sourceProjectKeys.length === 0) {
+    return mapping;
+  }
+
+  const localProjects = await discoverProjects();
+  const encoded = folderToProjectKey(folderFsPath);
+  let targetKey =
+    localProjects.find((p) => path.resolve(p.fullPath) === path.resolve(folderFsPath))
+      ?.folderName ??
+    localProjects.find((p) => p.folderName === encoded)?.folderName;
+
+  if (!targetKey) {
+    const openFolders = vscode.workspace.workspaceFolders;
+    const openMatchesDest =
+      openFolders?.some((wf) => path.resolve(wf.uri.fsPath) === path.resolve(folderFsPath)) ??
+      false;
+    const matched = openMatchesDest
+      ? findProjectMatchingOpenWorkspaceFolder(localProjects, openFolders)
+      : undefined;
+    targetKey = matched?.folderName ?? encoded;
+  }
+
+  for (const sourceKey of sourceProjectKeys) {
+    mapping.set(sourceKey, targetKey);
+  }
+  return mapping;
+}
+
+async function ensureGoldenStoreDb(
+  context: vscode.ExtensionContext,
+  bundle: ChatBundle,
+  storeWorkspaceKey: string,
+  dryRun: boolean
+): Promise<{ storeWritten: boolean; warnings: string[] }> {
+  const warnings: string[] = [];
+  if (bundle.storeSnapshot) {
+    return { storeWritten: false, warnings };
+  }
+
+  const extensionRoot = context.extensionUri?.fsPath;
+  if (!extensionRoot) {
+    warnings.push(
+      "Extension path unavailable; cannot synthesize store.db for activation."
+    );
+    return { storeWritten: false, warnings };
+  }
+  const templatePath = path.join(
+    extensionRoot,
+    "resources",
+    "golden-chat-store.template.db"
+  );
+  try {
+    await fs.access(templatePath);
+  } catch {
+    warnings.push(
+      "Golden store template missing from extension; cannot synthesize store.db for activation."
+    );
+    return { storeWritten: false, warnings };
+  }
+
+  const storeDbPath = path.join(
+    resolveChatsRoot(),
+    storeWorkspaceKey,
+    bundle.conversationId,
+    "store.db"
+  );
+
+  if (dryRun) {
+    logChatRestoreDebug(
+      `[dry-run] would hydrate golden store.db at ${storeDbPath} from bundle transcripts`
+    );
+    return { storeWritten: true, warnings };
+  }
+
+  const chat = chatManifestFromBundle(bundle);
+  const hw = await hydrateGoldenStoreTemplate({
+    templatePath,
+    outputPath: storeDbPath,
+    chat,
+  });
+  warnings.push(...hw.warnings);
+  warnings.push(
+    "Synthesized store.db from golden template (bundle had no store.db snapshot)."
+  );
+  logChatRestoreDebug(
+    `golden store.db hydrated conversationId=${bundle.conversationId} path=${storeDbPath}`
+  );
+  return { storeWritten: true, warnings };
+}
+
+function applyProjectMappingToBundle(
+  bundle: ChatBundle,
+  projectMapping: Map<string, string>
+): ChatBundle {
+  if (projectMapping.size === 0) {
+    return bundle;
+  }
+  const transcriptFiles = bundle.transcriptFiles.map((tf) => {
+    const segments = tf.relativePath.split("/");
+    if (segments.length === 0) {
+      return tf;
+    }
+    const sourceKey = segments[0]!;
+    const mappedKey = projectMapping.get(sourceKey) ?? sourceKey;
+    return {
+      ...tf,
+      relativePath: [mappedKey, ...segments.slice(1)].join("/"),
+    };
+  });
+  return { ...bundle, transcriptFiles };
 }
 
 /**
@@ -706,8 +836,20 @@ export async function restoreChatBundle(
     }
   }
 
-  const projectMapping: Map<string, string> = new Map();
-  if (sourceProjectKeys.size > 0 && bundle.transcriptFiles.length > 0) {
+  let projectMapping = await resolveImportProjectMapping(
+    [...sourceProjectKeys].sort(),
+    wsCtx.folderFsPath
+  );
+  const cfg = vscode.workspace.getConfiguration("cursorSync");
+  const autoMapImport =
+    cfg.get<boolean>("chatImport.autoMapToOpenWorkspace") ?? true;
+  const needsPrompt =
+    sourceProjectKeys.size > 0 &&
+    bundle.transcriptFiles.length > 0 &&
+    (!autoMapImport ||
+      [...sourceProjectKeys].some((k) => !projectMapping.has(k)));
+
+  if (needsPrompt) {
     progress.report({ message: "Mapping projects..." });
     const mapping = await promptForTargetProject([...sourceProjectKeys].sort());
     if (mapping === null) {
@@ -721,13 +863,89 @@ export async function restoreChatBundle(
         warnings: ["Cancelled by user."],
       };
     }
-    for (const [k, v] of mapping) {
-      projectMapping.set(k, v);
+    projectMapping = mapping;
+  } else if (projectMapping.size > 0) {
+    logChatRestoreDebug(
+      `project mapping auto target=${[...new Set(projectMapping.values())].join(",")} sources=[${[...projectMapping.keys()].join(", ")}]`
+    );
+  }
+
+  const targetProjectKey =
+    projectMapping.size > 0
+      ? [...new Set(projectMapping.values())][0]
+      : folderToProjectKey(wsCtx.folderFsPath);
+
+  const workspaceStateDb = path.join(
+    resolveSyncRoots().cursorUser,
+    "workspaceStorage",
+    wsCtx.workspaceStorageId,
+    "state.vscdb"
+  );
+
+  const extensionPath = context.extensionUri?.fsPath;
+  const transportChatIo = await resolveTransportChatScript(
+    "cursor_chat_io.py",
+    extensionPath
+  );
+  let diskHandledByPython = false;
+
+  if (transportChatIo && bundle.sidebarSnapshot) {
+    const remappedBundle = applyProjectMappingToBundle(bundle, projectMapping);
+    const tmpBundlePath = path.join(
+      os.tmpdir(),
+      `cursor-sync-import-${conversationId}-${Date.now()}.json`
+    );
+    try {
+      await fs.writeFile(tmpBundlePath, JSON.stringify(remappedBundle, null, 2), "utf8");
+      progress.report({ message: "Restoring chat files (transport-chat)..." });
+      const diskOutcome = await runPythonDiskImport({
+        bundlePath: tmpBundlePath,
+        workspaceFolder: wsCtx.folderFsPath,
+        targetProject: targetProjectKey,
+        stateDbPath: workspaceStateDb,
+        dryRun,
+        syncGlobal,
+        pinRecent,
+        extensionPath,
+        log: (line) => logChatRestoreDebug(line),
+      });
+      if (!diskOutcome.ok) {
+        throw new Error(
+          `Disk import failed (transport-chat): exit ${diskOutcome.exitCode}. ${diskOutcome.stderr.trim() || diskOutcome.stdout.trim()}`
+        );
+      }
+      diskHandledByPython = true;
+      transcriptsWritten = remappedBundle.transcriptFiles.length;
+      storeWritten = !!remappedBundle.storeSnapshot;
+      sidebarMerged = true;
+      if (!storeWritten && !dryRun) {
+        const golden = await ensureGoldenStoreDb(
+          context,
+          remappedBundle,
+          storeWorkspaceKey,
+          dryRun
+        );
+        storeWritten = golden.storeWritten;
+        warnings.push(...golden.warnings);
+      }
+      logChatRestoreDebug(
+        `disk restore via transport-chat conversationId=${conversationId} transcripts=${transcriptsWritten} store=${storeWritten}`
+      );
+    } finally {
+      try {
+        await fs.unlink(tmpBundlePath);
+      } catch {
+        /* ignore */
+      }
     }
+  } else if (bundle.sidebarSnapshot && !transportChatIo) {
+    warnings.push(
+      "transport-chat skill not found; using in-extension disk restore. Install ~/.cursor/skills/transport-chat for state.vscdb writes."
+    );
   }
 
   // Restore transcript JSONL files (remapped to target project)
-  if (bundle.transcriptFiles.length > 0) {
+  if (!diskHandledByPython && bundle.transcriptFiles.length > 0) {
     progress.report({ message: "Restoring transcript files..." });
     const projectsRoot = resolveProjectsRoot();
     for (const tf of bundle.transcriptFiles) {
@@ -770,7 +988,7 @@ export async function restoreChatBundle(
     );
   }
 
-  if (bundle.storeSnapshot) {
+  if (!diskHandledByPython && bundle.storeSnapshot) {
     progress.report({ message: "Restoring store.db..." });
     const snap = bundle.storeSnapshot;
     const decoded = decodeTranscriptArtifact(snap.content, snap.encoding);
@@ -807,21 +1025,25 @@ export async function restoreChatBundle(
     );
   }
 
+  if (!diskHandledByPython && !bundle.storeSnapshot && !storeWritten && !dryRun) {
+    const golden = await ensureGoldenStoreDb(
+      context,
+      bundle,
+      storeWorkspaceKey,
+      dryRun
+    );
+    storeWritten = golden.storeWritten;
+    warnings.push(...golden.warnings);
+  }
+
   if (bundle.storeSnapshot && !storeWritten) {
     throw new Error(
       "Bundle contained storeSnapshot but store.db was not written (required for import parity)."
     );
   }
 
-  if (bundle.sidebarSnapshot) {
+  if (!diskHandledByPython && bundle.sidebarSnapshot) {
     progress.report({ message: "Merging sidebar state..." });
-    const { cursorUser } = resolveSyncRoots();
-    const workspaceStateDb = path.join(
-      cursorUser,
-      "workspaceStorage",
-      wsCtx.workspaceStorageId,
-      "state.vscdb"
-    );
     const mergeTargets = await mergeTargetsForImport(workspaceStateDb, syncGlobal);
     logChatRestoreDebug(
       `sidebar merge conversationId=${conversationId} targets=${mergeTargets.length} [${mergeTargets.map((p) => path.basename(path.dirname(p)) + "/" + path.basename(p)).join(", ")}]`
@@ -893,6 +1115,14 @@ export async function restoreChatBundle(
     }
 
     if (options.activate) {
+      if (!storeWritten) {
+        warnings.push(
+          "Bundle has no store.db snapshot; IDE activation usually requires store.db at ~/.cursor/chats/<md5(workspace)>/<conversationId>/store.db. Re-export from a machine where that file exists."
+        );
+        logChatRestoreDebug(
+          `activation warning conversationId=${conversationId} storeWritten=false (storeSnapshot absent or restore failed)`
+        );
+      }
       progress.report({ message: "Activating composer..." });
       const activationOutcome = await runPostImportActivation(
         bundle,
@@ -902,7 +1132,8 @@ export async function restoreChatBundle(
           activateStrict: options.activateStrict,
           bridgeWaitResultMs: options.bridgeWaitResultMs,
           dryRun: false,
-          extensionPath: context.extensionUri.fsPath,
+          extensionPath,
+          skipPythonBridge: true,
           log: (line) => logChatRestoreDebug(line),
         }
       );
@@ -949,7 +1180,8 @@ export async function restoreChatBundle(
         activateStrict: options.activateStrict,
         bridgeWaitResultMs: options.bridgeWaitResultMs,
         dryRun: true,
-        extensionPath: context.extensionUri.fsPath,
+        extensionPath,
+        skipPythonBridge: true,
         log: (line) => logChatRestoreDebug(line),
       });
     }

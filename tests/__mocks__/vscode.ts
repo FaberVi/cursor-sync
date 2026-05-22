@@ -165,7 +165,16 @@ export enum ExtensionKind {
 }
 
 export const Uri = {
-  file: (p: string) => ({ fsPath: p, scheme: "file" }),
-  parse: (value: string) => ({ fsPath: value, scheme: "file" }),
+  file: (p: string) => ({ fsPath: p, scheme: "file", path: p }),
+  parse: (value: string) => ({ fsPath: value, scheme: "file", path: value }),
+  from: (parts: { scheme: string; path: string }) => ({
+    fsPath: parts.path,
+    scheme: parts.scheme,
+    path: parts.path,
+  }),
+  joinPath: (base: { fsPath: string }, ...segments: string[]) => {
+    const fsPath = [base.fsPath, ...segments].join("/");
+    return { fsPath, scheme: "file", path: fsPath };
+  },
 };
 

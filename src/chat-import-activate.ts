@@ -8,6 +8,8 @@ import { bundleToPartialState, type PartialState } from "./chat-partial-state.js
 import type { WorkspaceContext } from "./chat-workspace-context.js";
 
 export const CREATE_COMPOSER_COMMAND_ID = "composer.createComposer";
+export const COMPOSER_GET_HANDLE_COMMAND_ID = "composer.getComposerHandleById";
+export const COMPOSER_URI_SCHEME = "cursor.composer";
 export const MANIFEST_VERSION = 1;
 
 export const ACTIVATION_DIR = path.join(os.homedir(), ".cursor", "import-activation");
@@ -54,6 +56,8 @@ export interface RunPostImportActivationOptions {
   dryRun?: boolean;
   extensionPath?: string;
   openInNewTab?: boolean;
+  /** When true (default inside Cursor Sync), never spawn the Python bridge; IDE only. */
+  skipPythonBridge?: boolean;
   log?: (message: string) => void;
 }
 
@@ -242,6 +246,91 @@ export async function composerCommandAvailable(
   return commands.includes(commandId);
 }
 
+function activationManifestFingerprint(manifest: ActivationManifest): string {
+  return JSON.stringify({
+    composerId: manifest.composerId,
+    workspaceFolder: manifest.workspaceFolder,
+    commandId: manifest.commandId,
+    partialState: manifest.partialState,
+    createComposerOptions: manifest.createComposerOptions,
+  });
+}
+
+export async function pendingManifestMatches(
+  manifest: ActivationManifest,
+  paths: ActivationPaths = defaultActivationPaths()
+): Promise<boolean> {
+  try {
+    const text = await fs.readFile(paths.pendingPath, "utf8");
+    const raw = JSON.parse(text) as Record<string, unknown>;
+    const onDisk = normalizeActivationManifest(raw);
+    return activationManifestFingerprint(onDisk) === activationManifestFingerprint(manifest);
+  } catch {
+    return false;
+  }
+}
+
+export async function archiveFailedPending(
+  paths: ActivationPaths = defaultActivationPaths()
+): Promise<void> {
+  const failedPath = `${paths.pendingPath}.failed`;
+  try {
+    await fs.rename(paths.pendingPath, failedPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      throw err;
+    }
+  }
+}
+
+export function composerUriForId(composerId: string): vscode.Uri {
+  return vscode.Uri.from({ scheme: COMPOSER_URI_SCHEME, path: composerId.trim() });
+}
+
+export async function tryActivateViaComposerHandle(
+  manifest: ActivationManifest,
+  options: RunComposerActivationOptions = {}
+): Promise<ComposerActivationOutcome | null> {
+  const paths = options.paths ?? defaultActivationPaths();
+  const log = options.log ?? (() => {});
+
+  if (!(await composerCommandAvailable(COMPOSER_GET_HANDLE_COMMAND_ID))) {
+    return null;
+  }
+
+  try {
+    const composerUri = composerUriForId(manifest.composerId);
+    await vscode.commands.executeCommand("vscode.open", composerUri);
+    await delayMs(400);
+
+    const handle = await vscode.commands.executeCommand(
+      COMPOSER_GET_HANDLE_COMMAND_ID,
+      manifest.composerId
+    );
+    if (!handle) {
+      log(
+        `composer.getComposerHandleById returned no handle for composerId=${manifest.composerId} ` +
+          "(store.db may be missing under ~/.cursor/chats/<workspace-key>/)"
+      );
+      return null;
+    }
+
+    await writeResultJson(manifest.composerId, true, paths);
+    log(`Activation OK (handle+open): composerId=${manifest.composerId}`);
+    return {
+      ok: true,
+      composerId: manifest.composerId,
+      exitCode: 0,
+      stagedOnly: false,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`composer handle activation failed: ${message}`);
+    return null;
+  }
+}
+
 export async function readActivationResult(
   paths: ActivationPaths = defaultActivationPaths()
 ): Promise<ActivationResult | null> {
@@ -320,6 +409,16 @@ export async function resolveComposerBridgeScript(
   }
   candidates.push(
     path.join(process.cwd(), "scripts", "cursor_composer_bridge.py")
+  );
+  candidates.push(
+    path.join(
+      os.homedir(),
+      ".cursor",
+      "skills",
+      "transport-chat",
+      "scripts",
+      "cursor_composer_bridge.py"
+    )
   );
   for (const candidate of candidates) {
     try {
@@ -485,13 +584,26 @@ export async function runPostImportActivation(
 
   log(`Activating composer ${conversationId}...`);
 
-  const hasCommand = await composerCommandAvailable(manifest.commandId);
-  if (hasCommand) {
-    return runComposerActivation(manifest, {
-      paths,
-      waitResultMs: options.bridgeWaitResultMs,
-      log,
-    });
+  const activationOutcome = await runComposerActivation(manifest, {
+    paths,
+    waitResultMs: options.bridgeWaitResultMs,
+    log,
+  });
+
+  if (activationOutcome.ok) {
+    return activationOutcome;
+  }
+
+  if (!activationOutcome.stagedOnly) {
+    return activationOutcome;
+  }
+
+  if (options.skipPythonBridge === true) {
+    log(
+      `Activation staged only: ${paths.pendingPath}. ` +
+        "Cursor Sync will complete via composer.createComposer (reload window if needed)."
+    );
+    return activationOutcome;
   }
 
   log(
@@ -522,64 +634,71 @@ export async function runComposerActivation(
   const log = options.log ?? (() => {});
 
   await clearStaleResult(paths);
-  await stagePendingManifest(manifest, paths);
+  if (!(await pendingManifestMatches(manifest, paths))) {
+    await stagePendingManifest(manifest, paths);
+  }
 
-  const hasCommand = await composerCommandAvailable(manifest.commandId);
-  if (!hasCommand) {
-    log(
-      `IDE activation not available: command ${manifest.commandId} is not registered.`
-    );
-    log(`Staged manifest: ${paths.pendingPath}`);
-
-    const waitResultMs = Math.max(0, options.waitResultMs ?? 0);
-    if (waitResultMs > 0) {
-      const polled = await waitForActivationResult({
-        paths,
-        timeoutMs: waitResultMs,
-      });
-      if (polled) {
-        return {
-          ok: true,
-          composerId: polled,
-          exitCode: 0,
-          stagedOnly: false,
-        };
-      }
+  if (await composerCommandAvailable(manifest.commandId)) {
+    try {
+      const commandResult = await vscode.commands.executeCommand(
+        manifest.commandId,
+        manifest.partialState,
+        manifest.createComposerOptions
+      );
+      const composerId = parseComposerIdFromCommandResult(
+        commandResult,
+        manifest.composerId
+      );
+      await writeResultJson(composerId, true, paths);
+      log(`Activation OK: composerId=${composerId}`);
+      return {
+        ok: true,
+        composerId,
+        exitCode: 0,
+        stagedOnly: false,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(`composer.createComposer failed: ${message}`);
+      return {
+        ok: false,
+        exitCode: 1,
+        stagedOnly: false,
+      };
     }
-
-    return {
-      ok: false,
-      composerId: manifest.composerId,
-      exitCode: 2,
-      stagedOnly: true,
-    };
   }
 
-  try {
-    const commandResult = await vscode.commands.executeCommand(
-      manifest.commandId,
-      manifest.partialState,
-      manifest.createComposerOptions
-    );
-    const composerId = parseComposerIdFromCommandResult(
-      commandResult,
-      manifest.composerId
-    );
-    await writeResultJson(composerId, true, paths);
-    log(`Activation OK: composerId=${composerId}`);
-    return {
-      ok: true,
-      composerId,
-      exitCode: 0,
-      stagedOnly: false,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`composer.createComposer failed: ${message}`);
-    return {
-      ok: false,
-      exitCode: 1,
-      stagedOnly: false,
-    };
+  const handleOutcome = await tryActivateViaComposerHandle(manifest, options);
+  if (handleOutcome?.ok) {
+    return handleOutcome;
   }
+
+  log(
+    `IDE activation not available: command ${manifest.commandId} is not registered ` +
+      `(fallback ${COMPOSER_GET_HANDLE_COMMAND_ID} also failed or unavailable).`
+  );
+  log(`Staged manifest: ${paths.pendingPath}`);
+
+  const waitResultMs = Math.max(0, options.waitResultMs ?? 0);
+  if (waitResultMs > 0) {
+    const polled = await waitForActivationResult({
+      paths,
+      timeoutMs: waitResultMs,
+    });
+    if (polled) {
+      return {
+        ok: true,
+        composerId: polled,
+        exitCode: 0,
+        stagedOnly: false,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    composerId: manifest.composerId,
+    exitCode: 2,
+    stagedOnly: true,
+  };
 }

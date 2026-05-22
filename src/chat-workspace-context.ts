@@ -35,6 +35,12 @@ export function md5FolderKey(folderFsPath: string): string {
   return createHash("md5").update(folderFsPath, "utf8").digest("hex");
 }
 
+/** Same encoding as transport-chat `folder_to_project_key` (~/.cursor/projects/<name>). */
+export function folderToProjectKey(folderFsPath: string): string {
+  const resolved = path.resolve(folderFsPath);
+  return resolved.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\//g, "-");
+}
+
 export function folderPathFromWorkspaceUri(uri: string): string {
   if (uri.startsWith("file://")) {
     const parsed = new URL(uri);

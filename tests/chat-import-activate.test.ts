@@ -14,9 +14,12 @@ import {
 import type { ChatBundle } from "../src/chat-persistence.js";
 import type { WorkspaceContext } from "../src/chat-workspace-context.js";
 import {
+  COMPOSER_GET_HANDLE_COMMAND_ID,
+  COMPOSER_URI_SCHEME,
   CREATE_COMPOSER_COMMAND_ID,
   MANIFEST_VERSION,
   buildActivationManifest,
+  composerUriForId,
   normalizeActivationManifest,
   parseComposerIdFromCommandResult,
   runComposerActivation,
@@ -206,6 +209,47 @@ describe("chat-import-activate", () => {
       manifest.partialState,
       manifest.createComposerOptions
     );
+  });
+
+  it("runComposerActivation uses getComposerHandleById fallback when createComposer is missing", async () => {
+    const executeSpy = vi.fn(async (command: string) => {
+      if (command === COMPOSER_GET_HANDLE_COMMAND_ID) {
+        return { composerId: FIXTURE_CID };
+      }
+      return undefined;
+    });
+    __setRegisteredCommands([COMPOSER_GET_HANDLE_COMMAND_ID]);
+    __setExecuteCommandImpl(executeSpy);
+
+    const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
+    const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+
+    const outcome = await runComposerActivation(manifest, { paths });
+
+    expect(outcome).toEqual({
+      ok: true,
+      composerId: FIXTURE_CID,
+      exitCode: 0,
+      stagedOnly: false,
+    });
+    expect(executeSpy).toHaveBeenCalledWith(
+      COMPOSER_GET_HANDLE_COMMAND_ID,
+      FIXTURE_CID
+    );
+    expect(executeSpy).toHaveBeenCalledWith(
+      "vscode.open",
+      composerUriForId(FIXTURE_CID)
+    );
+    const result = JSON.parse(readFileSync(paths.resultPath, "utf8")) as {
+      ok: boolean;
+      composerId: string;
+    };
+    expect(result).toEqual({ ok: true, composerId: FIXTURE_CID });
+  });
+
+  it("composerUriForId uses cursor.composer scheme", () => {
+    expect(composerUriForId(FIXTURE_CID).scheme).toBe(COMPOSER_URI_SCHEME);
+    expect(composerUriForId(FIXTURE_CID).path).toBe(FIXTURE_CID);
   });
 
   it("runComposerActivation returns exitCode 1 when executeCommand throws", async () => {

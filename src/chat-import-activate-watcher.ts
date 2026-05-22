@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { getLogger } from "./diagnostics.js";
 import {
+  archiveFailedPending,
   defaultActivationPaths,
   normalizeActivationManifest,
   runComposerActivation,
@@ -107,6 +108,12 @@ export async function processPendingActivation(
       log(
         `import-activation: activation failed exitCode=${outcome.exitCode} stagedOnly=${outcome.stagedOnly}`
       );
+      if (outcome.stagedOnly) {
+        await archiveFailedPending(paths);
+        log(
+          `import-activation: archived pending manifest to ${paths.pendingPath}.failed (no retry loop)`
+        );
+      }
     }
   } finally {
     processing = false;

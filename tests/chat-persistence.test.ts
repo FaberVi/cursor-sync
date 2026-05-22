@@ -55,6 +55,16 @@ vi.mock("../src/chat-import-merge.js", () => ({
   mergeSidebarIntoStateDb: vi.fn(async () => ({ merged: false, warnings: [] })),
 }));
 
+vi.mock("../src/chat-transport-scripts.js", () => ({
+  resolveTransportChatScript: vi.fn(async () => null),
+  runPythonDiskImport: vi.fn(async () => ({
+    ok: true,
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+  })),
+}));
+
 const mockRunDiskAndActivationVerify = vi.hoisted(() =>
   vi.fn(async () => [{ name: "store.db", status: "OK" as const, detail: "mock ok" }])
 );

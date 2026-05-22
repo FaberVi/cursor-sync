@@ -154,14 +154,16 @@ describe("chat-import-activate-watcher", () => {
     expect(result).toEqual({ ok: true, composerId: FIXTURE_CID });
   });
 
-  it("processPendingActivation leaves pending when command is missing", async () => {
+  it("processPendingActivation archives pending when activation is unavailable", async () => {
     const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
     const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
     await stagePendingManifest(manifest, paths);
 
     await processPendingActivation({ paths, log: (m) => logs.push(m) });
 
-    await expect(fs.access(paths.pendingPath)).resolves.toBeUndefined();
+    await expect(fs.access(paths.pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(`${paths.pendingPath}.failed`)).resolves.toBeUndefined();
+    expect(logs.some((l) => l.includes("archived pending manifest"))).toBe(true);
     await expect(fs.access(paths.resultPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

@@ -13,19 +13,38 @@ import type { ChatBundle } from "../src/chat-persistence.js";
 const CHAT_BUNDLE_GIST_FILE_NAME = "chat-bundle.json";
 const CHAT_BUNDLES_GIST_FILE_NAME = "chat-bundles.json";
 
-const createGistMock = vi.fn();
-const getGistMock = vi.fn();
-const requireTokenMock = vi.fn();
-const getTokenMock = vi.fn();
-const withRetryMock = vi.fn(async <T>(fn: () => Promise<T>) => fn());
-const appendLineMock = vi.fn();
-const showInformationMessageMock = vi.fn();
-const showErrorMessageMock = vi.fn();
-const showInputBoxMock = vi.fn();
-const showQuickPickMock = vi.fn();
-const clipboardWriteTextMock = vi.fn();
+const {
+  createGistMock,
+  getGistMock,
+  requireTokenMock,
+  getTokenMock,
+  withRetryMock,
+  appendLineMock,
+  showInformationMessageMock,
+  showErrorMessageMock,
+  showInputBoxMock,
+  showQuickPickMock,
+  clipboardWriteTextMock,
+} = vi.hoisted(() => ({
+  createGistMock: vi.fn(),
+  getGistMock: vi.fn(),
+  requireTokenMock: vi.fn(),
+  getTokenMock: vi.fn(),
+  withRetryMock: vi.fn(async <T>(fn: () => Promise<T>) => fn()),
+  appendLineMock: vi.fn(),
+  showInformationMessageMock: vi.fn(),
+  showErrorMessageMock: vi.fn(),
+  showInputBoxMock: vi.fn(),
+  showQuickPickMock: vi.fn(),
+  clipboardWriteTextMock: vi.fn(),
+}));
+
 let mockedHomeDir = "";
 let mockWorkspaceFolder = "";
+
+function folderToProjectKey(folderFsPath: string): string {
+  return path.resolve(folderFsPath).replace(/\\/g, "/").replace(/^\/+/, "").replace(/\//g, "-");
+}
 
 const mockRunDiskAndActivationVerify = vi.hoisted(() =>
   vi.fn(async () => [{ name: "store.db", status: "OK" as const, detail: "mock ok" }])
@@ -329,10 +348,9 @@ describe("chat gist export and import", () => {
 
   it("imports valid chat bundle and calls restoreChatBundle", async () => {
     const sourceProjectKey = "source-chat-project";
-    const targetProjectKey = "target-chat-project";
     const conversationId = "conv-gist-import-001";
+    const targetProjectKey = folderToProjectKey(mockWorkspaceFolder);
     const targetProjectDir = path.join(tmpRoot, ".cursor", "projects", targetProjectKey);
-    await fs.mkdir(targetProjectDir, { recursive: true });
 
     const bundle = buildChatBundleFixture({
       conversationId,
@@ -438,9 +456,8 @@ describe("chat gist export and import", () => {
     expect(exportedCollection.type).toBe("chat-bundles-collection");
     expect(exportedCollection.bundles).toHaveLength(2);
 
-    const importTargetKey = "roundtrip-target";
+    const importTargetKey = folderToProjectKey(mockWorkspaceFolder);
     const importTargetDir = path.join(tmpRoot, ".cursor", "projects", importTargetKey);
-    await fs.mkdir(importTargetDir, { recursive: true });
     for (const conversationId of [conversationId1, conversationId2]) {
       await fs.rm(
         path.join(
@@ -604,11 +621,10 @@ describe("chat gist export and import", () => {
 
   it("imports one chat from chat-bundles.json collection gist", async () => {
     const sourceProjectKey = "source-multi-project";
-    const targetProjectKey = "target-multi-project";
+    const targetProjectKey = folderToProjectKey(mockWorkspaceFolder);
     const conv1 = "conv-multi-001";
     const conv2 = "conv-multi-002";
     const targetProjectDir = path.join(tmpRoot, ".cursor", "projects", targetProjectKey);
-    await fs.mkdir(targetProjectDir, { recursive: true });
 
     const collection = {
       schemaVersion: 1 as const,
