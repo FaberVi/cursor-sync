@@ -9,7 +9,7 @@ import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./
 import { detectConflicts, clearConflicts, getPendingConflicts, getResolutionForKey } from "./conflicts.js";
 import { generateExtensionsJson } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
-import { refreshSidebar } from "./sidebar.js";
+import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
 import type { SyncState } from "./types.js";
 

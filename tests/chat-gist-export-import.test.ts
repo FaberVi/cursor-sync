@@ -75,6 +75,17 @@ vi.mock("../src/chat-import-verify.js", async (importOriginal) => {
 });
 
 vi.mock("vscode", () => ({
+  EventEmitter: class<T> {
+    private listeners: Array<(e: T) => void> = [];
+    event = (listener: (e: T) => void) => {
+      this.listeners.push(listener);
+      return { dispose: () => {} };
+    };
+    fire(data: T): void {
+      for (const l of this.listeners) l(data);
+    }
+    dispose(): void {}
+  },
   workspace: {
     get workspaceFolders() {
       return [
@@ -143,6 +154,72 @@ vi.mock("../src/diagnostics.js", () => ({
     appendLine: appendLineMock,
     show: vi.fn(),
     dispose: vi.fn(),
+  }),
+}));
+
+vi.mock("../src/chat-transport-scripts.js", () => ({
+  resolveTransportChatScript: vi.fn(async () => "/fake/cursor_chat_io.py"),
+  runPythonDiskImport: vi.fn(async (opts: {
+    bundlePath: string;
+    workspaceFolder: string;
+    targetProject?: string;
+    stateDbPath?: string;
+    dryRun?: boolean;
+    syncGlobal?: boolean;
+    pinRecent?: boolean;
+  }) => {
+    const fsMod = await import("node:fs/promises");
+    const pathMod = await import("node:path");
+    const osMod = await import("node:os");
+    const { decodeTranscriptArtifact } = await import("../src/transcript-bundle.js");
+    const { md5FolderKey, requireWorkspaceContext } = await import("../src/chat-workspace-context.js");
+    const { mergeSidebarIntoStateDb, mergeTargetsForImport } = await import("../src/chat-import-merge.js");
+
+    const home = osMod.homedir();
+    const bundleRaw = await fsMod.readFile(opts.bundlePath, "utf8");
+    const bundle = JSON.parse(bundleRaw) as import("../src/chat-persistence.js").ChatBundle;
+
+    if (!opts.dryRun) {
+      if (bundle.storeSnapshot) {
+        const chatsKey = md5FolderKey(pathMod.resolve(opts.workspaceFolder));
+        const storeDir = pathMod.join(
+          home,
+          ".cursor",
+          "chats",
+          chatsKey,
+          bundle.conversationId
+        );
+        await fsMod.mkdir(storeDir, { recursive: true });
+        const decoded = decodeTranscriptArtifact(
+          bundle.storeSnapshot.content,
+          bundle.storeSnapshot.encoding
+        );
+        await fsMod.writeFile(pathMod.join(storeDir, "store.db"), decoded);
+      }
+
+      const projectsRoot = pathMod.join(home, ".cursor", "projects");
+      for (const tf of bundle.transcriptFiles) {
+        const decoded = decodeTranscriptArtifact(tf.content, tf.encoding);
+        const targetPath = pathMod.join(projectsRoot, tf.relativePath);
+        await fsMod.mkdir(pathMod.dirname(targetPath), { recursive: true });
+        await fsMod.writeFile(targetPath, decoded);
+      }
+
+      if (bundle.sidebarSnapshot && opts.stateDbPath) {
+        const wsCtx = await requireWorkspaceContext({ workspaceFolder: opts.workspaceFolder });
+        const targets = await mergeTargetsForImport(opts.stateDbPath, opts.syncGlobal ?? true);
+        for (const dbPath of targets) {
+          await mergeSidebarIntoStateDb(
+            dbPath,
+            bundle,
+            wsCtx.workspaceIdentifier as import("../src/chat-import-merge.js").WorkspaceIdentifier,
+            { pinRecent: opts.pinRecent ?? true }
+          );
+        }
+      }
+    }
+
+    return { ok: true, exitCode: 0, stdout: "", stderr: "" };
   }),
 }));
 

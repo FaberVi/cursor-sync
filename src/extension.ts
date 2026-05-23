@@ -22,10 +22,9 @@ import { executeReset } from "./reset.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { determineSyncAction } from "./scheduler.js";
 import { getLogger, loadSyncState } from "./diagnostics.js";
-import { initializeSidebar } from "./sidebar.js";
+import { initializeSidebar } from "./sidebar/index.js";
 import { initializeStatusBar, updateStatusBar } from "./statusbar.js";
 import { getOrCreateClientId } from "./analytics.js";
-import { initializeTranscriptBrowser } from "./transcript-browser.js";
 import {
   executeFinalizeStateReconciliation,
   executePrepareStateReconciliation,
@@ -36,15 +35,34 @@ import {
   disposeActivationWatcher,
   registerActivationWatcher,
 } from "./chat-import-activate-watcher.js";
-import { executeInstallSkillTransportChat } from "./install-skill-transport-chat.js";
-
 let configListener: vscode.Disposable | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   const logger = getLogger();
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.refreshImportedTranscripts", () => {
+      vscode.window.showInformationMessage(
+        "Imported Transcripts moved to the Chats tab of the Cursor Sync sidebar."
+      );
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.openImportedTranscript", () => {
+      vscode.window.showInformationMessage(
+        "Imported Transcripts moved to the Chats tab of the Cursor Sync sidebar."
+      );
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.revealImportedTranscriptInExplorer", () => {
+      vscode.window.showInformationMessage(
+        "Imported Transcripts moved to the Chats tab of the Cursor Sync sidebar."
+      );
+    })
+  );
+
   initializeStatusBar(context);
-  initializeTranscriptBrowser(context);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.configureGithub", () =>
@@ -139,12 +157,6 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.verifyChatImport", () =>
       executeVerifyChatImport(context)
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.installSkillTransportChat", () =>
-      executeInstallSkillTransportChat(context)
     )
   );
 

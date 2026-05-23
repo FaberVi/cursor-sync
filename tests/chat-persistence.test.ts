@@ -50,19 +50,19 @@ vi.mock("../src/rollback.js", () => ({
   pruneOldBackups: vi.fn(async () => {}),
 }));
 
-vi.mock("../src/chat-import-merge.js", () => ({
-  mergeTargetsForImport: vi.fn(async () => []),
-  mergeSidebarIntoStateDb: vi.fn(async () => ({ merged: false, warnings: [] })),
-}));
-
-vi.mock("../src/chat-transport-scripts.js", () => ({
-  resolveTransportChatScript: vi.fn(async () => null),
-  runPythonDiskImport: vi.fn(async () => ({
+const { mockResolveTransportChatScript, mockRunPythonDiskImport } = vi.hoisted(() => ({
+  mockResolveTransportChatScript: vi.fn(async () => "/fake/cursor_chat_io.py"),
+  mockRunPythonDiskImport: vi.fn(async () => ({
     ok: true,
     exitCode: 0,
     stdout: "",
     stderr: "",
   })),
+}));
+
+vi.mock("../src/chat-transport-scripts.js", () => ({
+  resolveTransportChatScript: mockResolveTransportChatScript,
+  runPythonDiskImport: mockRunPythonDiskImport,
 }));
 
 const mockRunDiskAndActivationVerify = vi.hoisted(() =>
@@ -267,6 +267,10 @@ describe("restoreChatBundle disk parity", () => {
     mockRunDiskAndActivationVerify.mockResolvedValue([
       { name: "store.db", status: "OK", detail: "mock ok" },
     ]);
+    mockResolveTransportChatScript.mockReset();
+    mockResolveTransportChatScript.mockResolvedValue("/fake/cursor_chat_io.py");
+    mockRunPythonDiskImport.mockReset();
+    mockRunPythonDiskImport.mockResolvedValue({ ok: true, exitCode: 0, stdout: "", stderr: "" });
     mockWorkspaceFolders.length = 0;
     mockWorkspaceFolders.push({
       uri: { fsPath: FIXTURE_REPO, scheme: "file" },
@@ -318,20 +322,16 @@ describe("restoreChatBundle disk parity", () => {
     const chatsKey = md5FolderKey(path.resolve(FIXTURE_REPO));
     expect(result.storeWritten).toBe(true);
     expect(result.storeWorkspaceKey).toBe(chatsKey);
-    const storePath = path.join(
-      tempHome,
-      ".cursor",
-      "chats",
-      chatsKey,
-      "conv-store-md5",
-      "store.db"
-    );
-    const written = await fs.readFile(storePath);
-    expect(written.equals(storeBytes)).toBe(true);
     expect(chatsKey).not.toBe("must-not-use-this-key");
   });
 
-  it("throws when bundle has storeSnapshot but checksum fails", async () => {
+  it("throws when disk import fails (Python reports failure)", async () => {
+    mockRunPythonDiskImport.mockResolvedValueOnce({
+      ok: false,
+      exitCode: 1,
+      stdout: "",
+      stderr: "checksum mismatch",
+    });
     const { restoreChatBundle } = await import("../src/chat-persistence.js");
     const storeBytes = Buffer.from("valid");
     const encoded = encodeTranscriptArtifact(storeBytes, true);
@@ -360,7 +360,31 @@ describe("restoreChatBundle disk parity", () => {
 
     await expect(
       restoreChatBundle(context, bundle, { report: () => {} })
-    ).rejects.toThrow(/checksum mismatch/);
+    ).rejects.toThrow(/Disk import failed/);
+  });
+
+  it("throws when transport-chat scripts are not found", async () => {
+    mockResolveTransportChatScript.mockResolvedValueOnce(null);
+    const { restoreChatBundle } = await import("../src/chat-persistence.js");
+    const bundle: ChatBundle = {
+      schemaVersion: 1,
+      type: "chat-persistence",
+      createdAt: "2026-05-21T00:00:00.000Z",
+      conversationId: "conv-no-scripts",
+      title: "No scripts",
+      subtitle: "",
+      previewText: "No scripts",
+      sidebarSnapshot: null,
+      storeSnapshot: null,
+      transcriptFiles: [],
+    };
+    const context = {
+      globalStorageUri: { fsPath: path.join(tempHome, "global-storage") },
+    } as import("vscode").ExtensionContext;
+
+    await expect(
+      restoreChatBundle(context, bundle, { report: () => {} })
+    ).rejects.toThrow(/transport-chat scripts not found/);
   });
 
   it("runs disk verify after restore and throws on FAIL", async () => {
@@ -464,6 +488,10 @@ describe("restoreChatBundle import-v2 activation", () => {
     mockVerifyActivationChecks.mockResolvedValue([
       { name: "activation.status", status: "OK", detail: "completed" },
     ]);
+    mockResolveTransportChatScript.mockReset();
+    mockResolveTransportChatScript.mockResolvedValue("/fake/cursor_chat_io.py");
+    mockRunPythonDiskImport.mockReset();
+    mockRunPythonDiskImport.mockResolvedValue({ ok: true, exitCode: 0, stdout: "", stderr: "" });
     const activateMod = await import("../src/chat-import-activate.js");
     runPostImportActivationSpy = vi
       .spyOn(activateMod, "runPostImportActivation")

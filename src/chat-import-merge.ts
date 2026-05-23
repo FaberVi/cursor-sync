@@ -283,6 +283,9 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+/**
+ * @deprecated No longer called from restoreChatBundle; Python handles sidebar writes. Retained for tests only.
+ */
 export async function mergeTargetsForImport(
   stateDbPath: string | null | undefined,
   syncGlobal: boolean
@@ -325,6 +328,9 @@ export async function mergeTargetsForImport(
   return targets;
 }
 
+/**
+ * @deprecated No longer called from restoreChatBundle; Python handles sidebar writes. Retained for tests only.
+ */
 export async function mergeSidebarIntoStateDb(
   dbPath: string,
   bundle: ChatBundle,

@@ -1,15 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
-
-const TRANSPORT_CHAT_SKILL = path.join(
-  os.homedir(),
-  ".cursor",
-  "skills",
-  "transport-chat",
-  "scripts"
-);
+import * as vscode from "vscode";
 
 export type TransportChatScriptName =
   | "cursor_chat_io.py"
@@ -19,14 +11,27 @@ export async function resolveTransportChatScript(
   scriptName: TransportChatScriptName,
   extensionPath?: string
 ): Promise<string | null> {
-  const candidates: string[] = [
-    path.join(TRANSPORT_CHAT_SKILL, scriptName),
-  ];
+  const overrideDir = vscode.workspace
+    .getConfiguration("cursorSync")
+    .get<string>("chatImport.transportChatScriptDir");
+
+  const candidates: string[] = [];
+
+  if (overrideDir) {
+    candidates.push(path.join(overrideDir, scriptName));
+  }
+
   if (extensionPath) {
+    candidates.push(
+      path.join(extensionPath, "resources", "transport-chat", "scripts", scriptName)
+    );
     candidates.push(path.join(extensionPath, "scripts", scriptName));
     candidates.push(path.join(extensionPath, "..", "scripts", scriptName));
   }
   candidates.push(path.join(process.cwd(), "scripts", scriptName));
+  candidates.push(
+    path.join(process.cwd(), "resources", "transport-chat", "scripts", scriptName)
+  );
 
   for (const candidate of candidates) {
     try {
@@ -72,7 +77,7 @@ export async function runPythonDiskImport(
       ok: false,
       exitCode: 1,
       stdout: "",
-      stderr: "transport-chat skill not found (~/.cursor/skills/transport-chat/scripts/cursor_chat_io.py)",
+      stderr: "transport-chat script not found (cursor_chat_io.py not in extension resources or fallback paths)",
     };
   }
 

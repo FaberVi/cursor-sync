@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { clearToken } from "./auth.js";
 import { clearSyncState } from "./diagnostics.js";
 import { updateStatusBar } from "./statusbar.js";
-import { refreshSidebar } from "./sidebar.js";
+import { refreshSidebar } from "./sidebar/index.js";
 
 export async function executeReset(context: vscode.ExtensionContext): Promise<void> {
   const confirmation = await vscode.window.showWarningMessage(

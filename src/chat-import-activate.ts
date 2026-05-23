@@ -398,8 +398,26 @@ export function pingServerProbe(
 export async function resolveComposerBridgeScript(
   extensionPath?: string
 ): Promise<string | null> {
+  const overrideDir = vscode.workspace
+    .getConfiguration("cursorSync")
+    .get<string>("chatImport.transportChatScriptDir");
+
   const candidates: string[] = [];
+
+  if (overrideDir) {
+    candidates.push(path.join(overrideDir, "cursor_composer_bridge.py"));
+  }
+
   if (extensionPath) {
+    candidates.push(
+      path.join(
+        extensionPath,
+        "resources",
+        "transport-chat",
+        "scripts",
+        "cursor_composer_bridge.py"
+      )
+    );
     candidates.push(
       path.join(extensionPath, "scripts", "cursor_composer_bridge.py")
     );
@@ -412,9 +430,8 @@ export async function resolveComposerBridgeScript(
   );
   candidates.push(
     path.join(
-      os.homedir(),
-      ".cursor",
-      "skills",
+      process.cwd(),
+      "resources",
       "transport-chat",
       "scripts",
       "cursor_composer_bridge.py"

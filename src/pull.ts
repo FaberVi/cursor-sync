@@ -11,7 +11,7 @@ import { detectConflicts, clearConflicts, getResolutionForKey, getPendingConflic
 import { createBackup, rollbackFromBackup, pruneOldBackups } from "./rollback.js";
 import { findMissingExtensions, findExtraExtensions } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
-import { refreshSidebar } from "./sidebar.js";
+import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
 import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
 import type { SyncState, Manifest } from "./types.js";
