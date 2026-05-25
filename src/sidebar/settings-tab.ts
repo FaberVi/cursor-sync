@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { escapeHtml } from "./sync-tab.js";
 
 export interface SettingsTabValues {
   activateDefault: boolean;
@@ -31,7 +32,7 @@ export function renderSettingsPane(values: SettingsTabValues): string {
   function checkbox(id: string, label: string, checked: boolean): string {
     return `<div class="settings-row">
       <label class="settings-label">
-        <input type="checkbox" id="${id}" ${checked ? "checked" : ""} onchange="onSettingChange('${id}', this.checked)" />
+        <input type="checkbox" id="${id}" data-setting-key="${id}" ${checked ? "checked" : ""} />
         <span>${label}</span>
       </label>
     </div>`;
@@ -45,12 +46,12 @@ export function renderSettingsPane(values: SettingsTabValues): string {
       ${checkbox("chatImport.activateStrict", "Strict activation (require confirmed activation)", values.activateStrict)}
       <div class="settings-row">
         <label class="settings-label" for="chatImport.bridgeWaitResultSeconds">Bridge wait (seconds)</label>
-        <input type="number" id="chatImport.bridgeWaitResultSeconds" value="${values.bridgeWaitResultSeconds}" min="0" max="120" class="settings-input" onchange="onSettingChange('chatImport.bridgeWaitResultSeconds', Number(this.value))" />
+        <input type="number" id="chatImport.bridgeWaitResultSeconds" data-setting-key="chatImport.bridgeWaitResultSeconds" value="${values.bridgeWaitResultSeconds}" min="0" max="120" class="settings-input" />
       </div>
       ${checkbox("transcripts.autoReloadAfterImport", "Auto-reload after import", values.autoReloadAfterImport)}
       <div class="settings-row">
         <label class="settings-label" for="chatImport.pythonPath">Python path</label>
-        <input type="text" id="chatImport.pythonPath" value="${values.pythonPath}" class="settings-input settings-input-text" onchange="onSettingChange('chatImport.pythonPath', this.value)" />
+        <input type="text" id="chatImport.pythonPath" data-setting-key="chatImport.pythonPath" value="${escapeHtml(values.pythonPath)}" class="settings-input settings-input-text" />
       </div>
     </div>
   </div>

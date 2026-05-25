@@ -5,6 +5,11 @@ import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { resolveSyncRoots } from "./paths.js";
 
+export function stateDbPathForWorkspaceStorageId(workspaceStorageId: string): string {
+  const { cursorUser } = resolveSyncRoots();
+  return path.join(cursorUser, "workspaceStorage", workspaceStorageId, "state.vscdb");
+}
+
 export interface WorkspaceIdentifierUri {
   $mid: number;
   fsPath: string;
