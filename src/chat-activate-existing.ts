@@ -53,9 +53,10 @@ const noopProgress: vscode.Progress<{ message?: string; increment?: number }> = 
 async function globalCursorDiskKvHasComposer(conversationId: string): Promise<boolean> {
   const globalDb = path.join(resolveSyncRoots().cursorUser, "globalStorage", "state.vscdb");
   try {
+    const keyLit = escapeSqlLiteral(`composerData:${conversationId}`);
     const rows = await querySqliteRows(
       globalDb,
-      `SELECT 1 AS ok FROM cursorDiskKV WHERE key = 'composerData:${conversationId}' LIMIT 1;`,
+      `SELECT 1 AS ok FROM cursorDiskKV WHERE key = '${keyLit}' LIMIT 1;`,
       { retries: 1 }
     );
     return rows.length > 0;

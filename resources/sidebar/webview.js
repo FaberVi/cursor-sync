@@ -101,7 +101,13 @@
     if (msg.type === "sync:update") {
       var syncPane = document.getElementById("sync-pane");
       if (syncPane && msg.html) {
+        var activeBtn = document.querySelector(".tab-btn.active");
+        var activeTab = activeBtn ? activeBtn.getAttribute("data-tab") : "sync-pane";
         syncPane.outerHTML = msg.html;
+        if (activeTab !== "sync-pane") {
+          var newSync = document.getElementById("sync-pane");
+          if (newSync) newSync.style.display = "none";
+        }
       }
       return;
     }

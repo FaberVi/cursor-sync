@@ -12,11 +12,11 @@ export interface SettingsTabValues {
 export function readSettingsValues(): SettingsTabValues {
   const cfg = vscode.workspace.getConfiguration("cursorSync");
   return {
-    activateDefault: cfg.get<boolean>("chatImport.activateDefault", true),
+    activateDefault: cfg.get<boolean>("chatImport.activateDefault", false),
     activateStrict: cfg.get<boolean>("chatImport.activateStrict", false),
-    bridgeWaitResultSeconds: cfg.get<number>("chatImport.bridgeWaitResultSeconds", 10),
+    bridgeWaitResultSeconds: cfg.get<number>("chatImport.bridgeWaitResultSeconds", 0),
     autoReloadAfterImport: cfg.get<boolean>("transcripts.autoReloadAfterImport", false),
-    pythonPath: cfg.get<string>("chatImport.pythonPath", "python3"),
+    pythonPath: cfg.get<string>("chatImport.pythonPath", ""),
   };
 }
 

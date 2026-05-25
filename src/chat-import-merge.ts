@@ -308,20 +308,6 @@ export function buildMinimalComposerDataForOpen(
   };
 }
 
-export function composerDataForPreloadOpen(
-  conversationId: string,
-  existingRaw: string | undefined
-): Record<string, unknown> {
-  const merged = composerDataForFocus(conversationId, existingRaw);
-  const selected = merged.selectedComposerIds;
-  if (Array.isArray(selected)) {
-    merged.selectedComposerIds = selected.filter((id) => id !== conversationId);
-  } else {
-    merged.selectedComposerIds = [];
-  }
-  return merged;
-}
-
 export function prepareHeadersForImport(
   existingHeadersRaw: string | undefined,
   bundle: ChatBundle,
