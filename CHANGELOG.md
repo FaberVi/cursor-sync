@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## v0.7.1
+
+### Fixed
+- **Chats tab Open / Re-activate**: `activateExistingChat` now syncs disk layers (Python transport), merges sidebar state into `state.vscdb`, and picks the right bundle mode (export bundle, header-only, minimal stub, or existing rich composer data) before IDE activation.
+- **Composer activation**: prefers `composer.openComposer` / `composer.focusComposer` with handle polling; sidebar Open can skip staging `pending.json` and accept open-without-handle when `store.db` is already on disk.
+- **store.db meta**: `decodeStoreDbIndex` parses hex-encoded JSON meta values; `storeMetaRecord` helper for activation decisions.
+- **Sidebar webview**: client script moved to bundled `resources/sidebar/webview.js`; sync tab refreshes via `postMessage` instead of resetting full HTML (preserves Chats/Settings tab state).
+- **Open fallback**: when native chat UI activation fails, opens the agent transcript `.jsonl` when available and surfaces actionable reload/re-import hints.
+
+### Changed
+- VSIX packaging ships `resources/sidebar/webview.js` instead of `golden-chat-store.template.db` (template remains in repo for tests only).
+
 ## v0.7.0
 
 ### Added
