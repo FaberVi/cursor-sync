@@ -28,10 +28,8 @@ import {
 import {
   filterComposerDataForConversation,
   filterComposerHeadersForConversation,
-  mergeTargetsForImport,
-  mergeSidebarIntoStateDb,
-  type WorkspaceIdentifier as MergeWorkspaceIdentifier,
 } from "./chat-import-merge.js";
+import { emitChatImportProgress } from "./chat-progress-events.js";
 import { resolveSyncRoots } from "./paths.js";
 import {
   pingServerProbe,
@@ -63,6 +61,7 @@ import {
   pickBundleFromCollection,
 } from "./chat-bundle-format.js";
 import { pickChatsForExport, type ChatExportSelection } from "./chat-export-ux.js";
+import { recordImport as recordImportEntry } from "./sidebar/import-history.js";
 
 const {
   querySqliteRows,
@@ -133,6 +132,36 @@ export function restoreOptionsFromConfiguration(): RestoreChatBundleOptions {
 }
 
 const SQLITE_READ_RETRIES = 3;
+
+let pythonInterpreterMemo: string | null | undefined;
+
+export async function ensurePythonReady(): Promise<string> {
+  if (pythonInterpreterMemo !== undefined) {
+    if (pythonInterpreterMemo === null) {
+      throw new Error(
+        "Python 3 not available; set cursorSync.chatImport.pythonPath or install python3."
+      );
+    }
+    return pythonInterpreterMemo;
+  }
+  const config = vscode.workspace.getConfiguration("cursorSync");
+  const configured = config.get<string>("chatImport.pythonPath")?.trim();
+  const candidates = configured ? [configured] : ["python3", "python"];
+  for (const cand of candidates) {
+    try {
+      const { spawnSync } = await import("node:child_process");
+      const res = spawnSync(cand, ["--version"], { encoding: "utf-8" });
+      if (res.status === 0) {
+        pythonInterpreterMemo = cand;
+        return cand;
+      }
+    } catch { /* try next */ }
+  }
+  pythonInterpreterMemo = null;
+  throw new Error(
+    "Python 3 not available; set cursorSync.chatImport.pythonPath or install python3."
+  );
+}
 
 function logChatRestoreDebug(line: string): void {
   getLogger().appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`);
@@ -883,219 +912,79 @@ export async function restoreChatBundle(
   );
 
   const extensionPath = context.extensionUri?.fsPath;
+
+  try {
+    await ensurePythonReady();
+  } catch (err) {
+    throw new Error(
+      err instanceof Error ? err.message : "Python 3 not available; set cursorSync.chatImport.pythonPath or install python3."
+    );
+  }
+
   const transportChatIo = await resolveTransportChatScript(
     "cursor_chat_io.py",
     extensionPath
   );
-  let diskHandledByPython = false;
-
-  if (transportChatIo && bundle.sidebarSnapshot) {
-    const remappedBundle = applyProjectMappingToBundle(bundle, projectMapping);
-    const tmpBundlePath = path.join(
-      os.tmpdir(),
-      `cursor-sync-import-${conversationId}-${Date.now()}.json`
+  if (!transportChatIo) {
+    throw new Error(
+      `transport-chat scripts not found in extension at ${extensionPath}. Reinstall Cursor Sync or set cursorSync.chatImport.transportChatScriptDir.`
     );
+  }
+
+  const remappedBundle = applyProjectMappingToBundle(bundle, projectMapping);
+  const tmpBundlePath = path.join(
+    os.tmpdir(),
+    `cursor-sync-import-${conversationId}-${Date.now()}.json`
+  );
+  try {
+    await fs.writeFile(tmpBundlePath, JSON.stringify(remappedBundle, null, 2), "utf8");
+    progress.report({ message: "Restoring chat files (transport-chat)..." });
+    emitChatImportProgress({ conversationId, phase: "A", step: "python-disk-import-start" });
+    const diskOutcome = await runPythonDiskImport({
+      bundlePath: tmpBundlePath,
+      workspaceFolder: wsCtx.folderFsPath,
+      targetProject: targetProjectKey,
+      stateDbPath: workspaceStateDb,
+      dryRun,
+      syncGlobal,
+      pinRecent,
+      extensionPath,
+      log: (line) => logChatRestoreDebug(line),
+    });
+    emitChatImportProgress({ conversationId, phase: "A", step: "python-disk-import-done", ok: diskOutcome.ok });
+    if (!diskOutcome.ok) {
+      throw new Error(
+        `Disk import failed (transport-chat): exit ${diskOutcome.exitCode}. ${diskOutcome.stderr.trim() || diskOutcome.stdout.trim()}`
+      );
+    }
+    transcriptsWritten = remappedBundle.transcriptFiles.length;
+    storeWritten = !!remappedBundle.storeSnapshot;
+    sidebarMerged = true;
+    if (!storeWritten && !dryRun) {
+      const golden = await ensureGoldenStoreDb(
+        context,
+        remappedBundle,
+        storeWorkspaceKey,
+        dryRun
+      );
+      storeWritten = golden.storeWritten;
+      warnings.push(...golden.warnings);
+    }
+    logChatRestoreDebug(
+      `disk restore via transport-chat conversationId=${conversationId} transcripts=${transcriptsWritten} store=${storeWritten}`
+    );
+  } finally {
     try {
-      await fs.writeFile(tmpBundlePath, JSON.stringify(remappedBundle, null, 2), "utf8");
-      progress.report({ message: "Restoring chat files (transport-chat)..." });
-      const diskOutcome = await runPythonDiskImport({
-        bundlePath: tmpBundlePath,
-        workspaceFolder: wsCtx.folderFsPath,
-        targetProject: targetProjectKey,
-        stateDbPath: workspaceStateDb,
-        dryRun,
-        syncGlobal,
-        pinRecent,
-        extensionPath,
-        log: (line) => logChatRestoreDebug(line),
-      });
-      if (!diskOutcome.ok) {
-        throw new Error(
-          `Disk import failed (transport-chat): exit ${diskOutcome.exitCode}. ${diskOutcome.stderr.trim() || diskOutcome.stdout.trim()}`
-        );
-      }
-      diskHandledByPython = true;
-      transcriptsWritten = remappedBundle.transcriptFiles.length;
-      storeWritten = !!remappedBundle.storeSnapshot;
-      sidebarMerged = true;
-      if (!storeWritten && !dryRun) {
-        const golden = await ensureGoldenStoreDb(
-          context,
-          remappedBundle,
-          storeWorkspaceKey,
-          dryRun
-        );
-        storeWritten = golden.storeWritten;
-        warnings.push(...golden.warnings);
-      }
-      logChatRestoreDebug(
-        `disk restore via transport-chat conversationId=${conversationId} transcripts=${transcriptsWritten} store=${storeWritten}`
-      );
-    } finally {
-      try {
-        await fs.unlink(tmpBundlePath);
-      } catch {
-        /* ignore */
-      }
+      await fs.unlink(tmpBundlePath);
+    } catch {
+      /* ignore */
     }
-  } else if (bundle.sidebarSnapshot && !transportChatIo) {
-    warnings.push(
-      "transport-chat skill not found; using in-extension disk restore. Install ~/.cursor/skills/transport-chat for state.vscdb writes."
-    );
-  }
-
-  // Restore transcript JSONL files (remapped to target project)
-  if (!diskHandledByPython && bundle.transcriptFiles.length > 0) {
-    progress.report({ message: "Restoring transcript files..." });
-    const projectsRoot = resolveProjectsRoot();
-    for (const tf of bundle.transcriptFiles) {
-      const decoded = decodeTranscriptArtifact(tf.content, tf.encoding);
-
-      const actualChecksum = computeArtifactChecksum(decoded);
-      if (actualChecksum !== tf.checksum) {
-        warnings.push(`Checksum mismatch for ${tf.relativePath}; skipped.`);
-        continue;
-      }
-
-      // Remap source project key to target project folder
-      const segments = tf.relativePath.split("/");
-      const sourceKey = segments[0]!;
-      const mappedKey = projectMapping.get(sourceKey) ?? sourceKey;
-      const remappedPath = [mappedKey, ...segments.slice(1)].join("/");
-      const targetPath = path.join(projectsRoot, remappedPath);
-
-      if (dryRun) {
-        logChatRestoreDebug(
-          `[dry-run] would write transcript ${targetPath} (${decoded.length} bytes)`
-        );
-        transcriptsWritten += 1;
-        continue;
-      }
-
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-
-      const { entries: backupEntries } = await createBackup(context, [targetPath]);
-      try {
-        await fs.writeFile(targetPath, decoded);
-        transcriptsWritten += 1;
-      } catch (err) {
-        await rollbackFromBackup(backupEntries);
-        warnings.push(`Failed to write ${remappedPath}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    logChatRestoreDebug(
-      `transcripts restore done conversationId=${conversationId} written=${transcriptsWritten} of=${bundle.transcriptFiles.length}`
-    );
-  }
-
-  if (!diskHandledByPython && bundle.storeSnapshot) {
-    progress.report({ message: "Restoring store.db..." });
-    const snap = bundle.storeSnapshot;
-    const decoded = decodeTranscriptArtifact(snap.content, snap.encoding);
-
-    const actualChecksum = computeArtifactChecksum(decoded);
-    if (actualChecksum !== snap.checksum) {
-      throw new Error("store.db checksum mismatch; import aborted.");
-    }
-
-    const chatsRoot = resolveChatsRoot();
-    const storeDbPath = path.join(chatsRoot, storeWorkspaceKey, conversationId, "store.db");
-
-    if (dryRun) {
-      logChatRestoreDebug(
-        `[dry-run] would write store ${storeDbPath} (${decoded.length} bytes)`
-      );
-      storeWritten = true;
-    } else {
-      await fs.mkdir(path.dirname(storeDbPath), { recursive: true });
-
-      const { entries: backupEntries } = await createBackup(context, [storeDbPath]);
-      try {
-        await fs.writeFile(storeDbPath, decoded);
-        storeWritten = true;
-      } catch (err) {
-        await rollbackFromBackup(backupEntries);
-        throw new Error(
-          `Failed to write store.db: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-    logChatRestoreDebug(
-      `store.db restore conversationId=${conversationId} storeWritten=${storeWritten} path=${storeDbPath} chatsKey=${storeWorkspaceKey}`
-    );
-  }
-
-  if (!diskHandledByPython && !bundle.storeSnapshot && !storeWritten && !dryRun) {
-    const golden = await ensureGoldenStoreDb(
-      context,
-      bundle,
-      storeWorkspaceKey,
-      dryRun
-    );
-    storeWritten = golden.storeWritten;
-    warnings.push(...golden.warnings);
   }
 
   if (bundle.storeSnapshot && !storeWritten) {
     throw new Error(
       "Bundle contained storeSnapshot but store.db was not written (required for import parity)."
     );
-  }
-
-  if (!diskHandledByPython && bundle.sidebarSnapshot) {
-    progress.report({ message: "Merging sidebar state..." });
-    const mergeTargets = await mergeTargetsForImport(workspaceStateDb, syncGlobal);
-    logChatRestoreDebug(
-      `sidebar merge conversationId=${conversationId} targets=${mergeTargets.length} [${mergeTargets.map((p) => path.basename(path.dirname(p)) + "/" + path.basename(p)).join(", ")}]`
-    );
-
-    if (mergeTargets.length === 0) {
-      warnings.push("state.vscdb not found; sidebar merge skipped.");
-    } else if (dryRun) {
-      logChatRestoreDebug(
-        `[dry-run] would merge sidebar into ${mergeTargets.length} state.vscdb target(s)`
-      );
-      sidebarMerged = mergeTargets.length > 0;
-    } else {
-      for (const dbPath of mergeTargets) {
-        try {
-          const { entries: backupEntries } = await createBackup(context, [dbPath]);
-          try {
-            const mergeResult = await mergeSidebarIntoStateDb(
-              dbPath,
-              bundle,
-              wsCtx.workspaceIdentifier as unknown as MergeWorkspaceIdentifier,
-              { pinRecent }
-            );
-            warnings.push(...mergeResult.warnings);
-            if (mergeResult.merged) {
-              sidebarMerged = true;
-              logChatRestoreDebug(
-                `sidebar merge success conversationId=${conversationId} db=${path.basename(dbPath)}`
-              );
-            }
-          } catch (err) {
-            await rollbackFromBackup(backupEntries);
-            const errMsg = err instanceof Error ? err.message : String(err);
-            warnings.push(`state.vscdb write failed for ${path.basename(dbPath)}: ${errMsg}; rolled back.`);
-            logChatRestoreDebug(
-              `sidebar merge failure conversationId=${conversationId} db=${path.basename(dbPath)} error=${errMsg}`
-            );
-          }
-        } catch (err) {
-          const isTimeout = isExecFileTimeoutError(err);
-          const errMsg = err instanceof Error ? err.message : String(err);
-          warnings.push(
-            isTimeout
-              ? `state.vscdb timed out for ${path.basename(dbPath)} (database may be locked).`
-              : `state.vscdb merge failed for ${path.basename(dbPath)}: ${errMsg}`
-          );
-          logChatRestoreDebug(
-            `sidebar merge error conversationId=${conversationId} db=${path.basename(dbPath)} timeout=${isTimeout} error=${errMsg}`
-          );
-        }
-      }
-    }
   }
 
   if (!dryRun) {
@@ -1124,6 +1013,7 @@ export async function restoreChatBundle(
         );
       }
       progress.report({ message: "Activating composer..." });
+      emitChatImportProgress({ conversationId, phase: "B", step: "activation-start" });
       const activationOutcome = await runPostImportActivation(
         bundle,
         conversationId,
@@ -1137,6 +1027,13 @@ export async function restoreChatBundle(
           log: (line) => logChatRestoreDebug(line),
         }
       );
+      emitChatImportProgress({
+        conversationId,
+        phase: "B",
+        step: "activation-done",
+        ok: activationOutcome.ok,
+        detail: activationOutcome.stagedOnly ? "staged-only" : undefined,
+      });
       if (
         options.activateStrict &&
         activationOutcome.stagedOnly &&
@@ -1206,6 +1103,7 @@ export async function restoreChatBundle(
   logChatRestoreDebug(
     `restoreChatBundle done conversationId=${conversationId} transcriptsWritten=${transcriptsWritten} storeWritten=${storeWritten} storeWorkspaceKey=${storeWorkspaceKey} sidebarMerged=${sidebarMerged} warnings=${warnings.length}${warnings.length > 0 ? ` [${warnings.join("; ")}]` : ""}`
   );
+  void recordImportEntry(context, { conversationId, transcriptsWritten, storeWritten, sidebarMerged, warnings: warnings.length, timestamp: new Date().toISOString() });
   return result;
 }
 

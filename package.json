@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync",
   "description": "Sync user-level Cursor settings and assets to a private GitHub Gist",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "icon": "assets/icon.png",
   "publisher": "MarceloBarella",
   "repository": {
@@ -18,8 +18,7 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onView:cursorSync.sidebar",
-    "onView:cursorSync.transcriptBrowser"
+    "onView:cursorSync.sidebar"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -38,10 +37,6 @@
           "id": "cursorSync.sidebar",
           "name": "Cursor Sync",
           "type": "webview"
-        },
-        {
-          "id": "cursorSync.transcriptBrowser",
-          "name": "Imported Transcripts"
         }
       ]
     },
@@ -50,23 +45,6 @@
         {
           "command": "cursorSync.syncNow",
           "when": "view == cursorSync.sidebar && cursorSync.configured",
-          "group": "navigation"
-        },
-        {
-          "command": "cursorSync.refreshImportedTranscripts",
-          "when": "view == cursorSync.transcriptBrowser",
-          "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "cursorSync.openImportedTranscript",
-          "when": "view == cursorSync.transcriptBrowser && viewItem == cursorSyncTranscriptFile",
-          "group": "inline"
-        },
-        {
-          "command": "cursorSync.revealImportedTranscriptInExplorer",
-          "when": "view == cursorSync.transcriptBrowser && viewItem == cursorSyncTranscriptFile",
           "group": "navigation"
         }
       ]
@@ -157,16 +135,15 @@
       },
       {
         "command": "cursorSync.refreshImportedTranscripts",
-        "title": "Cursor Sync: Refresh Imported Transcripts",
-        "icon": "$(refresh)"
+        "title": "Cursor Sync: Refresh Imported Transcripts (Deprecated)"
       },
       {
         "command": "cursorSync.openImportedTranscript",
-        "title": "Cursor Sync: Open Imported Transcript"
+        "title": "Cursor Sync: Open Imported Transcript (Deprecated)"
       },
       {
         "command": "cursorSync.revealImportedTranscriptInExplorer",
-        "title": "Cursor Sync: Reveal Imported Transcript in Explorer"
+        "title": "Cursor Sync: Reveal Imported Transcript in Explorer (Deprecated)"
       },
       {
         "command": "cursorSync.importTranscriptsFromGist",
@@ -184,10 +161,6 @@
       {
         "command": "cursorSync.prepareSyncFromLandingZone",
         "title": "Cursor Sync: Prepare Sync from Landing Zone"
-      },
-      {
-        "command": "cursorSync.installSkillTransportChat",
-        "title": "Cursor Sync: Install Skill - Transport Chat"
       }
     ],
     "configuration": {
@@ -294,6 +267,16 @@
           "type": "boolean",
           "default": false,
           "description": "After activation, run agentClient server probe stub (v1: logs only, not implemented)"
+        },
+        "cursorSync.chatImport.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to a Python 3 interpreter for chat-transport scripts. Empty = auto-detect (python3, python)."
+        },
+        "cursorSync.chatImport.transportChatScriptDir": {
+          "type": "string",
+          "default": "",
+          "description": "Override directory for transport-chat scripts (cursor_chat_io.py, cursor_composer_bridge.py). Empty = use the extension's bundled scripts."
         }
       }
     }

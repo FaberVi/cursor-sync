@@ -8,7 +8,9 @@ import { resolveConversationDisplayTitle } from "./transcript-bundle.js";
 import { resolveSyncRoots } from "./paths.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
-const { resolveChatsRoot } = __chatPersistenceInternals;
+function resolveChatsRoot(): string {
+  return __chatPersistenceInternals.resolveChatsRoot();
+}
 
 export interface WorkspaceDir {
   name: string;

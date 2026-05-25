@@ -1,15 +1,17 @@
 ---
 name: transport-chat
-description: Exports and imports Cursor agent chats between workspaces using offline ChatBundle scripts. Use when the user wants to move, copy, backup, or restore a conversation, transport chat between repos, export/import chat transcripts, or mentions transport-chat.
+description: (DEPRECATED standalone skill) Reference docs for transport-chat Python scripts now bundled inside the Cursor Sync extension. Use the Cursor Sync Chats sidebar tab instead of invoking a /transport-chat workflow.
 ---
 
-# Transport chat
+# Transport chat (bundled tooling, not a skill)
+
+> **v0.7.0 deprecation notice.** Starting with Cursor Sync 0.7.0 the Python scripts in this directory ship inside the extension VSIX (`<extensionPath>/resources/transport-chat/scripts/`). The standalone `~/.cursor/skills/transport-chat/` install was removed (see CHANGELOG). This file remains as reference documentation. Agents should drive transport via the **Chats tab** in the Cursor Sync sidebar, not via a `/transport-chat` workflow.
 
 Move a single Cursor conversation between workspaces: **transcripts**, **`store.db`**, **sidebar state** (`state.vscdb`), and **IDE activation** (`composer.createComposer`).
 
-**Works with [Cursor Sync](https://github.com/Marcelo-Barella/cursor-sync):** disk and SQLite writes stay in this skill’s Python scripts; the extension only talks to the IDE (commands, `pending.json` / `result.json` watcher).
+**Works with [Cursor Sync](https://github.com/Marcelo-Barella/cursor-sync):** disk and SQLite writes stay in these Python scripts; the extension only talks to the IDE (commands, `pending.json` / `result.json` watcher) and orchestrates them via `src/chat-transport-scripts.ts:runPythonDiskImport`.
 
-**Requirements:** Python 3. **Cursor Sync** on the destination workspace for Phase B. Each workspace opened in Cursor at least once (`~/.cursor/projects/`, `workspaceStorage/`).
+**Requirements:** Python 3 on `PATH` (or `cursorSync.chatImport.pythonPath`). **Cursor Sync** installed on the destination workspace for Phase B. Each workspace opened in Cursor at least once (`~/.cursor/projects/`, `workspaceStorage/`).
 
 ## Responsibility split (mandatory)
 

@@ -1,30 +1,36 @@
 # Chat import IDE activation (import-v2)
 
-Disk restore (`cursor_chat_io.py import`) writes layers 1–3 (transcripts, `store.db`, sidebar merge). Server-backed composers also need IDE registration via `composer.createComposer`. The **import-v2** flow orchestrates disk restore, bridge activation, optional server probe, and extended verify.
+**import-v2** splits work between bundled **transport-chat** Python scripts (disk) and **Cursor Sync** TypeScript (IDE). Starting in v0.7.0 the Python scripts ship inside the extension VSIX; no separate skill install is required.
+
+| Phase | Owner | Scripts / code |
+|-------|--------|----------------|
+| Disk — transcripts, `store.db`, **`state.vscdb` merge** | **Bundled Python** | `<extensionPath>/resources/transport-chat/scripts/cursor_chat_io.py` |
+| IDE — `composer.createComposer`, `pending.json`, `result.json` | **TypeScript** | `src/chat-import-activate.ts`, `src/chat-import-activate-watcher.ts` |
+
+The extension does **not** write `state.vscdb` on bundle import; it always delegates to the bundled `cursor_chat_io.py import` via `src/chat-transport-scripts.ts:runPythonDiskImport`. Activation uses in-process `executeCommand` with `skipPythonBridge: true` (no Python IDE bridge inside the extension). Missing Python 3 or missing scripts now throw an actionable error pointing at `cursorSync.chatImport.pythonPath` / `cursorSync.chatImport.transportChatScriptDir`.
+
+Headless agents can invoke the same scripts directly: `python3 <extensionPath>/resources/transport-chat/scripts/cursor_chat_io.py import --activate` runs disk in Python, stages `pending.json`, and relies on this extension's watcher for Phase B.
 
 **Architecture:** [activation-architecture.md](../.cursor/plans/activation-architecture.md) (Option A — IDE bridge).
-
-With **Cursor Sync** installed, the extension is the preferred IDE bridge: it runs `composer.createComposer` in-process, watches `pending.json`, and writes `result.json`. The Python bridge remains for headless CLI (`cursor_chat_io.py import --activate`) and as a fallback when the command is not registered.
 
 ## End-to-end flow
 
 ```text
-1. Disk restore (always)
-   python3 scripts/cursor_chat_io.py import bundle.json \
+1. Disk restore (transport-chat Python — always for state.vscdb)
+   python3 ~/.cursor/skills/transport-chat/scripts/cursor_chat_io.py import bundle.json \
      --workspace-folder /abs/path/to/repo
 
-2. Disk verify (always on non-dry-run)
+2. Disk verify
    store.db, global/workspace composerHeaders, workspaceIdentifier stamp
 
-3. Activation (with --activate or extension setting)
-   bundle_to_partial_state() → pending.json
-   Extension (if installed): executeCommand + result.json
-   Else: cursor_composer_bridge.py subprocess (may stage only)
+3. Activation (extension only when running in IDE)
+   bundle_to_partial_state() → pending.json (CLI) or in-process createComposer
+   Extension: executeCommand + result.json (skipPythonBridge)
+   Headless: cursor_composer_bridge.py stages pending; watcher or hook completes
 
-4. Optional server probe (with --ping-server / cursorSync.chatImport.pingServer)
-   v1 stub: logs "probe not implemented" (no agentClient HTTP contract)
+4. Optional server probe (cursorSync.chatImport.pingServer) — v1 stub
 
-5. Post-activate verify (with --activate on import, or verify --post-activate)
+5. Post-activate verify
    pending.json, result.json composerId, activation.status
 ```
 
@@ -66,12 +72,13 @@ Without a running IDE, hook, or extension watcher, activation stages `pending.js
 
 Port plan: [port-chat-io-extension.plan.md](../.cursor/plans/port-chat-io-extension.plan.md).
 
-When the **Cursor Sync** extension is installed and activated, it **supersedes** the Python bridge for IDE activation whenever `composer.createComposer` is registered in the workbench:
+When **Cursor Sync** is installed:
 
-1. **In-process import-v2** — `restoreChatBundle` (commands and Gist/local load) mirrors `cursor_chat_io.py import --activate`: disk restore, verify, `runPostImportActivation`, then activation verify checks.
-2. **`pending.json` watcher** — On startup, `registerActivationWatcher` attaches a `FileSystemWatcher` to `~/.cursor/import-activation/pending.json` (300 ms debounce). When `workspaceFolder` matches an open workspace folder, the extension calls `executeCommand('composer.createComposer', partialState, createComposerOptions)` and writes **`result.json`** on success.
-3. **CLI + extension** — `python3 scripts/cursor_chat_io.py import ... --activate` stages `pending.json` via the bridge; the extension watcher completes activation without a manual step (same paths as the bridge).
-4. **Fallback** — If the command is missing (non-Cursor host), `restoreChatBundle` / bridge subprocess still stages `pending.json` and may spawn `cursor_composer_bridge.py`; poll `result.json` with `bridgeWaitResultSeconds` / `--bridge-wait-result`.
+1. **Disk (Phase A)** — `restoreChatBundle` calls `runPythonDiskImport` → bundled `cursor_chat_io.py import` (no `--activate`). The TypeScript `mergeSidebarIntoStateDb` path is no longer used. When the bundle lacks `storeSnapshot`, Python `import` synthesizes `store.db` from `golden-chat-store.template.db` plus transcript JSONL.
+2. **IDE (Phase B)** — `runPostImportActivation` with `skipPythonBridge: true`: `executeCommand('composer.createComposer', …)` and `result.json` only.
+3. **`pending.json` watcher** — Completes CLI `import --activate` after Python stages the manifest.
+4. **Headless** — Outside the extension, the bundled `cursor_composer_bridge.py` stages only (exit 2) or uses `CURSOR_COMPOSER_BRIDGE_COMMAND`.
+5. **Progress events** — `restoreChatBundle` emits `onChatImportProgress` events (`phase: "A"|"B"`, `step`, `ok?`) that the sidebar Chats tab subscribes to for live Phase A/Phase B status.
 
 ### Extension commands
 
@@ -111,7 +118,9 @@ Implementation: `src/chat-import-activate.ts`, `src/chat-import-activate-watcher
 ### Example: full import-v2
 
 ```bash
-python3 scripts/cursor_chat_io.py import /tmp/chat-bundle.json \
+SCRIPT="$(code --print-extension-path MarceloBarella.cursor-sync 2>/dev/null)/resources/transport-chat/scripts/cursor_chat_io.py"
+# fallback: locate the VSIX install dir under ~/.cursor/extensions/marcelobarella.cursor-sync-*/resources/transport-chat/scripts/
+python3 "$SCRIPT" import /tmp/chat-bundle.json \
   --workspace-folder /home/user/proj \
   --activate \
   --bridge-wait-result 30
@@ -120,7 +129,7 @@ python3 scripts/cursor_chat_io.py import /tmp/chat-bundle.json \
 Strict (fail if IDE did not confirm activation):
 
 ```bash
-python3 scripts/cursor_chat_io.py import /tmp/chat-bundle.json \
+python3 "$SCRIPT" import /tmp/chat-bundle.json \
   --workspace-folder /home/user/proj \
   --activate --activate-strict
 ```
@@ -128,7 +137,7 @@ python3 scripts/cursor_chat_io.py import /tmp/chat-bundle.json \
 Post-check only (after manual activation or extension wrote `result.json`):
 
 ```bash
-python3 scripts/cursor_chat_io.py verify \
+python3 "$SCRIPT" verify \
   --bundle /tmp/chat-bundle.json \
   --workspace-folder /home/user/proj \
   --post-activate
@@ -293,8 +302,9 @@ Sources (first match wins):
 | `src/chat-import-activate.ts` | Stage `pending.json`, `executeCommand`, `result.json`, bridge fallback |
 | `src/chat-import-activate-watcher.ts` | `pending.json` FileSystemWatcher |
 | `src/chat-persistence.ts` | `restoreChatBundle` import-v2 orchestration |
-| `scripts/cursor_composer_bridge.py` | Headless bridge entrypoint |
-| `scripts/cursor_chat_io.py` | Disk import, `bundle_to_partial_state()`, orchestration |
+| `~/.cursor/skills/transport-chat/scripts/cursor_composer_bridge.py` | Headless staging / hook (not IDE) |
+| `~/.cursor/skills/transport-chat/scripts/cursor_chat_io.py` | Disk import, `state.vscdb`, `bundle_to_partial_state()` |
+| `src/chat-transport-scripts.ts` | Resolve skill scripts; spawn disk `import` |
 | `.cursor/plans/port-chat-io-extension.plan.md` | Extension port plan and parity todos |
 | `.cursor/plans/partial-state-mapping.md` | Field mapping |
 | `.cursor/plans/activation-architecture.md` | Strategy and decision matrix |

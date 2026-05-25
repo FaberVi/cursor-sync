@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## v0.7.0
+
+### Added
+- Sidebar webview is now tab-based: **Sync** (existing), **Chats** (new), and **Settings** (surfaces `cursorSync.chatImport.*` knobs).
+- **Chats tab** with three sections: Recent in this workspace (driven by `listConversationsForWorkspace`), Imports & bundles (backed by a new `cursorSync.chatImports` history in `globalState`, capped at 200), and live progress for in-flight imports.
+- `src/chat-progress-events.ts`: `EventEmitter`-based channel (`onChatImportProgress`) that the sidebar subscribes to for Phase A / Phase B telemetry.
+- `src/chat-activate-existing.ts`: `activateExistingChat` helper that re-runs Phase B (`composer.createComposer`) without re-writing disk; powers the "Re-activate" sidebar action.
+- `cursorSync.chatImport.pythonPath` and `cursorSync.chatImport.transportChatScriptDir` settings.
+- `ensurePythonReady()` pre-flight that probes `python3 --version` (or the configured interpreter) once per session.
+
+### Changed
+- **Python transport-chat scripts are now bundled in the VSIX** under `resources/transport-chat/scripts/`. Script resolver (`resolveTransportChatScript`, `resolveComposerBridgeScript`) prefers `<extensionPath>/resources/transport-chat/scripts/` and accepts `cursorSync.chatImport.transportChatScriptDir` as an override.
+- Disk import now **requires** the bundled Python scripts; the legacy TypeScript fallback in `restoreChatBundle` (`!diskHandledByPython` branches) is removed. Missing Python or missing scripts now throw a clear, actionable error instead of silently degrading sidebar merge.
+- Sidebar refactored from a single `src/sidebar.ts` into `src/sidebar/{index,html,messages,sync-tab,chats-tab,settings-tab,import-history,bundle-discovery}.ts`. Public API (`initializeSidebar`, `refreshSidebar`) is unchanged.
+
+### Removed
+- `cursorSync.installSkillTransportChat` command and the Linux-only skill-install path. The Python scripts no longer need to be copied to `~/.cursor/skills/transport-chat/`.
+- `cursorSync.transcriptBrowser` tree view ("Imported Transcripts"). The three commands (`refreshImportedTranscripts`, `openImportedTranscript`, `revealImportedTranscriptInExplorer`) remain registered for one release as deprecation stubs that point users at the new Chats tab.
+- `~/.cursor/skills/transport-chat/scripts/*` lookup paths from the script resolvers.
+
+### Deprecated
+- `src/chat-import-merge.ts:mergeTargetsForImport` and `mergeSidebarIntoStateDb` (JSDoc `@deprecated`). They are no longer called by `restoreChatBundle`; retained briefly for tests.
+
 ## v0.6.0
 
 ### Added

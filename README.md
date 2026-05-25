@@ -77,19 +77,28 @@ The following are always excluded from sync:
 | `Cursor Sync: Export Settings to Private Gist` | Export selected files to a new **private** Gist; requires token; anyone with the URL can open the gist |
 | `Cursor Sync: Import Settings from Private Gist` | Import settings from a Gist by URL or ID using the GitHub API (configure a token for private gists) |
 
-- Cursor Sync: Install Skill - Transport Chat - copies the bundled transport-chat skill into ~/.cursor/skills/transport-chat/ (Linux only).
+> Transport-chat Python scripts are bundled inside the extension (`resources/transport-chat/scripts/`) starting in v0.7.0. The previous `Cursor Sync: Install Skill - Transport Chat` command was removed; no separate install step is required.
 
 ## Sidebar
 
-The **Cursor Sync** view in the activity bar provides a rich webview panel:
+The **Cursor Sync** view in the activity bar is a tabbed webview:
 
-- **Status card** — Always visible at the top. Shows whether settings are synced, last sync time as a relative timestamp (e.g. "5m ago"), sync direction (push/pull), and the number of tracked files.
-- **Sync Now** — A primary button that automatically determines the right action (push, pull, or both) and executes it. Also available as a toolbar icon in the view title bar.
-- **Actions** — Quick-access grid with Push, Pull, Export, and Import buttons.
-- **History** — Scrollable list of past sync operations (up to 50 entries) showing direction, trigger type (manual or auto), file count, success/failure status, and relative timestamps.
-- **Configure GitHub** — Token setup link at the bottom.
+### Sync tab
+- **Status card** — Shows whether settings are synced, last sync time as a relative timestamp (e.g. "5m ago"), sync direction (push/pull), and the number of tracked files.
+- **Sync Now** — A primary button that automatically determines the right action (push, pull, or both).
+- **Actions** — Quick-access grid with Push, Pull, Export, and Import.
+- **History** — Past sync operations (up to 50 entries) with direction, trigger, file count, status, and relative timestamps.
+- **Configure GitHub** — Token setup link.
 
-Commands such as Resolve Conflicts and Reset are available from the Command Palette when applicable.
+### Chats tab
+- **Recent in this workspace** — Local conversations from `~/.cursor/chats/<md5(workspace)>/<uuid>/store.db`, with one-click Export Bundle / Export to Gist / Reveal Transcripts per row.
+- **Imports & bundles** — `cursorSync.chatImports` history (max 200 entries) plus ad-hoc bundle files discovered under `/tmp/chat-transport-*.json` and `<globalStorage>/chat-bundles/*.json`. Each import row offers **Re-activate** (re-runs Phase B without re-writing disk) and **Reveal Transcripts**.
+- **Active operation** — Live Phase A / Phase B status while an import runs, driven by the `onChatImportProgress` event emitter.
+
+### Settings tab
+Surfaces the most-used `cursorSync.chatImport.*` knobs (activate by default, strict activation, bridge wait result seconds, Python interpreter, auto-reload after import) as editable controls that call `vscode.workspace.getConfiguration().update(...)`.
+
+Commands such as Resolve Conflicts and Reset are available from the Command Palette when applicable. The standalone "Imported Transcripts" tree view (`cursorSync.transcriptBrowser`) was removed in v0.7.0; the three commands remain as one-release deprecation stubs.
 
 ## Settings
 
@@ -131,7 +140,7 @@ Single-conversation chat bundles (`type: chat-persistence`, `schemaVersion: 1`) 
 - **Deterministic restore mapping**: Store artifacts restore to `~/.cursor/chats/<workspace-key>/<conversation-id>/store.db` using explicit `sourceWorkspaceKey` metadata and import-time workspace mapping when needed, not project-folder heuristics.
 - **Sidebar/state behavior**: Sidebar metadata JSON sidecars are restored under `agent-transcripts/<conversation-id>/cursor-sidebar-metadata.json`, and import attempts to merge `composer.composerHeaders` plus optional `composer.composerData` into local `state.vscdb` when payload and DB are available.
 - **Reload after state merge**: When state DB merge succeeds, the extension offers a `Reload Window` action because Cursor may not hot-reload SQLite-backed sidebar state.
-- **Fallback usability**: Use the `Imported Transcripts` tree view in the Cursor Sync activity container to open restored JSONL files even when native composer rows are not immediately visible.
+- **Fallback usability**: Use the Chats tab in the Cursor Sync sidebar (Imports & bundles → Reveal Transcripts) to open restored JSONL files even when native composer rows are not immediately visible.
 - **Fidelity guarantee**: Selected transcript JSONL files are preserved as exact UTF-8 bytes across export and import with checksum verification. Import remains backward compatible for `schemaVersion: 1` transcript-only manifests.
 - **Degraded restore visibility**: Completion output reports restored counts for transcript/store/sidebar/state merge and warns when sidebar state merge is partial or skipped.
 - **Verification**: Use [`docs/transcript-simulation-verification.md`](docs/transcript-simulation-verification.md) for checksum checks, path checks, and full-restore verification.

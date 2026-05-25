@@ -3,7 +3,7 @@ import { GistClient } from "./gist.js";
 import { withRetry } from "./retry.js";
 import { getLogger, loadSyncState, saveSyncState } from "./diagnostics.js";
 import { updateStatusBar } from "./statusbar.js";
-import { refreshSidebar } from "./sidebar.js";
+import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
 
 const SECRET_KEY = "cursorSync.githubPAT";
