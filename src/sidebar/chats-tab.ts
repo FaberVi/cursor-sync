@@ -68,6 +68,41 @@ export async function listBundles(
   return { entries };
 }
 
+export async function openTranscriptForConversation(
+  conversationId: string
+): Promise<boolean> {
+  const { dotCursor } = resolveSyncRoots();
+  const projectsRoot = path.join(dotCursor, "projects");
+  let projectDirs: import("node:fs").Dirent[];
+  try {
+    const fs = await import("node:fs/promises");
+    projectDirs = await fs.readdir(projectsRoot, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const proj of projectDirs) {
+    if (!proj.isDirectory()) continue;
+    const transcriptDir = path.join(
+      projectsRoot,
+      proj.name,
+      "agent-transcripts",
+      conversationId
+    );
+    try {
+      const fs = await import("node:fs/promises");
+      const files = await fs.readdir(transcriptDir);
+      const jsonl = files.find((f) => f.endsWith(".jsonl"));
+      if (!jsonl) continue;
+      const uri = vscode.Uri.file(path.join(transcriptDir, jsonl));
+      await vscode.commands.executeCommand("vscode.open", uri);
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
 export async function revealTranscriptsForConversation(
   conversationId: string
 ): Promise<void> {

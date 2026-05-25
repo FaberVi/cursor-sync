@@ -120,7 +120,7 @@ export function renderSyncPane(state: SyncTabState): string {
     </div>
   </div>
 
-  <button class="sync-now-btn" onclick="post('syncNow')">
+  <button class="sync-now-btn" data-command="syncNow">
     <span class="codicon codicon-sync"></span>
     Sync Now
   </button>
@@ -128,10 +128,10 @@ export function renderSyncPane(state: SyncTabState): string {
   <div class="section">
     <div class="section-header">Actions</div>
     <div class="action-grid">
-      <button class="action-btn" onclick="post('push')"><span class="codicon codicon-cloud-upload"></span> Push</button>
-      <button class="action-btn" onclick="post('pull')"><span class="codicon codicon-cloud-download"></span> Pull</button>
-      <button class="action-btn" onclick="post('export')"><span class="codicon codicon-export"></span> Export</button>
-      <button class="action-btn" onclick="post('import')"><span class="codicon codicon-desktop-download"></span> Import</button>
+      <button class="action-btn" data-command="push"><span class="codicon codicon-cloud-upload"></span> Push</button>
+      <button class="action-btn" data-command="pull"><span class="codicon codicon-cloud-download"></span> Pull</button>
+      <button class="action-btn" data-command="export"><span class="codicon codicon-export"></span> Export</button>
+      <button class="action-btn" data-command="import"><span class="codicon codicon-desktop-download"></span> Import</button>
     </div>
   </div>
 
@@ -143,7 +143,7 @@ export function renderSyncPane(state: SyncTabState): string {
   </div>
 
   <div class="section">
-    <button class="configure-btn" onclick="post('configure')">
+    <button class="configure-btn" data-command="configure">
       <span class="codicon codicon-github-alt"></span> Configure GitHub
     </button>
   </div>

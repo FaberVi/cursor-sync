@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ChatBundle } from "./chat-persistence.js";
@@ -237,6 +238,74 @@ export function composerDataForFocus(
     merged.hasMigratedMultipleComposers = true;
   }
   return merged;
+}
+
+function randomB64Key(numBytes = 32): string {
+  return randomBytes(numBytes).toString("base64");
+}
+
+export function buildMinimalComposerDataForOpen(
+  conversationId: string,
+  title: string,
+  workspaceIdentifier: WorkspaceIdentifier,
+  createdAtMs: number = Date.now()
+): Record<string, unknown> {
+  return {
+    _v: 16,
+    composerId: conversationId,
+    name: title,
+    richText: "",
+    text: "",
+    hasLoaded: true,
+    fullConversationHeadersOnly: [],
+    conversationMap: {},
+    status: "completed",
+    context: {
+      composers: [],
+      mentions: {
+        composers: {},
+        selectedCommits: {},
+        selectedPullRequests: {},
+        gitDiff: [],
+        gitDiffFromBranchToMain: [],
+        selectedImages: {},
+        folderSelections: {},
+        fileSelections: {},
+        terminalFiles: {},
+        selections: {},
+        terminalSelections: {},
+        selectedDocs: {},
+        externalLinks: {},
+        diffHistory: [],
+        cursorRules: {},
+        cursorCommands: {},
+        uiElementSelections: [],
+        consoleLogs: [],
+        ideEditorsState: [],
+        gitPRDiffSelections: {},
+        subagentSelections: {},
+        browserSelections: {},
+      },
+    },
+    generatingBubbleIds: [],
+    isReadingLongFile: false,
+    codeBlockData: {},
+    originalFileStates: {},
+    newlyCreatedFiles: [],
+    newlyCreatedFolders: [],
+    createdAt: createdAtMs,
+    unifiedMode: "agent",
+    forceMode: "agent",
+    modelConfig: { modelName: "default", maxMode: false },
+    isDraft: false,
+    conversationState: "~",
+    queueItems: [],
+    isAgentic: true,
+    workspaceIdentifier,
+    speculativeSummarizationEncryptionKey: randomB64Key(),
+    blobEncryptionKey: randomB64Key(),
+    isNAL: true,
+  };
 }
 
 export function prepareHeadersForImport(

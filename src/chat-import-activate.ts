@@ -9,6 +9,8 @@ import type { WorkspaceContext } from "./chat-workspace-context.js";
 
 export const CREATE_COMPOSER_COMMAND_ID = "composer.createComposer";
 export const COMPOSER_GET_HANDLE_COMMAND_ID = "composer.getComposerHandleById";
+export const OPEN_COMPOSER_COMMAND_ID = "composer.openComposer";
+export const FOCUS_COMPOSER_COMMAND_ID = "composer.focusComposer";
 export const COMPOSER_URI_SCHEME = "cursor.composer";
 export const MANIFEST_VERSION = 1;
 
@@ -37,6 +39,12 @@ export interface ComposerActivationOutcome {
 export interface RunComposerActivationOptions {
   paths?: ActivationPaths;
   waitResultMs?: number;
+  /** When false, do not write ~/.cursor/import-activation/pending.json (sidebar Open). */
+  stagePending?: boolean;
+  /** When true, composer.openComposer without a handle still counts as success (store.db on disk). */
+  acceptOpenWithoutHandle?: boolean;
+  handlePreloadTimeoutMs?: number;
+  handlePostOpenTimeoutMs?: number;
   log?: (message: string) => void;
 }
 
@@ -288,6 +296,91 @@ export function composerUriForId(composerId: string): vscode.Uri {
   return vscode.Uri.from({ scheme: COMPOSER_URI_SCHEME, path: composerId.trim() });
 }
 
+async function fetchComposerHandle(composerId: string): Promise<unknown> {
+  return vscode.commands.executeCommand(COMPOSER_GET_HANDLE_COMMAND_ID, composerId);
+}
+
+function hasComposerHandle(handle: unknown): boolean {
+  return handle !== undefined && handle !== null;
+}
+
+export async function waitForComposerHandle(
+  composerId: string,
+  options: { timeoutMs?: number; pollMs?: number; log?: (message: string) => void } = {}
+): Promise<unknown> {
+  const log = options.log ?? (() => {});
+  if (!(await composerCommandAvailable(COMPOSER_GET_HANDLE_COMMAND_ID))) {
+    return undefined;
+  }
+  const timeoutMs = Math.max(0, options.timeoutMs ?? 8000);
+  const pollMs = Math.max(50, options.pollMs ?? 250);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const handle = await fetchComposerHandle(composerId);
+      if (hasComposerHandle(handle)) {
+        return handle;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(`waitForComposerHandle: ${message}`);
+    }
+    await delayMs(pollMs);
+  }
+  return undefined;
+}
+
+async function tryOpenViaComposerCommands(
+  manifest: ActivationManifest,
+  log: (message: string) => void
+): Promise<boolean> {
+  const openAvailable = await composerCommandAvailable(OPEN_COMPOSER_COMMAND_ID);
+  const focusAvailable = await composerCommandAvailable(FOCUS_COMPOSER_COMMAND_ID);
+  const openOpts = {
+    openInNewTab: manifest.openInNewTab,
+    view: manifest.createComposerOptions.view ?? "editor",
+  };
+
+  if (openAvailable) {
+    try {
+      await vscode.commands.executeCommand(
+        OPEN_COMPOSER_COMMAND_ID,
+        manifest.composerId,
+        openOpts
+      );
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(`composer.openComposer failed: ${message}`);
+      try {
+        await vscode.commands.executeCommand(
+          OPEN_COMPOSER_COMMAND_ID,
+          manifest.composerId
+        );
+        return true;
+      } catch (err2) {
+        const message2 = err2 instanceof Error ? err2.message : String(err2);
+        log(`composer.openComposer (id only) failed: ${message2}`);
+      }
+    }
+  }
+
+  if (focusAvailable) {
+    try {
+      await vscode.commands.executeCommand(
+        FOCUS_COMPOSER_COMMAND_ID,
+        manifest.composerId
+      );
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(`composer.focusComposer failed: ${message}`);
+    }
+  }
+
+  return false;
+}
+
 export async function tryActivateViaComposerHandle(
   manifest: ActivationManifest,
   options: RunComposerActivationOptions = {}
@@ -295,40 +388,86 @@ export async function tryActivateViaComposerHandle(
   const paths = options.paths ?? defaultActivationPaths();
   const log = options.log ?? (() => {});
 
-  if (!(await composerCommandAvailable(COMPOSER_GET_HANDLE_COMMAND_ID))) {
+  const handleCmdAvailable = await composerCommandAvailable(
+    COMPOSER_GET_HANDLE_COMMAND_ID
+  );
+  if (!(await composerCommandAvailable(OPEN_COMPOSER_COMMAND_ID)) &&
+    !(await composerCommandAvailable(FOCUS_COMPOSER_COMMAND_ID)) &&
+    !handleCmdAvailable) {
     return null;
   }
 
-  try {
-    const composerUri = composerUriForId(manifest.composerId);
-    await vscode.commands.executeCommand("vscode.open", composerUri);
-    await delayMs(400);
+  const preloadMs = Math.max(0, options.handlePreloadTimeoutMs ?? 6000);
+  const postOpenMs = Math.max(0, options.handlePostOpenTimeoutMs ?? 4000);
+  await waitForComposerHandle(manifest.composerId, {
+    timeoutMs: preloadMs,
+    pollMs: 250,
+    log,
+  });
 
-    const handle = await vscode.commands.executeCommand(
-      COMPOSER_GET_HANDLE_COMMAND_ID,
-      manifest.composerId
-    );
-    if (!handle) {
-      log(
-        `composer.getComposerHandleById returned no handle for composerId=${manifest.composerId} ` +
-          "(store.db may be missing under ~/.cursor/chats/<workspace-key>/)"
-      );
-      return null;
+  if (await tryOpenViaComposerCommands(manifest, log)) {
+    const handle = await waitForComposerHandle(manifest.composerId, {
+      timeoutMs: postOpenMs,
+      pollMs: 200,
+      log,
+    });
+    if (hasComposerHandle(handle)) {
+      await writeResultJson(manifest.composerId, true, paths);
+      log(`Activation OK (composer.openComposer+loaded): composerId=${manifest.composerId}`);
+      return {
+        ok: true,
+        composerId: manifest.composerId,
+        exitCode: 0,
+        stagedOnly: false,
+      };
     }
+    if (options.acceptOpenWithoutHandle) {
+      await writeResultJson(manifest.composerId, true, paths);
+      log(
+        `Activation OK (composer.openComposer, no handle; store on disk): composerId=${manifest.composerId}`
+      );
+      return {
+        ok: true,
+        composerId: manifest.composerId,
+        exitCode: 0,
+        stagedOnly: false,
+      };
+    }
+    log(
+      `composer.openComposer ran but conversation did not load for composerId=${manifest.composerId}; try Reload Window`
+    );
+  }
 
+  if (!handleCmdAvailable) {
+    return null;
+  }
+
+  let handle: unknown;
+  try {
+    handle = await fetchComposerHandle(manifest.composerId);
+  } catch (handleErr) {
+    const handleMessage =
+      handleErr instanceof Error ? handleErr.message : String(handleErr);
+    log(`composer handle activation failed: ${handleMessage}`);
+    return null;
+  }
+
+  if (hasComposerHandle(handle)) {
     await writeResultJson(manifest.composerId, true, paths);
-    log(`Activation OK (handle+open): composerId=${manifest.composerId}`);
+    log(`Activation OK (handle loaded): composerId=${manifest.composerId}`);
     return {
       ok: true,
       composerId: manifest.composerId,
       exitCode: 0,
       stagedOnly: false,
     };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`composer handle activation failed: ${message}`);
-    return null;
   }
+
+  log(
+    `composer.getComposerHandleById returned no handle for composerId=${manifest.composerId} ` +
+      "(store.db may be missing under ~/.cursor/chats/<workspace-key>/)"
+  );
+  return null;
 }
 
 export async function readActivationResult(
@@ -651,11 +790,14 @@ export async function runComposerActivation(
   const log = options.log ?? (() => {});
 
   await clearStaleResult(paths);
-  if (!(await pendingManifestMatches(manifest, paths))) {
+  const stagePending = options.stagePending !== false;
+  if (stagePending && !(await pendingManifestMatches(manifest, paths))) {
     await stagePendingManifest(manifest, paths);
   }
 
-  if (await composerCommandAvailable(manifest.commandId)) {
+  const createAvailable = await composerCommandAvailable(manifest.commandId);
+
+  if (createAvailable) {
     try {
       const commandResult = await vscode.commands.executeCommand(
         manifest.commandId,

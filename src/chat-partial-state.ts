@@ -248,11 +248,27 @@ function parseMetaValue(value: unknown): unknown {
   if (typeof value !== "string") {
     return value;
   }
+  const trimmed = value.trim();
   try {
-    return JSON.parse(value);
+    return JSON.parse(trimmed);
   } catch {
+    if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length >= 2 && trimmed.length % 2 === 0) {
+      try {
+        return JSON.parse(Buffer.from(trimmed, "hex").toString("utf8"));
+      } catch {
+        return value;
+      }
+    }
     return value;
   }
+}
+
+export function storeMetaRecord(storeIndex: StoreDbIndex): Record<string, unknown> | null {
+  const raw = storeIndex.meta["0"] ?? storeIndex.meta[0];
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  return null;
 }
 
 export async function decodeStoreDbIndex(

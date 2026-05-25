@@ -4,13 +4,14 @@ import type { SyncTabState } from "./sync-tab.js";
 import { renderSyncPane } from "./sync-tab.js";
 import { renderSettingsPane, readSettingsValues } from "./settings-tab.js";
 
-export async function renderSidebarHtml(context: vscode.ExtensionContext): Promise<string> {
+export async function buildSyncTabState(
+  context: vscode.ExtensionContext
+): Promise<SyncTabState> {
   const syncState = await loadSyncState(context);
   const history = await loadSyncHistory(context);
 
-  let state: SyncTabState;
   if (!syncState) {
-    state = {
+    return {
       status: "not-synced",
       lastSyncTime: undefined,
       lastSyncDirection: undefined,
@@ -18,20 +19,36 @@ export async function renderSidebarHtml(context: vscode.ExtensionContext): Promi
       gistId: undefined,
       history,
     };
-  } else {
-    state = {
-      status: "synced",
-      lastSyncTime: syncState.lastSyncTimestamp,
-      lastSyncDirection: syncState.lastSyncDirection,
-      fileCount: Object.keys(syncState.localChecksums).length,
-      gistId: syncState.gistId,
-      history,
-    };
   }
 
+  return {
+    status: "synced",
+    lastSyncTime: syncState.lastSyncTimestamp,
+    lastSyncDirection: syncState.lastSyncDirection,
+    fileCount: Object.keys(syncState.localChecksums).length,
+    gistId: syncState.gistId,
+    history,
+  };
+}
+
+export async function renderSyncPaneHtml(
+  context: vscode.ExtensionContext
+): Promise<string> {
+  const state = await buildSyncTabState(context);
+  return renderSyncPane(state);
+}
+
+export async function renderSidebarHtml(
+  context: vscode.ExtensionContext,
+  webview: vscode.Webview
+): Promise<string> {
+  const state = await buildSyncTabState(context);
   const settingsValues = readSettingsValues();
   const syncPaneHtml = renderSyncPane(state);
   const settingsPaneHtml = renderSettingsPane(settingsValues);
+  const scriptUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(context.extensionUri, "resources", "sidebar", "webview.js")
+  );
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -545,9 +562,9 @@ export async function renderSidebarHtml(context: vscode.ExtensionContext): Promi
 </head>
 <body>
   <div class="tab-bar">
-    <button class="tab-btn active" data-tab="sync-pane" onclick="switchTab('sync-pane')">Sync</button>
-    <button class="tab-btn" data-tab="chats-pane" onclick="switchTab('chats-pane')">Chats</button>
-    <button class="tab-btn" data-tab="settings-pane" onclick="switchTab('settings-pane')">Settings</button>
+    <button class="tab-btn active" data-tab="sync-pane">Sync</button>
+    <button class="tab-btn" data-tab="chats-pane">Chats</button>
+    <button class="tab-btn" data-tab="settings-pane">Settings</button>
   </div>
 
   ${syncPaneHtml}
@@ -570,7 +587,7 @@ export async function renderSidebarHtml(context: vscode.ExtensionContext): Promi
     <div class="chats-section">
       <div class="chats-section-header">
         <span>Imports &amp; bundles</span>
-        <button class="clear-btn" onclick="post('chats:clearHistory')">Clear</button>
+        <button class="clear-btn" data-command="chats:clearHistory">Clear</button>
       </div>
       <div id="chats-imports" class="chats-list">
         <div class="empty-state">Loading\u2026</div>
@@ -587,163 +604,7 @@ export async function renderSidebarHtml(context: vscode.ExtensionContext): Promi
 
   ${settingsPaneHtml}
 
-  <script>
-    const vscode = acquireVsCodeApi();
-
-    function post(command, extra) {
-      vscode.postMessage(Object.assign({ command }, extra));
-    }
-
-    function onSettingChange(key, value) {
-      post('settings:set', { key, value });
-    }
-
-    function switchTab(tabId) {
-      document.querySelectorAll('.tab-pane').forEach(function(p) { p.style.display = 'none'; });
-      document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
-      var pane = document.getElementById(tabId);
-      if (pane) pane.style.display = '';
-      document.querySelectorAll('.tab-btn[data-tab="' + tabId + '"]').forEach(function(b) { b.classList.add('active'); });
-      if (tabId === 'chats-pane') {
-        post('chats:listLocal');
-        post('chats:listImports');
-        post('chats:listBundles');
-      } else if (tabId === 'settings-pane') {
-        post('settings:get');
-      }
-    }
-
-    function escHtml(s) {
-      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
-
-    function relTime(iso) {
-      var diffMs = Date.now() - new Date(iso).getTime();
-      if (diffMs < 0) return 'just now';
-      var s = Math.floor(diffMs / 1000);
-      if (s < 60) return 'just now';
-      var m = Math.floor(s / 60);
-      if (m < 60) return m + 'm ago';
-      var h = Math.floor(m / 60);
-      if (h < 24) return h + 'h ago';
-      var d = Math.floor(h / 24);
-      if (d < 30) return d + 'd ago';
-      return new Date(iso).toLocaleDateString();
-    }
-
-    function fmtBytes(b) {
-      if (b < 1024) return b + ' B';
-      if (b < 1024 * 1024) return Math.round(b / 1024) + ' KB';
-      return (b / (1024 * 1024)).toFixed(1) + ' MB';
-    }
-
-    window.addEventListener('message', function(ev) {
-      var msg = ev.data;
-      if (!msg || !msg.type) return;
-
-      if (msg.type === 'chats:recent') {
-        var el = document.getElementById('chats-recent');
-        if (!el) return;
-        if (!msg.rows || msg.rows.length === 0) {
-          el.innerHTML = '<div class="empty-state">No chats in this workspace</div>';
-          return;
-        }
-        el.innerHTML = msg.rows.map(function(r) {
-          return '<div class="chat-row">' +
-            '<div class="chat-row-info">' +
-              '<div class="chat-row-title">' + escHtml(r.label || r.conversationId) + '</div>' +
-              '<div class="chat-row-meta">' + escHtml(r.detail || '') + '</div>' +
-            '</div>' +
-            '<div class="chat-row-actions">' +
-              '<button class="chat-action-btn" onclick="post(\'chats:reactivate\', {conversationId:\'' + escHtml(r.conversationId) + '\'})">Open</button>' +
-              '<button class="chat-action-btn" onclick="post(\'chats:revealTranscripts\', {conversationId:\'' + escHtml(r.conversationId) + '\'})">Files</button>' +
-            '</div>' +
-          '</div>';
-        }).join('');
-      }
-
-      if (msg.type === 'chats:imports') {
-        var el = document.getElementById('chats-imports');
-        if (!el) return;
-        if (!msg.rows || msg.rows.length === 0) {
-          el.innerHTML = '<div class="empty-state">No import history</div>';
-          return;
-        }
-        el.innerHTML = msg.rows.map(function(r) {
-          var warnings = r.warnings > 0 ? ' \u26a0 ' + r.warnings + ' warn' : '';
-          return '<div class="chat-row">' +
-            '<div class="chat-row-info">' +
-              '<div class="chat-row-title">' + escHtml(r.conversationId) + '</div>' +
-              '<div class="chat-row-meta">' + relTime(r.timestamp) + ' \u00b7 ' + r.transcriptsWritten + ' transcripts' + warnings + '</div>' +
-            '</div>' +
-          '</div>';
-        }).join('');
-      }
-
-      if (msg.type === 'chats:bundles') {
-        var el = document.getElementById('chats-bundles');
-        if (!el) return;
-        if (!msg.entries || msg.entries.length === 0) {
-          el.innerHTML = '<div class="empty-state">No bundle files found</div>';
-          return;
-        }
-        el.innerHTML = msg.entries.map(function(e) {
-          var name = e.bundlePath.split('/').pop() || e.bundlePath;
-          return '<div class="chat-row">' +
-            '<div class="chat-row-info">' +
-              '<div class="chat-row-title">' + escHtml(name) + '</div>' +
-              '<div class="chat-row-meta">' + fmtBytes(e.bytes) + ' \u00b7 ' + relTime(e.modifiedAt) + ' \u00b7 ' + e.source + '</div>' +
-            '</div>' +
-            '<div class="chat-row-actions">' +
-              '<button class="chat-action-btn" onclick="post(\'chats:importBundle\', {bundlePath:\'' + escHtml(e.bundlePath) + '\'})">Import</button>' +
-            '</div>' +
-          '</div>';
-        }).join('');
-      }
-
-      if (msg.type === 'chats:progress') {
-        var section = document.getElementById('chats-active-section');
-        var el = document.getElementById('chats-active');
-        if (!section || !el) return;
-        var ev2 = msg.event;
-        if (ev2.done) {
-          section.style.display = 'none';
-          el.innerHTML = '';
-        } else {
-          section.style.display = '';
-          var pct = typeof ev2.increment === 'number' ? ev2.increment : 0;
-          el.innerHTML = '<div class="progress-card">' +
-            '<div class="progress-phase">' + escHtml(ev2.phase || '') + '</div>' +
-            '<div class="progress-message">' + escHtml(ev2.message || '') + '</div>' +
-            (pct > 0 ? '<div class="progress-bar-track"><div class="progress-bar-fill" style="width:' + Math.min(100, pct) + '%"></div></div>' : '') +
-          '</div>';
-        }
-      }
-
-      if (msg.type === 'chats:history-cleared') {
-        var el = document.getElementById('chats-imports');
-        if (el) el.innerHTML = '<div class="empty-state">No import history</div>';
-      }
-
-      if (msg.type === 'settings:current') {
-        var vals = msg.values;
-        if (!vals) return;
-        Object.keys(vals).forEach(function(k) {
-          var settingsKey = k === 'activateDefault' ? 'chatImport.activateDefault'
-            : k === 'activateStrict' ? 'chatImport.activateStrict'
-            : k === 'bridgeWaitResultSeconds' ? 'chatImport.bridgeWaitResultSeconds'
-            : k === 'autoReloadAfterImport' ? 'transcripts.autoReloadAfterImport'
-            : k === 'pythonPath' ? 'chatImport.pythonPath'
-            : null;
-          if (!settingsKey) return;
-          var el = document.getElementById(settingsKey);
-          if (!el) return;
-          if (el.type === 'checkbox') el.checked = Boolean(vals[k]);
-          else el.value = vals[k];
-        });
-      }
-    });
-  </script>
+  <script src="${scriptUri}"></script>
 </body>
 </html>`;
 }

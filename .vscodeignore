@@ -1,7 +1,7 @@
 **
 !dist/extension.js
 !assets/icon.png
-!resources/golden-chat-store.template.db
+!resources/sidebar/webview.js
 !resources/transport-chat/scripts/cursor_chat_io.py
 !resources/transport-chat/scripts/cursor_composer_bridge.py
 !resources/transport-chat/scripts/transport_chat.py

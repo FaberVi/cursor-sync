@@ -211,14 +211,18 @@ describe("chat-import-activate", () => {
     );
   });
 
-  it("runComposerActivation uses getComposerHandleById fallback when createComposer is missing", async () => {
+  it("runComposerActivation uses openComposer fallback when createComposer is missing", async () => {
+    const { OPEN_COMPOSER_COMMAND_ID } = await import("../src/chat-import-activate.js");
     const executeSpy = vi.fn(async (command: string) => {
+      if (command === OPEN_COMPOSER_COMMAND_ID) {
+        return undefined;
+      }
       if (command === COMPOSER_GET_HANDLE_COMMAND_ID) {
         return { composerId: FIXTURE_CID };
       }
       return undefined;
     });
-    __setRegisteredCommands([COMPOSER_GET_HANDLE_COMMAND_ID]);
+    __setRegisteredCommands([OPEN_COMPOSER_COMMAND_ID, COMPOSER_GET_HANDLE_COMMAND_ID]);
     __setExecuteCommandImpl(executeSpy);
 
     const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
@@ -233,12 +237,9 @@ describe("chat-import-activate", () => {
       stagedOnly: false,
     });
     expect(executeSpy).toHaveBeenCalledWith(
-      COMPOSER_GET_HANDLE_COMMAND_ID,
-      FIXTURE_CID
-    );
-    expect(executeSpy).toHaveBeenCalledWith(
-      "vscode.open",
-      composerUriForId(FIXTURE_CID)
+      OPEN_COMPOSER_COMMAND_ID,
+      FIXTURE_CID,
+      expect.objectContaining({ openInNewTab: true })
     );
     const result = JSON.parse(readFileSync(paths.resultPath, "utf8")) as {
       ok: boolean;
