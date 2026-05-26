@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { ChatBundleFidelitySummary } from "./chat-bundle-fidelity.js";
 
 export type ChatImportPhase = "A" | "B";
 
@@ -8,6 +9,7 @@ export interface ChatImportProgressEvent {
   step: string;
   detail?: string;
   ok?: boolean;
+  fidelity?: ChatBundleFidelitySummary;
   timestamp: string;
 }
 

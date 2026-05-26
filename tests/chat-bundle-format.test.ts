@@ -64,6 +64,59 @@ describe("chat-bundle-format", () => {
     expect(() => parseChatBundleOrCollection(raw)).toThrow(/chat-persistence|chat-bundles-collection/i);
   });
 
+  it("accepts schemaVersion 2 with diskKvSnapshot", async () => {
+    const { parseChatBundleOrCollection } = await import("../src/chat-bundle-format.js");
+    const raw = JSON.stringify({
+      ...singleBundle,
+      schemaVersion: 2,
+      diskKvSnapshot: {
+        sourceStateDbPath: "/tmp/state.vscdb",
+        rows: [{ key: "composerData:abc", value: "{}", checksum: "a".repeat(64) }],
+        rowCount: 1,
+        toolBubbleCount: 0,
+      },
+    });
+    const result = parseChatBundleOrCollection(raw);
+    expect(result.kind).toBe("single");
+    if (result.kind === "single") {
+      expect(result.bundle.schemaVersion).toBe(2);
+      expect(result.bundle.diskKvSnapshot?.rowCount).toBe(1);
+      expect(result.bundle.diskKvSnapshot?.toolBubbleCount).toBe(0);
+    }
+  });
+
+  it("accepts schemaVersion 2 without diskKvSnapshot", async () => {
+    const { parseChatBundleOrCollection } = await import("../src/chat-bundle-format.js");
+    const raw = JSON.stringify({ ...singleBundle, schemaVersion: 2 });
+    const result = parseChatBundleOrCollection(raw);
+    expect(result.kind).toBe("single");
+    if (result.kind === "single") {
+      expect(result.bundle.schemaVersion).toBe(2);
+      expect(result.bundle.diskKvSnapshot).toBeUndefined();
+    }
+  });
+
+  it("rejects unsupported schemaVersion", async () => {
+    const { parseChatBundleOrCollection } = await import("../src/chat-bundle-format.js");
+    const raw = JSON.stringify({ ...singleBundle, schemaVersion: 3 });
+    expect(() => parseChatBundleOrCollection(raw)).toThrow(/unsupported schema version/i);
+  });
+
+  it("rejects invalid diskKvSnapshot rows", async () => {
+    const { parseChatBundleOrCollection } = await import("../src/chat-bundle-format.js");
+    const raw = JSON.stringify({
+      ...singleBundle,
+      schemaVersion: 2,
+      diskKvSnapshot: {
+        sourceStateDbPath: "/tmp/state.vscdb",
+        rows: [{ key: "composerData:abc", value: 42, checksum: "x" }],
+        rowCount: 1,
+        toolBubbleCount: 0,
+      },
+    });
+    expect(() => parseChatBundleOrCollection(raw)).toThrow(/value must be a string/i);
+  });
+
   it("rejects empty collection bundles", async () => {
     const { parseChatBundleOrCollection } = await import("../src/chat-bundle-format.js");
     const raw = JSON.stringify({

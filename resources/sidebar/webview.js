@@ -155,7 +155,18 @@
       el2.innerHTML = msg.rows
         .map(function (r) {
           var warnings =
-            r.warnings > 0 ? " \u26a0 " + r.warnings + " warn" : "";
+            r.warnings > 0 ? " \u00b7 " + r.warnings + " warn" : "";
+          var fidelity =
+            typeof r.schemaVersion === "number"
+              ? " \u00b7 v" + r.schemaVersion
+              : "";
+          var tools =
+            typeof r.toolBubbleCount === "number"
+              ? " \u00b7 " + r.toolBubbleCount + " tool bubbles"
+              : "";
+          var layer4 = r.textOnlyLayer4
+            ? ' <span class="fidelity-warn">text-only L4</span>'
+            : "";
           return (
             '<div class="chat-row">' +
             '<div class="chat-row-info">' +
@@ -167,6 +178,9 @@
             " \u00b7 " +
             r.transcriptsWritten +
             " transcripts" +
+            fidelity +
+            tools +
+            layer4 +
             warnings +
             "</div>" +
             "</div>" +
@@ -222,13 +236,24 @@
       } else {
         section.style.display = "";
         var pct = typeof ev2.increment === "number" ? ev2.increment : 0;
+        var stepLabel = ev2.step || ev2.message || "";
+        var detail = ev2.detail || "";
+        if (ev2.fidelity && ev2.fidelity.textOnlyLayer4) {
+          detail =
+            detail ||
+            "text-only Layer 4 (no diskKvSnapshot); tool/MCP UI may not match source";
+        }
+        var warnClass =
+          ev2.fidelity && ev2.fidelity.textOnlyLayer4 ? " fidelity-warn" : "";
         el4.innerHTML =
-          '<div class="progress-card">' +
+          '<div class="progress-card' +
+          warnClass +
+          '">' +
           '<div class="progress-phase">' +
-          escHtml(ev2.phase || "") +
+          escHtml("Phase " + (ev2.phase || "") + (stepLabel ? " · " + stepLabel : "")) +
           "</div>" +
           '<div class="progress-message">' +
-          escHtml(ev2.message || "") +
+          escHtml(detail) +
           "</div>" +
           (pct > 0
             ? '<div class="progress-bar-track"><div class="progress-bar-fill" style="width:' +

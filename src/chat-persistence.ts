@@ -43,6 +43,7 @@ import {
   resolveProjectsRoot,
   safeJsonParse,
 } from "./chat-persistence-restore.js";
+import { enumerateTranscriptFilesInConversation } from "./transcripts-discovery.js";
 
 export {
   ensurePythonReady,
@@ -58,9 +59,23 @@ const {
   isExecFileTimeoutError,
 } = __chatPersistenceInternals;
 
-/** Schema for locally-persisted chat bundle. */
+/** Layer 4 cursorDiskKV rows (global state.vscdb); matches Python export_disk_kv_snapshot. */
+export interface ChatBundleDiskKvSnapshotRow {
+  key: string;
+  value: string;
+  checksum: string;
+}
+
+export interface ChatBundleDiskKvSnapshot {
+  sourceStateDbPath: string;
+  rows: ChatBundleDiskKvSnapshotRow[];
+  rowCount: number;
+  toolBubbleCount: number;
+}
+
+/** Schema for locally-persisted chat bundle (v1 or v2). */
 export interface ChatBundle {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   type: "chat-persistence";
   createdAt: string;
   conversationId: string;
@@ -82,6 +97,7 @@ export interface ChatBundle {
     checksum: string;
     sizeBytes: number;
   }>;
+  diskKvSnapshot?: ChatBundleDiskKvSnapshot | null;
 }
 
 export interface LoadChatResult {
@@ -92,6 +108,7 @@ export interface LoadChatResult {
   sidebarMerged: boolean;
   warnings: string[];
   verifyChecks?: VerifyCheck[];
+  fidelity?: import("./chat-bundle-fidelity.js").ChatBundleFidelitySummary;
 }
 
 export interface RestoreChatBundleOptions {
@@ -123,6 +140,7 @@ const SQLITE_READ_RETRIES = 3;
 /**
  * Save a chat conversation to a local JSON bundle file.
  * Collects: store.db snapshot, sidebar metadata from state.vscdb, and transcript JSONL files.
+ * Does not export diskKvSnapshot (Layer 4); bundled Python export is authoritative until parity.
  */
 export async function executeSaveChatLocal(
   context: vscode.ExtensionContext
@@ -326,6 +344,7 @@ export async function executeExportChatBundle(
   );
 }
 
+/** Transcript/sidebar/store only; schema v1. Layer 4 uses Python `build_bundle` (schema v2). */
 export async function buildChatBundle(
   _context: vscode.ExtensionContext,
   conversationId: string,
@@ -427,29 +446,30 @@ export async function buildChatBundle(
   progress.report({ message: "Collecting transcript files..." });
   const transcriptFiles: ChatBundle["transcriptFiles"] = [];
   const projectsRoot = resolveProjectsRoot();
+  const maxTranscriptBytes = 256 * 1024 * 1024;
   try {
     const projectDirs = await fs.readdir(projectsRoot, { withFileTypes: true });
     for (const dir of projectDirs) {
       if (!dir.isDirectory()) {
         continue;
       }
-      const transcriptDir = path.join(projectsRoot, dir.name, "agent-transcripts", conversationId);
-      let files: string[];
+      const projectDir = path.join(projectsRoot, dir.name);
+      let entries;
       try {
-        files = await fs.readdir(transcriptDir);
+        entries = await enumerateTranscriptFilesInConversation(
+          projectDir,
+          conversationId,
+          maxTranscriptBytes
+        );
       } catch {
         continue;
       }
-      for (const file of files) {
-        if (!file.endsWith(".jsonl")) {
-          continue;
-        }
-        const absPath = path.join(transcriptDir, file);
-        const raw = await fs.readFile(absPath);
+      for (const entry of entries) {
+        const raw = await fs.readFile(entry.absolutePath);
         const checksum = computeArtifactChecksum(raw);
         const encoded = encodeTranscriptArtifact(raw);
         transcriptFiles.push({
-          relativePath: `${dir.name}/agent-transcripts/${conversationId}/${file}`,
+          relativePath: `${dir.name}/agent-transcripts/${entry.relativePath}`,
           content: encoded.content,
           encoding: encoded.encoding,
           checksum,

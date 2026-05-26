@@ -137,3 +137,68 @@ export async function runPythonDiskImport(
 
   return { ok: exitCode === 0, exitCode, stdout, stderr };
 }
+
+export interface RunPythonBundleInspectOptions {
+  bundlePath: string;
+  extensionPath?: string;
+  log?: (message: string) => void;
+}
+
+export interface RunPythonBundleInspectResult {
+  ok: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export async function runPythonBundleInspect(
+  options: RunPythonBundleInspectOptions
+): Promise<RunPythonBundleInspectResult> {
+  const log = options.log ?? (() => {});
+  const scriptPath = await resolveTransportChatScript(
+    "cursor_chat_io.py",
+    options.extensionPath
+  );
+  if (!scriptPath) {
+    return {
+      ok: false,
+      exitCode: 1,
+      stdout: "",
+      stderr: "transport-chat script not found (cursor_chat_io.py not in extension resources or fallback paths)",
+    };
+  }
+
+  const args = [scriptPath, "inspect", options.bundlePath];
+  const { exitCode, stdout, stderr } = await new Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+  }>((resolve, reject) => {
+    const proc = spawn("python3", args);
+    let stdoutAcc = "";
+    let stderrAcc = "";
+    proc.stdout?.on("data", (chunk: Buffer | string) => {
+      stdoutAcc += String(chunk);
+    });
+    proc.stderr?.on("data", (chunk: Buffer | string) => {
+      stderrAcc += String(chunk);
+    });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      resolve({ exitCode: code ?? 1, stdout: stdoutAcc, stderr: stderrAcc });
+    });
+  });
+
+  for (const line of stderr.trim().split("\n")) {
+    if (line.trim()) {
+      log(`chat_io inspect: ${line}`);
+    }
+  }
+  for (const line of stdout.trim().split("\n")) {
+    if (line.trim()) {
+      log(`chat_io inspect: ${line}`);
+    }
+  }
+
+  return { ok: exitCode === 0, exitCode, stdout, stderr };
+}

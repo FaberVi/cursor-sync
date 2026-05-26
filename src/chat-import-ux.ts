@@ -151,6 +151,14 @@ export function buildChatImportResultMessage(
   if (verifySummary) {
     parts.push(verifySummary);
   }
+  if (result.fidelity) {
+    parts.push(
+      `schema v${result.fidelity.schemaVersion}, ${result.fidelity.toolBubbleCount} tool bubbles`
+    );
+    if (result.fidelity.textOnlyLayer4) {
+      parts.push("text-only Layer 4");
+    }
+  }
   if (result.warnings.length > 0) {
     parts.push(`${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}`);
   }
@@ -164,7 +172,13 @@ export async function presentChatImportOutcome(
 ): Promise<void> {
   const logger = getLogger();
   const message = buildChatImportResultMessage(result, restoreOptions);
-  vscode.window.showInformationMessage(message);
+  if (result.fidelity?.textOnlyLayer4) {
+    vscode.window.showWarningMessage(
+      `${message} — Text-only Layer 4: no diskKvSnapshot (schema v${result.fidelity.schemaVersion}). Tool/MCP UI cards will not match the source; re-export with Python transport after opening the chat on the source machine.`
+    );
+  } else {
+    vscode.window.showInformationMessage(message);
+  }
 
   if (result.verifyChecks && result.verifyChecks.length > 0) {
     const report = formatVerifyReport(result.verifyChecks);

@@ -25,7 +25,13 @@ import {
   runPostImportActivation,
 } from "./chat-import-activate.js";
 import {
+  mergeFidelitySummaries,
+  parsePythonInspectStdout,
+  summarizeBundleFidelity,
+} from "./chat-bundle-fidelity.js";
+import {
   resolveTransportChatScript,
+  runPythonBundleInspect,
   runPythonDiskImport,
 } from "./chat-transport-scripts.js";
 import {
@@ -42,6 +48,10 @@ import {
   parseChatBundleOrCollection,
   pickBundleFromCollection,
 } from "./chat-bundle-format.js";
+import {
+  fidelityFieldsForImportHistory,
+  publishImportFidelitySummary,
+} from "./sidebar/chats-tab.js";
 import { recordImport as recordImportEntry } from "./sidebar/import-history.js";
 import type { ChatBundle, LoadChatResult, RestoreChatBundleOptions } from "./chat-persistence.js";
 
@@ -235,7 +245,10 @@ export async function restoreChatBundle(
   progress: vscode.Progress<{ message?: string; increment?: number }>,
   options: RestoreChatBundleOptions = {}
 ): Promise<LoadChatResult> {
-  if (bundle.type !== "chat-persistence" || bundle.schemaVersion !== 1) {
+  if (
+    bundle.type !== "chat-persistence" ||
+    (bundle.schemaVersion !== 1 && bundle.schemaVersion !== 2)
+  ) {
     throw new Error("Invalid or unsupported chat bundle format.");
   }
 
@@ -501,6 +514,14 @@ export async function restoreChatBundle(
     await pruneOldBackups(context);
   }
 
+  const fidelity = summarizeBundleFidelity(bundle);
+  for (const fw of fidelity.warnings) {
+    if (!warnings.includes(fw)) {
+      warnings.push(fw);
+    }
+  }
+  publishImportFidelitySummary(conversationId, fidelity);
+
   const result: LoadChatResult = {
     conversationId,
     transcriptsWritten,
@@ -509,11 +530,20 @@ export async function restoreChatBundle(
     sidebarMerged,
     warnings,
     verifyChecks: verifyChecks.length > 0 ? verifyChecks : undefined,
+    fidelity,
   };
   logChatRestoreDebug(
-    `restoreChatBundle done conversationId=${conversationId} transcriptsWritten=${transcriptsWritten} storeWritten=${storeWritten} storeWorkspaceKey=${storeWorkspaceKey} sidebarMerged=${sidebarMerged} warnings=${warnings.length}${warnings.length > 0 ? ` [${warnings.join("; ")}]` : ""}`
+    `restoreChatBundle done conversationId=${conversationId} transcriptsWritten=${transcriptsWritten} storeWritten=${storeWritten} storeWorkspaceKey=${storeWorkspaceKey} sidebarMerged=${sidebarMerged} fidelity schemaVersion=${fidelity.schemaVersion} diskKvRows=${fidelity.diskKvRowCount} toolBubbles=${fidelity.toolBubbleCount} textOnlyLayer4=${fidelity.textOnlyLayer4} warnings=${warnings.length}${warnings.length > 0 ? ` [${warnings.join("; ")}]` : ""}`
   );
-  void recordImportEntry(context, { conversationId, transcriptsWritten, storeWritten, sidebarMerged, warnings: warnings.length, timestamp: new Date().toISOString() });
+  void recordImportEntry(context, {
+    conversationId,
+    transcriptsWritten,
+    storeWritten,
+    sidebarMerged,
+    warnings: warnings.length,
+    timestamp: new Date().toISOString(),
+    ...fidelityFieldsForImportHistory(fidelity),
+  });
   return result;
 }
 
@@ -536,7 +566,36 @@ export async function loadChat(
     }
     bundle = picked;
   }
-  return restoreChatBundle(context, bundle, progress, restoreOptions);
+  const result = await restoreChatBundle(context, bundle, progress, restoreOptions);
+  const extensionPath = context.extensionPath;
+  try {
+    const inspectOutcome = await runPythonBundleInspect({
+      bundlePath,
+      extensionPath,
+      log: (line) => logChatRestoreDebug(line),
+    });
+    if (inspectOutcome.ok) {
+      const fromInspect = parsePythonInspectStdout(inspectOutcome.stdout);
+      if (fromInspect) {
+        const merged = mergeFidelitySummaries(
+          result.fidelity ?? summarizeBundleFidelity(bundle),
+          fromInspect
+        );
+        result.fidelity = merged;
+        for (const fw of merged.warnings) {
+          if (!result.warnings.includes(fw)) {
+            result.warnings.push(fw);
+          }
+        }
+        publishImportFidelitySummary(result.conversationId, merged);
+      }
+    }
+  } catch (err) {
+    logChatRestoreDebug(
+      `bundle inspect skipped: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  return result;
 }
 
 export function resolveProjectsRoot(): string {
