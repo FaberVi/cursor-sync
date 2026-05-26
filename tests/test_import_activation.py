@@ -5,7 +5,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(
+    0,
+    str(Path(__file__).resolve().parents[1] / "resources" / "transport-chat" / "scripts"),
+)
 
 from cursor_chat_io import (  # noqa: E402
     ACTIVATION_PENDING_PATH,

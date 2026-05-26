@@ -7,7 +7,10 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("export gist visibility and copy", () => {
   const exportSrc = readFileSync(path.join(root, "src/export.ts"), "utf-8");
-  const transcriptsSrc = readFileSync(path.join(root, "src/transcripts.ts"), "utf-8");
+  const transcriptsSrc = [
+    readFileSync(path.join(root, "src/transcripts.ts"), "utf-8"),
+    readFileSync(path.join(root, "src/transcripts-export.ts"), "utf-8"),
+  ].join("\n");
   const exportGistChatSrc = readFileSync(path.join(root, "src/export-gist-chat.ts"), "utf-8");
 
   it("settings export calls createGist with two arguments only (no public flag)", () => {
