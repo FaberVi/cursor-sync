@@ -9,6 +9,72 @@
 
 Extension import commands spawn `cursor_chat_io.py import` for disk when the skill is installed; they never merge `state.vscdb` in TypeScript. Headless CLI uses `import --activate` to stage `pending.json`; the extension watcher completes activation.
 
+Full import-v2 + activation contract: [docs/chat-import-activate.md](../../docs/chat-import-activate.md).
+
+## Four storage layers
+
+| Layer | Path | Tool/MCP UI |
+|-------|------|-------------|
+| 1 — Transcripts | `~/.cursor/projects/<project>/agent-transcripts/<uuid>/**/*.jsonl` | No |
+| 2 — Store | `~/.cursor/chats/<ws-key>/<uuid>/store.db` | Partial (native bytes or text synthesis) |
+| 3 — Sidebar | `state.vscdb` `ItemTable` (`composer.composerHeaders`, `composer.composerData`) | No |
+| 4 — Composer bubbles | Global `state.vscdb` → `cursorDiskKV` (`composerData:`, `bubbleId:`) | **Yes** |
+
+Layer 4 is **required** for tool/MCP cards in the Composer panel. JSONL and Phase B `createComposer` alone do not restore `toolFormerData`.
+
+## ChatBundle schema
+
+| `schemaVersion` | Layer 4 in bundle | Typical export |
+|-----------------|-------------------|----------------|
+| `1` | Absent — import synthesizes text-only `cursorDiskKV` | TS extension export; Python when no KV on source |
+| `2` | Optional `diskKvSnapshot` | Python `export` / `transport_chat.py run` when source has `cursorDiskKV` rows |
+
+### `diskKvSnapshot` (v2 only)
+
+```json
+{
+  "sourceStateDbPath": "/home/user/.config/Cursor/User/globalStorage/state.vscdb",
+  "rows": [
+    { "key": "composerData:<uuid>", "value": "{...}", "checksum": "<sha256>" },
+    { "key": "bubbleId:<uuid>:<bubbleId>", "value": "{...}", "checksum": "<sha256>" }
+  ],
+  "rowCount": 37,
+  "toolBubbleCount": 12
+}
+```
+
+- `toolBubbleCount`: bubbles with non-empty `toolFormerData` in parsed `value`.
+- Importers accept v1 and v2; reject unknown `schemaVersion`.
+
+## Layer 4 import priority (Phase A)
+
+```text
+if bundle.diskKvSnapshot?.rows:
+    remap_disk_kv_snapshot_for_destination → merge_cursor_disk_kv   # P0 — native tool UI
+else:
+    build_cursor_disk_kv_rows_from_bundle()                         # text-only fallback
+
+if bundle.storeSnapshot (checksum OK):
+    write store.db bytes
+else:
+    synthesize_store_db_from_bundle()                               # golden + JSONL text
+
+merge sidebarSnapshot → ItemTable (layers 3)
+```
+
+Never call text-only KV synthesis when `diskKvSnapshot.rows` is present.
+
+## Fidelity failure modes (quick)
+
+| Symptom | Cause |
+|---------|--------|
+| No tool/MCP cards | v1 bundle or v2 without `diskKvSnapshot` |
+| `toolBubbleCount: 0` at export | Chat never materialized bubbles on source global DB |
+| Plain bubbles, “No request ID” | Text-only synthesis path |
+| Store missing | Checksum mismatch or export without `store.db` |
+
+See [docs/chat-import-activate.md](../../docs/chat-import-activate.md#transport-fidelity--failure-modes) for full table. Gap matrix: `docs/superpowers/specs/transport-chat-gap-matrix.md`.
+
 ## Scripts (skill-local)
 
 | Path | Purpose |
@@ -52,12 +118,12 @@ Extension import commands spawn `cursor_chat_io.py import` for disk when the ski
 | `list` | All conversation UUIDs on this machine |
 | `paths` | `projects_root`, `chats_root`, `state.vscdb` candidates |
 | `resolve` | `chatsWorkspaceKey`, `workspaceStorageId` |
-| `export <uuid> -o bundle.json` | Build ChatBundle |
-| `import bundle.json --workspace-folder PATH` | Restore layers 1–3 (synthesizes `store.db` from golden template when bundle has no store snapshot) |
-| `import ... --activate` | Disk + activation (layer 4) |
+| `export <uuid> -o bundle.json` | Build ChatBundle (v2 + `diskKvSnapshot` when Layer 4 exists on source) |
+| `import bundle.json --workspace-folder PATH` | Restore layers 1–4 (native KV or text synthesis; golden `store.db` when no store snapshot) |
+| `import ... --activate` | Disk + Phase B activation (`createComposer`) |
 | `verify --conversation-id UUID --workspace-folder PATH` | Post-import disk checks |
 | `verify ... --post-activate` | Disk + `pending.json` / `result.json` |
-| `inspect bundle.json` | Bundle summary |
+| `inspect bundle.json` | Bundle summary (`schemaVersion`, `diskKvSnapshot` row/tool counts when v2) |
 
 ### Import flags
 
@@ -74,10 +140,10 @@ Extension import commands spawn `cursor_chat_io.py import` for disk when the ski
 
 ## Two-phase workflow
 
-| Phase | Cursor | Tooling | Writes `state.vscdb`? |
-|-------|--------|---------|----------------------|
-| A — Disk | Quit (recommended) | `run --disk-only` or `import` without `--activate` | **Yes (Python only)** |
-| B — Activation | Open on **destination** | Cursor Sync extension, or staged `pending.json` + watcher | No |
+| Phase | Cursor | Tooling | Layers restored |
+|-------|--------|---------|-----------------|
+| A — Disk | Quit (recommended) | `run --disk-only` or `import` without `--activate` | 1–4 (`state.vscdb` + `cursorDiskKV` via Python) |
+| B — Activation | Open on **destination** | Cursor Sync extension, or staged `pending.json` + watcher | Metadata only (`createComposer`) — not bubble UI |
 
 ## Activation (Phase B)
 

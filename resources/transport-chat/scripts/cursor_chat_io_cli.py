@@ -80,6 +80,7 @@ def cmd_verify(args: argparse.Namespace) -> None:
         ws_ctx,
         expect_rich_composer_data=expect_rich,
         expect_store=expect_store,
+        expected_tool_bubble_count=expected_tool_bubble_count_from_bundle(bundle),
     )
     if args.post_activate:
         checks.extend(verify_activation_checks(cid))
@@ -127,6 +128,15 @@ def cmd_inspect(args: argparse.Namespace) -> None:
     if isinstance(side, dict):
         keys = sorted(side.keys())
         print(f"sidebarSnapshot keys: {', '.join(keys)}")
+    disk_kv = bundle.get("diskKvSnapshot")
+    if isinstance(disk_kv, dict):
+        row_count = disk_kv.get("rowCount")
+        tool_count = disk_kv.get("toolBubbleCount")
+        source = disk_kv.get("sourceStateDbPath")
+        print(
+            f"diskKvSnapshot: {row_count} rows, {tool_count} tool bubbles "
+            f"(source: {source})"
+        )
 
 
 def cmd_paths(args: argparse.Namespace) -> None:

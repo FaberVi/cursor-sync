@@ -10,10 +10,15 @@ from cursor_chat_io_common import *
 from cursor_chat_io_bundle import (
     build_cursor_disk_kv_rows_from_bundle,
     decode_artifact,
+    merge_agent_kv_snapshot,
     merge_cursor_disk_kv,
     merge_state_db,
+    remap_agent_kv_snapshot_for_destination,
+    remap_disk_kv_snapshot_for_destination,
     synthesize_store_db_from_bundle,
 )
+
+SUPPORTED_BUNDLE_SCHEMA_VERSIONS = frozenset({1, 2})
 
 def build_activation_manifest(
     bundle: dict[str, Any],
@@ -296,8 +301,14 @@ def import_bundle(
         raise SystemExit(1)
 
     bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-    if bundle.get("type") != BUNDLE_TYPE or bundle.get("schemaVersion") != SCHEMA_VERSION:
-        raise SystemExit("Unsupported bundle: expected schemaVersion=1 type=chat-persistence")
+    if bundle.get("type") != BUNDLE_TYPE:
+        raise SystemExit("Unsupported bundle: expected type=chat-persistence")
+    schema_version = bundle.get("schemaVersion")
+    if schema_version not in SUPPORTED_BUNDLE_SCHEMA_VERSIONS:
+        raise SystemExit(
+            f"Unsupported bundle: schemaVersion={schema_version!r} "
+            f"(expected {sorted(SUPPORTED_BUNDLE_SCHEMA_VERSIONS)})"
+        )
 
     cid = bundle["conversationId"]
     warnings: list[str] = []
@@ -418,7 +429,17 @@ def import_bundle(
     global_db = global_state_db_path()
     if global_db in merge_targets:
         ws_identifier = ws_ctx.workspace_identifier if ws_ctx is not None else None
-        disk_kv_rows = build_cursor_disk_kv_rows_from_bundle(bundle, cid, ws_identifier)
+        disk_kv = bundle.get("diskKvSnapshot")
+        if isinstance(disk_kv, dict) and disk_kv.get("rows"):
+            disk_kv_rows = remap_disk_kv_snapshot_for_destination(
+                disk_kv, cid, ws_identifier
+            )
+            warnings.append(
+                f"Restored {len(disk_kv_rows)} cursorDiskKV rows from bundle "
+                f"(toolBubbleCount={disk_kv.get('toolBubbleCount', 0)})."
+            )
+        else:
+            disk_kv_rows = build_cursor_disk_kv_rows_from_bundle(bundle, cid, ws_identifier)
         ok_kv, kv_warnings = merge_cursor_disk_kv(global_db, disk_kv_rows, dry_run=dry_run)
         warnings.extend(kv_warnings)
         if ok_kv and not dry_run:
@@ -426,6 +447,28 @@ def import_bundle(
                 f"Wrote {len(disk_kv_rows)} cursorDiskKV rows into {global_db} "
                 f"(composerData + {len(disk_kv_rows) - 1} bubbles)"
             )
+
+        agent_kv = bundle.get("agentKvSnapshot")
+        source_cid = (
+            str(agent_kv.get("conversationId"))
+            if isinstance(agent_kv, dict) and agent_kv.get("conversationId")
+            else cid
+        )
+        if isinstance(agent_kv, dict) and agent_kv.get("rows"):
+            agent_rows = remap_agent_kv_snapshot_for_destination(
+                agent_kv, source_cid, cid
+            )
+            warnings.append(
+                f"Restored {len(agent_rows)} agentKv rows from bundle "
+                f"(blobCount={agent_kv.get('blobCount', 0)}, "
+                f"checkpointCount={agent_kv.get('checkpointCount', 0)})."
+            )
+            ok_agent, agent_warnings = merge_agent_kv_snapshot(
+                global_db, agent_rows, dry_run=dry_run
+            )
+            warnings.extend(agent_warnings)
+            if ok_agent and not dry_run:
+                print(f"Wrote {len(agent_rows)} agentKv rows into {global_db}")
 
     if bundle_had_store and not store_written:
         print(
@@ -448,6 +491,7 @@ def import_bundle(
         ws_ctx,
         expect_rich_composer_data=expect_rich,
         expect_store=expect_store,
+        expected_tool_bubble_count=expected_tool_bubble_count_from_bundle(bundle),
     )
     for c in verify_checks:
         print(f"  verify: {c.format_line()}", file=sys.stderr)

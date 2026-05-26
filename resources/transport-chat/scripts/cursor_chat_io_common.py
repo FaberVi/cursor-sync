@@ -566,12 +566,59 @@ def composer_data_has_conversation_key(db_path: Path, conversation_id: str) -> b
         return False
     val = data[conversation_id]
     return val is not None and val != {}
+
+
+def count_tool_bubbles_in_global_db(
+    conversation_id: str,
+    global_db: Path | None = None,
+) -> int | None:
+    db = global_db if global_db is not None else global_state_db_path()
+    if not db.is_file():
+        return None
+    prefix = f"bubbleId:{conversation_id}:"
+    conn = sqlite3.connect(db)
+    try:
+        try:
+            cur = conn.execute(
+                "SELECT value FROM cursorDiskKV WHERE key LIKE ?;",
+                (prefix + "%",),
+            )
+        except sqlite3.OperationalError:
+            return None
+        count = 0
+        for (value,) in cur.fetchall():
+            if not isinstance(value, str):
+                continue
+            try:
+                if json.loads(value).get("toolFormerData"):
+                    count += 1
+            except json.JSONDecodeError:
+                pass
+        return count
+    finally:
+        conn.close()
+
+
+def expected_tool_bubble_count_from_bundle(bundle: dict[str, Any] | None) -> int | None:
+    if bundle is None:
+        return None
+    disk_kv = bundle.get("diskKvSnapshot")
+    if not isinstance(disk_kv, dict):
+        return None
+    tbc = disk_kv.get("toolBubbleCount")
+    if isinstance(tbc, int) and tbc > 0:
+        return tbc
+    return None
+
+
 def verify_import_visibility(
     conversation_id: str,
     workspace_ctx: WorkspaceContext | None,
     *,
     expect_rich_composer_data: bool = False,
     expect_store: bool = False,
+    expected_tool_bubble_count: int | None = None,
+    tool_bubble_global_db: Path | None = None,
 ) -> list[VerifyCheck]:
     checks: list[VerifyCheck] = []
     chats_key = workspace_ctx.chats_workspace_key if workspace_ctx else None
@@ -742,7 +789,33 @@ def verify_import_visibility(
                     )
                 )
 
+    if expected_tool_bubble_count is not None and expected_tool_bubble_count > 0:
+        db_for_tools = tool_bubble_global_db if tool_bubble_global_db is not None else g
+        tool_count = count_tool_bubbles_in_global_db(conversation_id, db_for_tools)
+        detail = (
+            f"toolFormerData bubbles={tool_count} "
+            f"expected>={expected_tool_bubble_count}"
+        )
+        if tool_count is None:
+            checks.append(
+                VerifyCheck(
+                    "global.diskKv.toolBubbles",
+                    "FAIL",
+                    "global state DB unreadable or cursorDiskKV missing",
+                )
+            )
+        elif tool_count >= expected_tool_bubble_count:
+            checks.append(
+                VerifyCheck("global.diskKv.toolBubbles", "OK", detail)
+            )
+        else:
+            checks.append(
+                VerifyCheck("global.diskKv.toolBubbles", "FAIL", detail)
+            )
+
     return checks
+
+
 def verify_checks_all_ok(checks: list[VerifyCheck]) -> bool:
     return all(c.status != "FAIL" for c in checks)
 def print_verify_report(checks: list[VerifyCheck], *, json_lines: bool = False) -> None:
