@@ -21,6 +21,7 @@ const {
   withRetryMock,
   appendLineMock,
   showInformationMessageMock,
+  showWarningMessageMock,
   showErrorMessageMock,
   showInputBoxMock,
   showQuickPickMock,
@@ -33,6 +34,7 @@ const {
   withRetryMock: vi.fn(async <T>(fn: () => Promise<T>) => fn()),
   appendLineMock: vi.fn(),
   showInformationMessageMock: vi.fn(),
+  showWarningMessageMock: vi.fn(),
   showErrorMessageMock: vi.fn(),
   showInputBoxMock: vi.fn(),
   showQuickPickMock: vi.fn(),
@@ -109,6 +111,7 @@ vi.mock("vscode", () => ({
       dispose: vi.fn(),
     }),
     showInformationMessage: showInformationMessageMock,
+    showWarningMessage: showWarningMessageMock,
     showErrorMessage: showErrorMessageMock,
     showInputBox: showInputBoxMock,
     showQuickPick: showQuickPickMock,
@@ -329,6 +332,7 @@ describe("chat gist export and import", () => {
     withRetryMock.mockClear();
     appendLineMock.mockReset();
     showInformationMessageMock.mockReset();
+    showWarningMessageMock.mockReset();
     showErrorMessageMock.mockReset();
     showInputBoxMock.mockReset();
     showQuickPickMock.mockReset();
@@ -483,8 +487,9 @@ describe("chat gist export and import", () => {
     expect(await fs.readFile(importedPath, "utf-8")).toBe(transcriptFixture);
     expect(showErrorMessageMock).not.toHaveBeenCalled();
     expect(
-      showInformationMessageMock.mock.calls.some((c) =>
-        String(c[0]).includes(`Chat "${conversationId}" loaded.`)
+      showWarningMessageMock.mock.calls.some((c) =>
+        String(c[0]).includes(`Chat "${conversationId}" loaded.`) &&
+          String(c[0]).includes("Text-only Layer 4")
       )
     ).toBe(true);
 
