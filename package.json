@@ -161,6 +161,10 @@
       {
         "command": "cursorSync.prepareSyncFromLandingZone",
         "title": "Cursor Sync: Prepare Sync from Landing Zone"
+      },
+      {
+        "command": "cursorSync.installSkillTransportChat",
+        "title": "Cursor Sync: Install Skill - Transport Chat"
       }
     ],
     "configuration": {
