@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## v0.7.2
+
+### Added
+- **ChatBundle schema v2** (`diskKvSnapshot`): Python `cursor_chat_io.py export` captures native `cursorDiskKV` rows (`composerData`, `bubbleId`) so tool/MCP Composer cards can round-trip across machines.
+- **Transport fidelity UX**: import outcomes and the Chats sidebar show schema version, tool-bubble counts, and a warning when Layer 4 falls back to text-only synthesis (schema v1 or v2 without `diskKvSnapshot`).
+
+### Changed
+- Python disk import prefers native `diskKvSnapshot` remap over `build_cursor_disk_kv_rows_from_bundle` when rows are present.
+- Bundled transport-chat reference documents Layer 4 export/import and inspect output.
+
+### Fixed
+- Gist chat import tests mock `showWarningMessage` for text-only Layer 4 fidelity warnings.
+
 ## v0.7.1
 
 ### Fixed
