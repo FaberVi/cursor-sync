@@ -10,6 +10,7 @@ import {
   executeLoadChatLocal,
   executeImportChatBundle,
   executeExportChatBundle,
+  executeExportCurrentChatBundle,
   executeImportChatBundleActivate,
   executeVerifyChatImport,
 } from "./chat-persistence.js";
@@ -146,6 +147,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.exportChatBundle", () =>
       executeExportChatBundle(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.exportCurrentChatBundle", (target) =>
+      executeExportCurrentChatBundle(context, target)
     )
   );
 

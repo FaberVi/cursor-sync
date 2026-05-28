@@ -47,6 +47,24 @@
           "when": "view == cursorSync.sidebar && cursorSync.configured",
           "group": "navigation"
         }
+      ],
+      "editor/title": [
+        {
+          "command": "cursorSync.exportCurrentChatBundle",
+          "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "cursorSync.exportCurrentChatBundle",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cursorSync.exportCurrentChatBundle",
+          "when": "false"
+        }
       ]
     },
     "commands": [
@@ -116,6 +134,11 @@
       {
         "command": "cursorSync.exportChatBundle",
         "title": "Cursor Sync: Export Chat Bundle"
+      },
+      {
+        "command": "cursorSync.exportCurrentChatBundle",
+        "title": "Cursor Sync: Export into Bundle",
+        "icon": "$(archive)"
       },
       {
         "command": "cursorSync.importChatBundleActivate",

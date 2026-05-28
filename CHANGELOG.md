@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Chat tab export**: `Cursor Sync: Export into Bundle` on chat editor tab title and context menus (`cursorSync.exportCurrentChatBundle`) exports the clicked tab's conversation without the multi-chat picker.
+
 ## v0.7.2
 
 ### Added
