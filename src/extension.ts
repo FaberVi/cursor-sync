@@ -278,7 +278,7 @@ export async function executeSyncNow(
       }
       case "conflict": {
         const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them first.`;
-        await showSyncFailureWithDebug(
+        void showSyncFailureWithDebug(
           context,
           buildSyncDebugFailure("syncNow", "manual", conflictMessage, {
             category: "CONFLICT",
