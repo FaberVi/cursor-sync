@@ -74,6 +74,29 @@ def test_export_disk_kv_snapshot_includes_tool_bubbles(tmp_path):
     assert any(k.startswith(f"bubbleId:{CID}:") for k in keys)
 
 
+def test_export_disk_kv_snapshot_reads_blob_column_values(tmp_path):
+    composer = json.loads((FIXTURE / "composerData.json").read_text())
+    bubble_text = (FIXTURE / "bubble-text.json").read_text()
+    db = tmp_path / "blob-state.vscdb"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value BLOB);")
+    conn.execute(
+        "INSERT INTO cursorDiskKV VALUES (?, ?);",
+        (f"composerData:{CID}", json.dumps(composer, separators=(",", ":")).encode("utf-8")),
+    )
+    headers = composer["fullConversationHeadersOnly"]
+    bid_text = headers[0]["bubbleId"]
+    conn.execute(
+        "INSERT INTO cursorDiskKV VALUES (?, ?);",
+        (f"bubbleId:{CID}:{bid_text}", bubble_text.encode("utf-8")),
+    )
+    conn.commit()
+    conn.close()
+    snap = export_disk_kv_snapshot(db, CID)
+    assert snap is not None
+    assert snap["rowCount"] == 2
+
+
 def _tool_bubble_count(db_path: Path) -> int:
     conn = sqlite3.connect(db_path)
     try:

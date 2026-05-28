@@ -291,17 +291,18 @@ def export_disk_kv_snapshot(global_db: Path, conversation_id: str) -> dict[str, 
             (key_composer, prefix_bubble + "%"),
         )
         for key, value in cur.fetchall():
-            if not isinstance(value, str):
+            text = cursor_disk_kv_value_as_text(value)
+            if text is None:
                 continue
             rows.append(
                 {
                     "key": key,
-                    "value": value,
-                    "checksum": sha256_hex(value.encode("utf-8")),
+                    "value": text,
+                    "checksum": sha256_hex(text.encode("utf-8")),
                 }
             )
             try:
-                obj = json.loads(value)
+                obj = json.loads(text)
                 if obj.get("toolFormerData"):
                     tool_count += 1
             except json.JSONDecodeError:
