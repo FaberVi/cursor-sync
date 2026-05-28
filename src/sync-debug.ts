@@ -41,11 +41,21 @@ const TILDE_PATH_PATTERN = /~(?:\/|\\)[^\s"'`,;:]+/g;
 const ABSOLUTE_PATH_PATTERN =
   /(?:\/(?:home|Users|root|etc|tmp|var|opt|private|Volumes)(?:\/[^\s"'`,;:]+)*|(?:[A-Za-z]:[\\/][^\s"'`,;:]+)+)/g;
 
+let cachedExtensionVersion: string | undefined;
+
 export function readExtensionVersion(): string {
-  const packageJson = JSON.parse(
-    readFileSync(join(__dirname, "..", "package.json"), "utf8")
-  ) as { version: string };
-  return packageJson.version;
+  if (cachedExtensionVersion !== undefined) {
+    return cachedExtensionVersion;
+  }
+  try {
+    const packageJson = JSON.parse(
+      readFileSync(join(__dirname, "..", "package.json"), "utf8")
+    ) as { version: string };
+    cachedExtensionVersion = packageJson.version;
+  } catch {
+    cachedExtensionVersion = "unknown";
+  }
+  return cachedExtensionVersion;
 }
 
 export function buildSyncDebugFailure(
@@ -96,7 +106,7 @@ export function buildSyncDebugPrompt(failure: SyncDebugFailure): string {
     lines.push(`- direction: ${failure.direction}`);
   }
   if (failure.category) {
-    lines.push(`- category: ${failure.category}`);
+    lines.push(`- category: ${sanitizeSyncDebugMessage(failure.category)}`);
   }
   if (failure.statusCode !== undefined) {
     lines.push(`- statusCode: ${failure.statusCode}`);
