@@ -1,8 +1,7 @@
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { md5FolderKey } from "./chat-workspace-context.js";
-import { resolveSyncRoots } from "./paths.js";
+import { findWorkspaceKeysForConversation } from "./transcripts-cursor-paths.js";
 
 const CHAT_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -79,34 +78,6 @@ function currentWorkspaceKey(): string | undefined {
   const folder = vscode.workspace.workspaceFolders?.[0];
   const fsPath = folder?.uri?.fsPath;
   return fsPath ? md5FolderKey(path.resolve(fsPath)) : undefined;
-}
-
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    const stat = await fs.stat(filePath);
-    return stat.isFile();
-  } catch {
-    return false;
-  }
-}
-
-async function findWorkspaceKeysForConversation(conversationId: string): Promise<string[]> {
-  const chatsRoot = path.join(resolveSyncRoots().dotCursor, "chats");
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = await fs.readdir(chatsRoot, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const matches: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const storePath = path.join(chatsRoot, entry.name, conversationId, "store.db");
-    if (await fileExists(storePath)) {
-      matches.push(entry.name);
-    }
-  }
-  return matches.sort((a, b) => a.localeCompare(b));
 }
 
 export async function resolveChatEditorExportTarget(
