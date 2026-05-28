@@ -291,7 +291,7 @@ export async function executeSyncNow(
       }
       case "error": {
         const errorMessage = `Sync failed: ${result.reason}`;
-        await showSyncFailureWithDebug(
+        void showSyncFailureWithDebug(
           context,
           buildSyncDebugFailure("syncNow", "manual", result.reason, {
             category: result.reason,
@@ -307,7 +307,7 @@ export async function executeSyncNow(
       `[${new Date().toISOString()}] Sync Now failed: ${errMessage}`
     );
     const errorMessage = `Sync failed: ${errMessage}`;
-    await showSyncFailureWithDebug(
+    void showSyncFailureWithDebug(
       context,
       buildSyncDebugFailure("syncNow", "manual", errMessage),
       { title: errorMessage }

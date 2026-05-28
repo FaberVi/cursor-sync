@@ -234,7 +234,7 @@ export async function scheduledTick(
           reason: "conflict",
           conflict_count: result.keys.length,
         });
-        await showSyncFailureWithDebug(
+        void showSyncFailureWithDebug(
           context,
           buildSyncDebugFailure("scheduler", "scheduled", conflictMessage, {
             category: "CONFLICT",
@@ -251,7 +251,7 @@ export async function scheduledTick(
           `[${new Date().toISOString()}] Scheduled sync skipped: ${result.reason}`
         );
         sendEvent(context, "scheduled_sync_skipped", { reason: result.reason });
-        await showSyncFailureWithDebug(
+        void showSyncFailureWithDebug(
           context,
           buildSyncDebugFailure("scheduler", "scheduled", result.reason, {
             category: result.reason,
@@ -268,7 +268,7 @@ export async function scheduledTick(
     );
     sendEvent(context, "scheduled_sync_failed", { reason: "exception" });
     const errorMessage = `Scheduled sync failed: ${errMessage}`;
-    await showSyncFailureWithDebug(
+    void showSyncFailureWithDebug(
       context,
       buildSyncDebugFailure("scheduler", "scheduled", errMessage),
       { title: errorMessage }
