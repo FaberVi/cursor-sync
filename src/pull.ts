@@ -13,6 +13,11 @@ import { findMissingExtensions, findExtraExtensions } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
+import {
+  readExtensionVersion,
+  showSyncFailureWithDebug,
+  type SyncDebugFailure,
+} from "./sync-debug.js";
 import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
 import type { SyncState, Manifest } from "./types.js";
 
@@ -22,6 +27,22 @@ let pullLock = false;
 
 export function isPullLocked(): boolean {
   return pullLock;
+}
+
+function buildPullDebugFailure(
+  trigger: PullTrigger,
+  message: string,
+  extra?: Pick<SyncDebugFailure, "category" | "statusCode" | "conflictCount">
+): SyncDebugFailure {
+  return {
+    operation: "pull",
+    direction: "pull",
+    trigger,
+    message,
+    extensionVersion: readExtensionVersion(),
+    platform: process.platform,
+    ...extra,
+  };
 }
 
 export async function executePull(
@@ -64,6 +85,16 @@ async function doPull(
 
   const token = await requireToken(context);
   if (!token) {
+    const authFailedMessage =
+      "GitHub token not configured. Configure your token to sync.";
+    await showSyncFailureWithDebug(
+      context,
+      buildPullDebugFailure(trigger, authFailedMessage, {
+        category: "AUTH_FAILED",
+      }),
+      { title: authFailedMessage }
+    );
+    logger.appendLine(`[${new Date().toISOString()}] Pull failed: AUTH_FAILED`);
     sendEvent(context, "sync_failed", { direction: "pull", reason: "not_configured", trigger });
     return false;
   }
@@ -73,7 +104,14 @@ async function doPull(
   if (!gistId) {
     const existingResult = await withRetry(() => client.findExistingGist());
     if (!existingResult.ok) {
-      vscode.window.showErrorMessage(`Pull failed: ${existingResult.error.message}`);
+      await showSyncFailureWithDebug(
+        context,
+        buildPullDebugFailure(trigger, existingResult.error.message, {
+          category: existingResult.error.category,
+          statusCode: existingResult.error.statusCode,
+        }),
+        { title: `Pull failed: ${existingResult.error.message}` }
+      );
       logger.appendLine(`[${new Date().toISOString()}] Pull failed: ${existingResult.error.category} - ${existingResult.error.message}`);
       sendEvent(context, "sync_failed", {
         direction: "pull",
@@ -96,8 +134,14 @@ async function doPull(
       await saveSyncState(context, syncState);
       logger.appendLine(`[${new Date().toISOString()}] Found existing Gist: ${gistId}`);
     } else {
-      vscode.window.showErrorMessage(
-        "Not configured. Push first or configure a Gist ID."
+      const notConfiguredMessage =
+        "Not configured. Push first or configure a Gist ID.";
+      await showSyncFailureWithDebug(
+        context,
+        buildPullDebugFailure(trigger, notConfiguredMessage, {
+          category: "not_configured",
+        }),
+        { title: notConfiguredMessage }
       );
       logger.appendLine(`[${new Date().toISOString()}] Pull failed: not configured`);
       sendEvent(context, "sync_failed", { direction: "pull", reason: "not_configured", trigger });
@@ -108,7 +152,14 @@ async function doPull(
   const gistResult = await withRetry(() => client.getGist(gistId));
 
   if (!gistResult.ok) {
-    vscode.window.showErrorMessage(`Pull failed: ${gistResult.error.message}`);
+    await showSyncFailureWithDebug(
+      context,
+      buildPullDebugFailure(trigger, gistResult.error.message, {
+        category: gistResult.error.category,
+        statusCode: gistResult.error.statusCode,
+      }),
+      { title: `Pull failed: ${gistResult.error.message}` }
+    );
     logger.appendLine(
       `[${new Date().toISOString()}] Pull failed: ${gistResult.error.category} - ${gistResult.error.message}`
     );
@@ -136,7 +187,11 @@ async function doPull(
       gistData.files[TRANSCRIPT_MANIFEST_FILE_NAME] !== undefined
         ? "Pull failed: This Gist contains agent transcripts, not settings. Update the configured Gist to one from Cursor Sync export/push, or use Cursor Sync: Import Agent Transcripts from Private Gist."
         : "Pull failed: manifest.json not found in Gist.";
-    vscode.window.showErrorMessage(message);
+    await showSyncFailureWithDebug(
+      context,
+      buildPullDebugFailure(trigger, message, { category: "missing_manifest" }),
+      { title: message }
+    );
     logger.appendLine(`[${new Date().toISOString()}] Pull failed: missing manifest`);
     sendEvent(context, "sync_failed", { direction: "pull", reason: "missing_manifest", trigger });
     return false;
@@ -146,7 +201,14 @@ async function doPull(
   try {
     manifest = JSON.parse(manifestFile.content) as Manifest;
   } catch {
-    vscode.window.showErrorMessage("Pull failed: invalid manifest.json.");
+    const invalidManifestMessage = "Pull failed: invalid manifest.json.";
+    await showSyncFailureWithDebug(
+      context,
+      buildPullDebugFailure(trigger, invalidManifestMessage, {
+        category: "invalid_manifest",
+      }),
+      { title: invalidManifestMessage }
+    );
     logger.appendLine(`[${new Date().toISOString()}] Pull failed: invalid manifest`);
     sendEvent(context, "sync_failed", { direction: "pull", reason: "invalid_manifest", trigger });
     return false;
@@ -164,8 +226,14 @@ async function doPull(
       return !resolution || resolution === "skip";
     });
     if (unresolved.length > 0) {
-      vscode.window.showWarningMessage(
-        `${unresolved.length} conflict(s) detected. Resolve them before pulling.`
+      const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pulling.`;
+      await showSyncFailureWithDebug(
+        context,
+        buildPullDebugFailure(trigger, conflictMessage, {
+          category: "CONFLICT",
+          conflictCount: unresolved.length,
+        }),
+        { level: "warning", title: conflictMessage }
       );
       logger.appendLine(`[${new Date().toISOString()}] Pull blocked: CONFLICT`);
       sendEvent(context, "sync_failed", { direction: "pull", reason: "CONFLICT", trigger });
@@ -272,8 +340,14 @@ async function doPull(
   if (writeError) {
     logger.appendLine(`[${new Date().toISOString()}] Rolling back partial writes`);
     await rollbackFromBackup(writtenBackups);
-    vscode.window.showErrorMessage(
-      "Pull failed: file write error. Changes have been rolled back."
+    const writeErrorMessage =
+      "Pull failed: file write error. Changes have been rolled back.";
+    await showSyncFailureWithDebug(
+      context,
+      buildPullDebugFailure(trigger, writeErrorMessage, {
+        category: "FILE_SYSTEM_ERROR",
+      }),
+      { title: writeErrorMessage }
     );
     logger.appendLine(`[${new Date().toISOString()}] Pull failed: FILE_SYSTEM_ERROR`);
     await addSyncHistoryEntry(context, {

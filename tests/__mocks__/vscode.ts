@@ -121,15 +121,58 @@ export function __setActiveTabInput(input: unknown): void {
   mockActiveTabInput = input;
 }
 
+let mockShowErrorMessageResult: string | undefined;
+let mockShowWarningMessageResult: string | undefined;
+let mockShowInformationMessageResult: string | undefined;
+let clipboardWriteTextImpl: (text: string) => Promise<void> = async () => {};
+export const __infoMessageCalls: string[] = [];
+
+export function __setShowErrorMessageResult(result: string | undefined): void {
+  mockShowErrorMessageResult = result;
+}
+
+export function __setShowWarningMessageResult(result: string | undefined): void {
+  mockShowWarningMessageResult = result;
+}
+
+export function __setShowInformationMessageResult(result: string | undefined): void {
+  mockShowInformationMessageResult = result;
+}
+
+export function __setClipboardWriteTextImpl(
+  impl: (text: string) => Promise<void>
+): void {
+  clipboardWriteTextImpl = impl;
+}
+
+export function __resetMessageMocks(): void {
+  mockShowErrorMessageResult = undefined;
+  mockShowWarningMessageResult = undefined;
+  mockShowInformationMessageResult = undefined;
+  clipboardWriteTextImpl = async () => {};
+  __infoMessageCalls.length = 0;
+}
+
+export const env = {
+  clipboard: {
+    writeText: async (text: string) => clipboardWriteTextImpl(text),
+  },
+};
+
 export const window = {
   createOutputChannel: (_name: string) => ({
     appendLine: (_msg: string) => {},
     show: () => {},
     dispose: () => {},
   }),
-  showInformationMessage: async (_msg: string, ..._items: string[]) => undefined,
-  showWarningMessage: async (_msg: string, ..._items: string[]) => undefined,
-  showErrorMessage: async (_msg: string, ..._items: string[]) => undefined,
+  showInformationMessage: async (msg: string, ..._items: string[]) => {
+    __infoMessageCalls.push(msg);
+    return mockShowInformationMessageResult;
+  },
+  showWarningMessage: async (_msg: string, ..._items: string[]) =>
+    mockShowWarningMessageResult,
+  showErrorMessage: async (_msg: string, ..._items: string[]) =>
+    mockShowErrorMessageResult,
   showInputBox: async () => undefined,
   showQuickPick: async <T>(items: T[]) => items[0],
   showSaveDialog: async () => undefined,
@@ -158,6 +201,7 @@ export function __resetVscodeCommandsMock(): void {
   registeredCommands = new Set();
   executeCommandImpl = async () => undefined;
   mockWorkspaceFolders = [];
+  __resetMessageMocks();
 }
 
 export function __setRegisteredCommands(commandIds: string[]): void {
