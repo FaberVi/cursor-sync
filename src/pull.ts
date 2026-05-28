@@ -14,9 +14,8 @@ import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
 import {
-  readExtensionVersion,
+  buildSyncDebugFailure,
   showSyncFailureWithDebug,
-  type SyncDebugFailure,
 } from "./sync-debug.js";
 import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
 import type { SyncState, Manifest } from "./types.js";
@@ -27,22 +26,6 @@ let pullLock = false;
 
 export function isPullLocked(): boolean {
   return pullLock;
-}
-
-function buildPullDebugFailure(
-  trigger: PullTrigger,
-  message: string,
-  extra?: Pick<SyncDebugFailure, "category" | "statusCode" | "conflictCount">
-): SyncDebugFailure {
-  return {
-    operation: "pull",
-    direction: "pull",
-    trigger,
-    message,
-    extensionVersion: readExtensionVersion(),
-    platform: process.platform,
-    ...extra,
-  };
 }
 
 export async function executePull(
@@ -87,9 +70,10 @@ async function doPull(
   if (!token) {
     const authFailedMessage =
       "GitHub token not configured. Configure your token to sync.";
-    await showSyncFailureWithDebug(
+    void showSyncFailureWithDebug(
       context,
-      buildPullDebugFailure(trigger, authFailedMessage, {
+      buildSyncDebugFailure("pull", trigger, authFailedMessage, {
+        direction: "pull",
         category: "AUTH_FAILED",
       }),
       { title: authFailedMessage }
@@ -104,9 +88,10 @@ async function doPull(
   if (!gistId) {
     const existingResult = await withRetry(() => client.findExistingGist());
     if (!existingResult.ok) {
-      await showSyncFailureWithDebug(
+      void showSyncFailureWithDebug(
         context,
-        buildPullDebugFailure(trigger, existingResult.error.message, {
+        buildSyncDebugFailure("pull", trigger, existingResult.error.message, {
+          direction: "pull",
           category: existingResult.error.category,
           statusCode: existingResult.error.statusCode,
         }),
@@ -136,9 +121,10 @@ async function doPull(
     } else {
       const notConfiguredMessage =
         "Not configured. Push first or configure a Gist ID.";
-      await showSyncFailureWithDebug(
+      void showSyncFailureWithDebug(
         context,
-        buildPullDebugFailure(trigger, notConfiguredMessage, {
+        buildSyncDebugFailure("pull", trigger, notConfiguredMessage, {
+          direction: "pull",
           category: "not_configured",
         }),
         { title: notConfiguredMessage }
@@ -152,9 +138,10 @@ async function doPull(
   const gistResult = await withRetry(() => client.getGist(gistId));
 
   if (!gistResult.ok) {
-    await showSyncFailureWithDebug(
+    void showSyncFailureWithDebug(
       context,
-      buildPullDebugFailure(trigger, gistResult.error.message, {
+      buildSyncDebugFailure("pull", trigger, gistResult.error.message, {
+        direction: "pull",
         category: gistResult.error.category,
         statusCode: gistResult.error.statusCode,
       }),
@@ -187,9 +174,12 @@ async function doPull(
       gistData.files[TRANSCRIPT_MANIFEST_FILE_NAME] !== undefined
         ? "Pull failed: This Gist contains agent transcripts, not settings. Update the configured Gist to one from Cursor Sync export/push, or use Cursor Sync: Import Agent Transcripts from Private Gist."
         : "Pull failed: manifest.json not found in Gist.";
-    await showSyncFailureWithDebug(
+    void showSyncFailureWithDebug(
       context,
-      buildPullDebugFailure(trigger, message, { category: "missing_manifest" }),
+      buildSyncDebugFailure("pull", trigger, message, {
+        direction: "pull",
+        category: "missing_manifest",
+      }),
       { title: message }
     );
     logger.appendLine(`[${new Date().toISOString()}] Pull failed: missing manifest`);
@@ -202,9 +192,10 @@ async function doPull(
     manifest = JSON.parse(manifestFile.content) as Manifest;
   } catch {
     const invalidManifestMessage = "Pull failed: invalid manifest.json.";
-    await showSyncFailureWithDebug(
+    void showSyncFailureWithDebug(
       context,
-      buildPullDebugFailure(trigger, invalidManifestMessage, {
+      buildSyncDebugFailure("pull", trigger, invalidManifestMessage, {
+        direction: "pull",
         category: "invalid_manifest",
       }),
       { title: invalidManifestMessage }
@@ -227,9 +218,10 @@ async function doPull(
     });
     if (unresolved.length > 0) {
       const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pulling.`;
-      await showSyncFailureWithDebug(
+      void showSyncFailureWithDebug(
         context,
-        buildPullDebugFailure(trigger, conflictMessage, {
+        buildSyncDebugFailure("pull", trigger, conflictMessage, {
+          direction: "pull",
           category: "CONFLICT",
           conflictCount: unresolved.length,
         }),
@@ -342,9 +334,10 @@ async function doPull(
     await rollbackFromBackup(writtenBackups);
     const writeErrorMessage =
       "Pull failed: file write error. Changes have been rolled back.";
-    await showSyncFailureWithDebug(
+    void showSyncFailureWithDebug(
       context,
-      buildPullDebugFailure(trigger, writeErrorMessage, {
+      buildSyncDebugFailure("pull", trigger, writeErrorMessage, {
+        direction: "pull",
         category: "FILE_SYSTEM_ERROR",
       }),
       { title: writeErrorMessage }

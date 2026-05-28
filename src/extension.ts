@@ -24,9 +24,8 @@ import { startScheduler, stopScheduler } from "./scheduler.js";
 import { determineSyncAction } from "./scheduler.js";
 import { getLogger, loadSyncState } from "./diagnostics.js";
 import {
-  readExtensionVersion,
+  buildSyncDebugFailure,
   showSyncFailureWithDebug,
-  type SyncDebugFailure,
 } from "./sync-debug.js";
 import { initializeSidebar } from "./sidebar/index.js";
 import { initializeStatusBar, updateStatusBar } from "./statusbar.js";
@@ -252,20 +251,6 @@ export function deactivate(): void {
   stopScheduler();
 }
 
-function buildSyncNowDebugFailure(
-  message: string,
-  extra?: Pick<SyncDebugFailure, "category" | "statusCode" | "conflictCount">
-): SyncDebugFailure {
-  return {
-    operation: "syncNow",
-    trigger: "manual",
-    message,
-    extensionVersion: readExtensionVersion(),
-    platform: process.platform,
-    ...extra,
-  };
-}
-
 export async function executeSyncNow(
   context: vscode.ExtensionContext
 ): Promise<void> {
@@ -295,7 +280,7 @@ export async function executeSyncNow(
         const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them first.`;
         await showSyncFailureWithDebug(
           context,
-          buildSyncNowDebugFailure(conflictMessage, {
+          buildSyncDebugFailure("syncNow", "manual", conflictMessage, {
             category: "CONFLICT",
             conflictCount: result.keys.length,
           }),
@@ -308,7 +293,9 @@ export async function executeSyncNow(
         const errorMessage = `Sync failed: ${result.reason}`;
         await showSyncFailureWithDebug(
           context,
-          buildSyncNowDebugFailure(result.reason, { category: result.reason }),
+          buildSyncDebugFailure("syncNow", "manual", result.reason, {
+            category: result.reason,
+          }),
           { title: errorMessage }
         );
         break;
@@ -322,7 +309,7 @@ export async function executeSyncNow(
     const errorMessage = `Sync failed: ${errMessage}`;
     await showSyncFailureWithDebug(
       context,
-      buildSyncNowDebugFailure(errMessage),
+      buildSyncDebugFailure("syncNow", "manual", errMessage),
       { title: errorMessage }
     );
   }

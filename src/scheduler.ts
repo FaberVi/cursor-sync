@@ -10,9 +10,8 @@ import { enumerateSyncFiles } from "./paths.js";
 import { computeChecksum } from "./packaging.js";
 import { sendEvent } from "./analytics.js";
 import {
-  readExtensionVersion,
+  buildSyncDebugFailure,
   showSyncFailureWithDebug,
-  type SyncDebugFailure,
 } from "./sync-debug.js";
 import type { Manifest } from "./types.js";
 
@@ -170,20 +169,6 @@ export const scheduledSyncActionResolver = {
   determineSyncAction,
 };
 
-function buildSchedulerDebugFailure(
-  message: string,
-  extra?: Pick<SyncDebugFailure, "category" | "statusCode" | "conflictCount">
-): SyncDebugFailure {
-  return {
-    operation: "scheduler",
-    trigger: "scheduled",
-    message,
-    extensionVersion: readExtensionVersion(),
-    platform: process.platform,
-    ...extra,
-  };
-}
-
 export async function scheduledTick(
   context: vscode.ExtensionContext
 ): Promise<void> {
@@ -251,7 +236,7 @@ export async function scheduledTick(
         });
         await showSyncFailureWithDebug(
           context,
-          buildSchedulerDebugFailure(conflictMessage, {
+          buildSyncDebugFailure("scheduler", "scheduled", conflictMessage, {
             category: "CONFLICT",
             conflictCount: result.keys.length,
           }),
@@ -268,7 +253,9 @@ export async function scheduledTick(
         sendEvent(context, "scheduled_sync_skipped", { reason: result.reason });
         await showSyncFailureWithDebug(
           context,
-          buildSchedulerDebugFailure(result.reason, { category: result.reason }),
+          buildSyncDebugFailure("scheduler", "scheduled", result.reason, {
+            category: result.reason,
+          }),
           { title: errorMessage }
         );
         break;
@@ -283,7 +270,7 @@ export async function scheduledTick(
     const errorMessage = `Scheduled sync failed: ${errMessage}`;
     await showSyncFailureWithDebug(
       context,
-      buildSchedulerDebugFailure(errMessage),
+      buildSyncDebugFailure("scheduler", "scheduled", errMessage),
       { title: errorMessage }
     );
   }

@@ -12,9 +12,8 @@ import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
 import {
-  readExtensionVersion,
+  buildSyncDebugFailure,
   showSyncFailureWithDebug,
-  type SyncDebugFailure,
 } from "./sync-debug.js";
 import type { SyncState } from "./types.js";
 
@@ -24,22 +23,6 @@ let pushLock = false;
 
 export function isPushLocked(): boolean {
   return pushLock;
-}
-
-function buildPushDebugFailure(
-  trigger: PushTrigger,
-  message: string,
-  extra?: Pick<SyncDebugFailure, "category" | "statusCode" | "conflictCount">
-): SyncDebugFailure {
-  return {
-    operation: "push",
-    direction: "push",
-    trigger,
-    message,
-    extensionVersion: readExtensionVersion(),
-    platform: process.platform,
-    ...extra,
-  };
 }
 
 export async function executePush(
@@ -83,9 +66,10 @@ async function doPush(
   if (!(await validateStoredToken(context))) {
     const token = await requireToken(context);
     if (!token) {
-      await showSyncFailureWithDebug(
+      void showSyncFailureWithDebug(
         context,
-        buildPushDebugFailure(trigger, authFailedMessage, {
+        buildSyncDebugFailure("push", trigger, authFailedMessage, {
+          direction: "push",
           category: "AUTH_FAILED",
         }),
         { title: authFailedMessage }
@@ -98,9 +82,10 @@ async function doPush(
 
   const token = await requireToken(context);
   if (!token) {
-    await showSyncFailureWithDebug(
+    void showSyncFailureWithDebug(
       context,
-      buildPushDebugFailure(trigger, authFailedMessage, {
+      buildSyncDebugFailure("push", trigger, authFailedMessage, {
+        direction: "push",
         category: "AUTH_FAILED",
       }),
       { title: authFailedMessage }
@@ -123,9 +108,10 @@ async function doPush(
       });
       if (unresolved.length > 0) {
         const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pushing.`;
-        await showSyncFailureWithDebug(
+        void showSyncFailureWithDebug(
           context,
-          buildPushDebugFailure(trigger, conflictMessage, {
+          buildSyncDebugFailure("push", trigger, conflictMessage, {
+            direction: "push",
             category: "CONFLICT",
             conflictCount: unresolved.length,
           }),
@@ -170,9 +156,10 @@ async function doPush(
       client.createGist(gistFiles, "Cursor Sync - Settings Backup")
     );
     if (!result.ok) {
-      await showSyncFailureWithDebug(
+      void showSyncFailureWithDebug(
         context,
-        buildPushDebugFailure(trigger, result.error.message, {
+        buildSyncDebugFailure("push", trigger, result.error.message, {
+          direction: "push",
           category: result.error.category,
           statusCode: result.error.statusCode,
         }),
@@ -220,9 +207,10 @@ async function doPush(
       client.updateGist(gistId!, updatePayload)
     );
     if (!result.ok) {
-      await showSyncFailureWithDebug(
+      void showSyncFailureWithDebug(
         context,
-        buildPushDebugFailure(trigger, result.error.message, {
+        buildSyncDebugFailure("push", trigger, result.error.message, {
+          direction: "push",
           category: result.error.category,
           statusCode: result.error.statusCode,
         }),

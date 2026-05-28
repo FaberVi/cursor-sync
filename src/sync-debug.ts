@@ -48,6 +48,24 @@ export function readExtensionVersion(): string {
   return packageJson.version;
 }
 
+export function buildSyncDebugFailure(
+  operation: SyncDebugOperation,
+  trigger: SyncDebugTrigger,
+  message: string,
+  extra?: Partial<
+    Pick<SyncDebugFailure, "direction" | "category" | "statusCode" | "conflictCount">
+  >
+): SyncDebugFailure {
+  return {
+    operation,
+    trigger,
+    message,
+    extensionVersion: readExtensionVersion(),
+    platform: process.platform,
+    ...extra,
+  };
+}
+
 export function sanitizeSyncDebugMessage(message: string): string {
   return message
     .replace(GITHUB_TOKEN_PATTERN, "[REDACTED_TOKEN]")
