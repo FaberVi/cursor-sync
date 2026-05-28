@@ -26,6 +26,19 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def cursor_disk_kv_value_as_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, memoryview):
+        value = bytes(value)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.decode("utf-8", errors="replace")
+    return None
+
+
 def escape_sql_literal(value: str) -> str:
     return value.replace("'", "''")
 
@@ -587,10 +600,11 @@ def count_tool_bubbles_in_global_db(
             return None
         count = 0
         for (value,) in cur.fetchall():
-            if not isinstance(value, str):
+            text = cursor_disk_kv_value_as_text(value)
+            if text is None:
                 continue
             try:
-                if json.loads(value).get("toolFormerData"):
+                if json.loads(text).get("toolFormerData"):
                     count += 1
             except json.JSONDecodeError:
                 pass
