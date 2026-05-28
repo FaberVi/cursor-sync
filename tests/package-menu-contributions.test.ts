@@ -26,10 +26,12 @@ describe("package menu contributions", () => {
     const pkg = readPackageJson();
     expect(pkg.contributes.menus["editor/title"]).toContainEqual({
       command: "cursorSync.exportCurrentChatBundle",
+      when: "resourceScheme == 'cursor.composer'",
       group: "navigation",
     });
     expect(pkg.contributes.menus["editor/title/context"]).toContainEqual({
       command: "cursorSync.exportCurrentChatBundle",
+      when: "resourceScheme == 'cursor.composer'",
       group: "navigation",
     });
   });
