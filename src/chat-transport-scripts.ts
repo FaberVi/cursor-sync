@@ -7,15 +7,21 @@ export type TransportChatScriptName =
   | "cursor_chat_io.py"
   | "cursor_composer_bridge.py";
 
-export async function resolveTransportChatScript(
+/** User-global override only; workspace/folder settings cannot redirect Python execution. */
+export function getUserTransportChatScriptDir(): string | undefined {
+  const inspect = vscode.workspace
+    .getConfiguration("cursorSync")
+    .inspect<string>("chatImport.transportChatScriptDir");
+  const dir = inspect?.globalValue?.trim();
+  return dir || undefined;
+}
+
+function buildTransportChatScriptCandidates(
   scriptName: TransportChatScriptName,
   extensionPath?: string
-): Promise<string | null> {
-  const overrideDir = vscode.workspace
-    .getConfiguration("cursorSync")
-    .get<string>("chatImport.transportChatScriptDir");
-
+): string[] {
   const candidates: string[] = [];
+  const overrideDir = getUserTransportChatScriptDir();
 
   if (overrideDir) {
     candidates.push(path.join(overrideDir, scriptName));
@@ -33,6 +39,10 @@ export async function resolveTransportChatScript(
     path.join(process.cwd(), "resources", "transport-chat", "scripts", scriptName)
   );
 
+  return candidates;
+}
+
+async function resolveScriptFromCandidates(candidates: string[]): Promise<string | null> {
   for (const candidate of candidates) {
     try {
       await fs.access(candidate);
@@ -42,6 +52,21 @@ export async function resolveTransportChatScript(
     }
   }
   return null;
+}
+
+export async function resolveTransportChatScript(
+  scriptName: TransportChatScriptName,
+  extensionPath?: string
+): Promise<string | null> {
+  return resolveScriptFromCandidates(
+    buildTransportChatScriptCandidates(scriptName, extensionPath)
+  );
+}
+
+export async function resolveComposerBridgeScript(
+  extensionPath?: string
+): Promise<string | null> {
+  return resolveTransportChatScript("cursor_composer_bridge.py", extensionPath);
 }
 
 export interface RunPythonDiskImportOptions {

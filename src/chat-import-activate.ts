@@ -6,6 +6,7 @@ import * as vscode from "vscode";
 import type { ChatBundle } from "./chat-persistence.js";
 import { bundleToPartialState, type PartialState } from "./chat-partial-state.js";
 import type { WorkspaceContext } from "./chat-workspace-context.js";
+import { resolveComposerBridgeScript } from "./chat-transport-scripts.js";
 
 export const CREATE_COMPOSER_COMMAND_ID = "composer.createComposer";
 export const COMPOSER_GET_HANDLE_COMMAND_ID = "composer.getComposerHandleById";
@@ -534,58 +535,7 @@ export function pingServerProbe(
   );
 }
 
-export async function resolveComposerBridgeScript(
-  extensionPath?: string
-): Promise<string | null> {
-  const overrideDir = vscode.workspace
-    .getConfiguration("cursorSync")
-    .get<string>("chatImport.transportChatScriptDir");
-
-  const candidates: string[] = [];
-
-  if (overrideDir) {
-    candidates.push(path.join(overrideDir, "cursor_composer_bridge.py"));
-  }
-
-  if (extensionPath) {
-    candidates.push(
-      path.join(
-        extensionPath,
-        "resources",
-        "transport-chat",
-        "scripts",
-        "cursor_composer_bridge.py"
-      )
-    );
-    candidates.push(
-      path.join(extensionPath, "scripts", "cursor_composer_bridge.py")
-    );
-    candidates.push(
-      path.join(extensionPath, "..", "scripts", "cursor_composer_bridge.py")
-    );
-  }
-  candidates.push(
-    path.join(process.cwd(), "scripts", "cursor_composer_bridge.py")
-  );
-  candidates.push(
-    path.join(
-      process.cwd(),
-      "resources",
-      "transport-chat",
-      "scripts",
-      "cursor_composer_bridge.py"
-    )
-  );
-  for (const candidate of candidates) {
-    try {
-      await fs.access(candidate);
-      return path.resolve(candidate);
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
+export { resolveComposerBridgeScript };
 
 export function parseBridgeStdout(stdout: string): string | null {
   const trimmed = stdout.trim();

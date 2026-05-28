@@ -13,6 +13,7 @@ from cursor_chat_io import (  # noqa: E402
     build_cursor_disk_kv_rows_from_bundle,
     count_tool_bubbles_in_global_db,
     export_disk_kv_snapshot,
+    is_disk_kv_key_in_conversation_scope,
     merge_cursor_disk_kv,
     remap_disk_kv_snapshot_for_destination,
     verify_checks_all_ok,
@@ -90,6 +91,51 @@ def _tool_bubble_count(db_path: Path) -> int:
         return count
     finally:
         conn.close()
+
+
+def test_remap_disk_kv_snapshot_drops_out_of_scope_keys(tmp_path):
+    source_db = tmp_path / "source.vscdb"
+    _seed_global_db(source_db)
+    snap = export_disk_kv_snapshot(source_db, CID)
+    assert snap is not None
+    other_cid = "00000000-0000-4000-8000-000000000099"
+    snap["rows"].append(
+        {
+            "key": f"composerData:{other_cid}",
+            "value": "{}",
+            "checksum": "0" * 64,
+        }
+    )
+    rows = remap_disk_kv_snapshot_for_destination(snap, CID, DEST_WORKSPACE_IDENTIFIER)
+    assert f"composerData:{other_cid}" not in rows
+    assert f"composerData:{CID}" in rows
+
+
+def test_merge_cursor_disk_kv_filters_out_of_scope_keys(tmp_path):
+    dest_db = tmp_path / "dest-global.vscdb"
+    conn = sqlite3.connect(dest_db)
+    conn.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT);")
+    conn.commit()
+    conn.close()
+    other_cid = "00000000-0000-4000-8000-000000000099"
+    rows = {
+        f"composerData:{CID}": "{}",
+        f"composerData:{other_cid}": '{"evil": true}',
+    }
+    merge_cursor_disk_kv(dest_db, rows, dry_run=False, conversation_id=CID)
+    conn = sqlite3.connect(dest_db)
+    try:
+        keys = {r[0] for r in conn.execute("SELECT key FROM cursorDiskKV;")}
+    finally:
+        conn.close()
+    assert f"composerData:{CID}" in keys
+    assert f"composerData:{other_cid}" not in keys
+
+
+def test_is_disk_kv_key_in_conversation_scope():
+    assert is_disk_kv_key_in_conversation_scope(f"composerData:{CID}", CID)
+    assert is_disk_kv_key_in_conversation_scope(f"bubbleId:{CID}:abc", CID)
+    assert not is_disk_kv_key_in_conversation_scope("composerData:other", CID)
 
 
 def test_remap_disk_kv_snapshot_remaps_workspace_identifier(tmp_path):

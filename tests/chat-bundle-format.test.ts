@@ -71,7 +71,9 @@ describe("chat-bundle-format", () => {
       schemaVersion: 2,
       diskKvSnapshot: {
         sourceStateDbPath: "/tmp/state.vscdb",
-        rows: [{ key: "composerData:abc", value: "{}", checksum: "a".repeat(64) }],
+        rows: [
+          { key: "composerData:conv-1", value: "{}", checksum: "a".repeat(64) },
+        ],
         rowCount: 1,
         toolBubbleCount: 0,
       },
@@ -102,6 +104,23 @@ describe("chat-bundle-format", () => {
     expect(() => parseChatBundleOrCollection(raw)).toThrow(/unsupported schema version/i);
   });
 
+  it("rejects diskKvSnapshot keys outside conversation scope", async () => {
+    const { parseChatBundleOrCollection } = await import("../src/chat-bundle-format.js");
+    const raw = JSON.stringify({
+      ...singleBundle,
+      schemaVersion: 2,
+      diskKvSnapshot: {
+        sourceStateDbPath: "/tmp/state.vscdb",
+        rows: [
+          { key: "composerData:other-conv", value: "{}", checksum: "a".repeat(64) },
+        ],
+        rowCount: 1,
+        toolBubbleCount: 0,
+      },
+    });
+    expect(() => parseChatBundleOrCollection(raw)).toThrow(/not scoped to conversationId/i);
+  });
+
   it("rejects invalid diskKvSnapshot rows", async () => {
     const { parseChatBundleOrCollection } = await import("../src/chat-bundle-format.js");
     const raw = JSON.stringify({
@@ -109,7 +128,7 @@ describe("chat-bundle-format", () => {
       schemaVersion: 2,
       diskKvSnapshot: {
         sourceStateDbPath: "/tmp/state.vscdb",
-        rows: [{ key: "composerData:abc", value: 42, checksum: "x" }],
+        rows: [{ key: "composerData:conv-1", value: 42, checksum: "x" }],
         rowCount: 1,
         toolBubbleCount: 0,
       },

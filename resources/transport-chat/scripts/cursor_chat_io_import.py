@@ -440,7 +440,9 @@ def import_bundle(
             )
         else:
             disk_kv_rows = build_cursor_disk_kv_rows_from_bundle(bundle, cid, ws_identifier)
-        ok_kv, kv_warnings = merge_cursor_disk_kv(global_db, disk_kv_rows, dry_run=dry_run)
+        ok_kv, kv_warnings = merge_cursor_disk_kv(
+            global_db, disk_kv_rows, dry_run=dry_run, conversation_id=cid
+        )
         warnings.extend(kv_warnings)
         if ok_kv and not dry_run:
             print(

@@ -1,9 +1,20 @@
 import * as vscode from "vscode";
 import type { ChatBundle, ChatBundleDiskKvSnapshot } from "./chat-persistence.js";
 
+export function isDiskKvKeyInConversationScope(
+  key: string,
+  conversationId: string
+): boolean {
+  if (key === `composerData:${conversationId}`) {
+    return true;
+  }
+  return key.startsWith(`bubbleId:${conversationId}:`);
+}
+
 function validateDiskKvSnapshot(
   snapshot: unknown,
-  label: string
+  label: string,
+  conversationId: string
 ): ChatBundleDiskKvSnapshot | undefined {
   if (snapshot === undefined || snapshot === null) {
     return undefined;
@@ -25,6 +36,12 @@ function validateDiskKvSnapshot(
     const r = row as Record<string, unknown>;
     if (typeof r.key !== "string" || !r.key) {
       throw new Error(`${label}: diskKvSnapshot.rows[${i}].key must be a non-empty string.`);
+    }
+    if (!isDiskKvKeyInConversationScope(r.key, conversationId)) {
+      throw new Error(
+        `${label}: diskKvSnapshot.rows[${i}].key is not scoped to conversationId ` +
+          `(allowed: composerData:{id}, bubbleId:{id}:*).`
+      );
     }
     if (typeof r.value !== "string") {
       throw new Error(`${label}: diskKvSnapshot.rows[${i}].value must be a string.`);
@@ -78,7 +95,11 @@ function validateSingleBundle(bundle: Partial<ChatBundle>, label: string): ChatB
   if (!bundle.conversationId || typeof bundle.conversationId !== "string") {
     throw new Error(`${label}: missing conversationId.`);
   }
-  const diskKvSnapshot = validateDiskKvSnapshot(bundle.diskKvSnapshot, label);
+  const diskKvSnapshot = validateDiskKvSnapshot(
+    bundle.diskKvSnapshot,
+    label,
+    bundle.conversationId
+  );
   const validated: ChatBundle = {
     ...(bundle as ChatBundle),
     schemaVersion: schemaVersion as 1 | 2,

@@ -305,7 +305,7 @@
         "cursorSync.chatImport.transportChatScriptDir": {
           "type": "string",
           "default": "",
-          "description": "Override directory for transport-chat scripts (cursor_chat_io.py, cursor_composer_bridge.py). Empty = use the extension's bundled scripts."
+          "description": "User-level override directory for transport-chat scripts (cursor_chat_io.py, cursor_composer_bridge.py). Workspace settings are ignored for security. Empty = use the extension's bundled scripts."
         }
       }
     }

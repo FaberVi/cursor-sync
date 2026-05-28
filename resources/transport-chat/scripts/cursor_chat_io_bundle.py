@@ -277,6 +277,12 @@ def iter_conversation_jsonl_files(conversation_dir: Path) -> list[Path]:
     return sorted(conversation_dir.rglob("*.jsonl"))
 
 
+def is_disk_kv_key_in_conversation_scope(key: str, conversation_id: str) -> bool:
+    if key == f"composerData:{conversation_id}":
+        return True
+    return key.startswith(f"bubbleId:{conversation_id}:")
+
+
 def export_disk_kv_snapshot(global_db: Path, conversation_id: str) -> dict[str, Any] | None:
     if not global_db.is_file():
         return None
@@ -663,6 +669,8 @@ def remap_disk_kv_snapshot_for_destination(
         key = str(row.get("key", ""))
         value = str(row.get("value", ""))
         if not key:
+            continue
+        if not is_disk_kv_key_in_conversation_scope(key, conversation_id):
             continue
         if key == f"composerData:{conversation_id}" and workspace_identifier:
             try:
@@ -1293,8 +1301,15 @@ def merge_cursor_disk_kv(
     db_path: Path,
     rows: dict[str, str],
     dry_run: bool,
+    conversation_id: str | None = None,
 ) -> tuple[bool, list[str]]:
     warnings: list[str] = []
+    if conversation_id:
+        scoped: dict[str, str] = {}
+        for key, value in rows.items():
+            if is_disk_kv_key_in_conversation_scope(key, conversation_id):
+                scoped[key] = value
+        rows = scoped
     if not rows:
         warnings.append("No cursorDiskKV rows to write.")
         return False, warnings

@@ -17,6 +17,7 @@
 
 ### Fixed
 - Gist chat import tests mock `showWarningMessage` for text-only Layer 4 fidelity warnings.
+- **Security**: `diskKvSnapshot` import validates and filters `cursorDiskKV` keys to `composerData:{conversationId}` and `bubbleId:{conversationId}:*` (TS + Python). `transportChatScriptDir` honors user-global settings only (workspace overrides cannot redirect Python).
 
 ## v0.7.1
 
