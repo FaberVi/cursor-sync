@@ -5,6 +5,20 @@
 ### Added
 - **Chat tab export**: `Cursor Sync: Export into Bundle` on chat editor tab title and context menus (`cursorSync.exportCurrentChatBundle`) exports the clicked tab's conversation without the multi-chat picker.
 
+## v0.7.3
+
+### Added
+- **Debug with Cursor** on sync failure toasts (push, pull, Sync Now, scheduled sync): opens Composer with a sanitized debug prompt, or copies the prompt to the clipboard when Composer prefill is unavailable.
+- `sync-debug.ts`: builds failure context for debugging (tokens, gist IDs, and paths redacted in prompts).
+
+### Changed
+- `executeSyncNow` exported; conflict/error/exception paths show a single debug toast without duplicating push/pull failure notifications.
+- Scheduled sync surfaces debug toasts for conflict/error/exception; skips routine outcomes (`none`, in-progress, mocked `false` from push/pull).
+
+### Fixed
+- Sync failure debug toasts are fire-and-forget so push/pull locks and Sync Now / scheduled sync are not blocked while a notification is open.
+- Cached extension version read and sanitized `category` in debug prompts.
+
 ## v0.7.2
 
 ### Added

@@ -11,6 +11,10 @@ import { generateExtensionsJson } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
+import {
+  buildSyncDebugFailure,
+  showSyncFailureWithDebug,
+} from "./sync-debug.js";
 import type { SyncState } from "./types.js";
 
 export type PushTrigger = "manual" | "scheduled";
@@ -56,9 +60,20 @@ async function doPush(
   const logger = getLogger();
   logger.appendLine(`[${new Date().toISOString()}] Push started`);
 
+  const authFailedMessage =
+    "GitHub token not configured. Configure your token to sync.";
+
   if (!(await validateStoredToken(context))) {
     const token = await requireToken(context);
     if (!token) {
+      void showSyncFailureWithDebug(
+        context,
+        buildSyncDebugFailure("push", trigger, authFailedMessage, {
+          direction: "push",
+          category: "AUTH_FAILED",
+        }),
+        { title: authFailedMessage }
+      );
       logger.appendLine(`[${new Date().toISOString()}] Push failed: AUTH_FAILED`);
       sendEvent(context, "sync_failed", { direction: "push", reason: "AUTH_FAILED", trigger });
       return false;
@@ -67,6 +82,15 @@ async function doPush(
 
   const token = await requireToken(context);
   if (!token) {
+    void showSyncFailureWithDebug(
+      context,
+      buildSyncDebugFailure("push", trigger, authFailedMessage, {
+        direction: "push",
+        category: "AUTH_FAILED",
+      }),
+      { title: authFailedMessage }
+    );
+    logger.appendLine(`[${new Date().toISOString()}] Push failed: AUTH_FAILED`);
     sendEvent(context, "sync_failed", { direction: "push", reason: "AUTH_FAILED", trigger });
     return false;
   }
@@ -83,8 +107,15 @@ async function doPush(
         return !resolution || resolution === "skip";
       });
       if (unresolved.length > 0) {
-        vscode.window.showWarningMessage(
-          `${unresolved.length} conflict(s) detected. Resolve them before pushing.`
+        const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pushing.`;
+        void showSyncFailureWithDebug(
+          context,
+          buildSyncDebugFailure("push", trigger, conflictMessage, {
+            direction: "push",
+            category: "CONFLICT",
+            conflictCount: unresolved.length,
+          }),
+          { level: "warning", title: conflictMessage }
         );
         logger.appendLine(`[${new Date().toISOString()}] Push blocked: CONFLICT`);
         sendEvent(context, "sync_failed", { direction: "push", reason: "CONFLICT", trigger });
@@ -125,7 +156,15 @@ async function doPush(
       client.createGist(gistFiles, "Cursor Sync - Settings Backup")
     );
     if (!result.ok) {
-      vscode.window.showErrorMessage(`Push failed: ${result.error.message}`);
+      void showSyncFailureWithDebug(
+        context,
+        buildSyncDebugFailure("push", trigger, result.error.message, {
+          direction: "push",
+          category: result.error.category,
+          statusCode: result.error.statusCode,
+        }),
+        { title: `Push failed: ${result.error.message}` }
+      );
       logger.appendLine(
         `[${new Date().toISOString()}] Push failed: ${result.error.category} - ${result.error.message}`
       );
@@ -168,7 +207,15 @@ async function doPush(
       client.updateGist(gistId!, updatePayload)
     );
     if (!result.ok) {
-      vscode.window.showErrorMessage(`Push failed: ${result.error.message}`);
+      void showSyncFailureWithDebug(
+        context,
+        buildSyncDebugFailure("push", trigger, result.error.message, {
+          direction: "push",
+          category: result.error.category,
+          statusCode: result.error.statusCode,
+        }),
+        { title: `Push failed: ${result.error.message}` }
+      );
       logger.appendLine(
         `[${new Date().toISOString()}] Push failed: ${result.error.category} - ${result.error.message}`
       );

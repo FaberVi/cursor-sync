@@ -9,6 +9,10 @@ import { loadSyncState, getLogger } from "./diagnostics.js";
 import { enumerateSyncFiles } from "./paths.js";
 import { computeChecksum } from "./packaging.js";
 import { sendEvent } from "./analytics.js";
+import {
+  buildSyncDebugFailure,
+  showSyncFailureWithDebug,
+} from "./sync-debug.js";
 import type { Manifest } from "./types.js";
 
 const MIN_INTERVAL_MINUTES = 5;
@@ -161,7 +165,13 @@ export async function determineSyncAction(
   return { action: "none" };
 }
 
-async function scheduledTick(context: vscode.ExtensionContext): Promise<void> {
+export const scheduledSyncActionResolver = {
+  determineSyncAction,
+};
+
+export async function scheduledTick(
+  context: vscode.ExtensionContext
+): Promise<void> {
   const logger = getLogger();
 
   if (isPushLocked() || isPullLocked()) {
@@ -177,7 +187,7 @@ async function scheduledTick(context: vscode.ExtensionContext): Promise<void> {
   );
 
   try {
-    const result = await determineSyncAction(context);
+    const result = await scheduledSyncActionResolver.determineSyncAction(context);
 
     switch (result.action) {
       case "none":
@@ -208,13 +218,15 @@ async function scheduledTick(context: vscode.ExtensionContext): Promise<void> {
           `[${new Date().toISOString()}] Scheduled sync: local and remote changes detected, pulling then pushing`
         );
         const pullOk = await executePull(context, { trigger: "scheduled" });
-        if (pullOk) {
-          await executePush(context, { trigger: "scheduled" });
+        if (!pullOk) {
+          break;
         }
+        await executePush(context, { trigger: "scheduled" });
         break;
       }
 
-      case "conflict":
+      case "conflict": {
+        const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them first.`;
         logger.appendLine(
           `[${new Date().toISOString()}] Scheduled sync skipped: conflicts on [${result.keys.join(", ")}]`
         );
@@ -222,19 +234,44 @@ async function scheduledTick(context: vscode.ExtensionContext): Promise<void> {
           reason: "conflict",
           conflict_count: result.keys.length,
         });
+        void showSyncFailureWithDebug(
+          context,
+          buildSyncDebugFailure("scheduler", "scheduled", conflictMessage, {
+            category: "CONFLICT",
+            conflictCount: result.keys.length,
+          }),
+          { level: "warning", title: conflictMessage }
+        );
         break;
+      }
 
-      case "error":
+      case "error": {
+        const errorMessage = `Scheduled sync failed: ${result.reason}`;
         logger.appendLine(
           `[${new Date().toISOString()}] Scheduled sync skipped: ${result.reason}`
         );
         sendEvent(context, "scheduled_sync_skipped", { reason: result.reason });
+        void showSyncFailureWithDebug(
+          context,
+          buildSyncDebugFailure("scheduler", "scheduled", result.reason, {
+            category: result.reason,
+          }),
+          { title: errorMessage }
+        );
         break;
+      }
     }
   } catch (err) {
+    const errMessage = err instanceof Error ? err.message : String(err);
     logger.appendLine(
-      `[${new Date().toISOString()}] Scheduled sync failed: ${err instanceof Error ? err.message : String(err)}`
+      `[${new Date().toISOString()}] Scheduled sync failed: ${errMessage}`
     );
     sendEvent(context, "scheduled_sync_failed", { reason: "exception" });
+    const errorMessage = `Scheduled sync failed: ${errMessage}`;
+    void showSyncFailureWithDebug(
+      context,
+      buildSyncDebugFailure("scheduler", "scheduled", errMessage),
+      { title: errorMessage }
+    );
   }
 }

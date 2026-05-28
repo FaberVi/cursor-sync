@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .worktrees/
+docs/superpowers/specs/
+docs/superpowers/plans/
 resources/*.db-shm
 resources/*.db-wal
 *.vsix

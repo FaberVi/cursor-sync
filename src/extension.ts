@@ -23,6 +23,10 @@ import { executeReset } from "./reset.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { determineSyncAction } from "./scheduler.js";
 import { getLogger, loadSyncState } from "./diagnostics.js";
+import {
+  buildSyncDebugFailure,
+  showSyncFailureWithDebug,
+} from "./sync-debug.js";
 import { initializeSidebar } from "./sidebar/index.js";
 import { initializeStatusBar, updateStatusBar } from "./statusbar.js";
 import { getOrCreateClientId } from "./analytics.js";
@@ -247,7 +251,9 @@ export function deactivate(): void {
   stopScheduler();
 }
 
-async function executeSyncNow(context: vscode.ExtensionContext): Promise<void> {
+export async function executeSyncNow(
+  context: vscode.ExtensionContext
+): Promise<void> {
   const logger = getLogger();
   logger.appendLine(`[${new Date().toISOString()}] Sync Now triggered`);
 
@@ -270,22 +276,41 @@ async function executeSyncNow(context: vscode.ExtensionContext): Promise<void> {
         }
         break;
       }
-      case "conflict":
-        vscode.window.showWarningMessage(
-          `${result.keys.length} conflict(s) detected. Resolve them first.`
+      case "conflict": {
+        const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them first.`;
+        void showSyncFailureWithDebug(
+          context,
+          buildSyncDebugFailure("syncNow", "manual", conflictMessage, {
+            category: "CONFLICT",
+            conflictCount: result.keys.length,
+          }),
+          { level: "warning", title: conflictMessage }
         );
         vscode.commands.executeCommand("cursorSync.resolveConflicts");
         break;
-      case "error":
-        vscode.window.showErrorMessage(`Sync failed: ${result.reason}`);
+      }
+      case "error": {
+        const errorMessage = `Sync failed: ${result.reason}`;
+        void showSyncFailureWithDebug(
+          context,
+          buildSyncDebugFailure("syncNow", "manual", result.reason, {
+            category: result.reason,
+          }),
+          { title: errorMessage }
+        );
         break;
+      }
     }
   } catch (err) {
+    const errMessage = err instanceof Error ? err.message : String(err);
     logger.appendLine(
-      `[${new Date().toISOString()}] Sync Now failed: ${err instanceof Error ? err.message : String(err)}`
+      `[${new Date().toISOString()}] Sync Now failed: ${errMessage}`
     );
-    vscode.window.showErrorMessage(
-      `Sync failed: ${err instanceof Error ? err.message : String(err)}`
+    const errorMessage = `Sync failed: ${errMessage}`;
+    void showSyncFailureWithDebug(
+      context,
+      buildSyncDebugFailure("syncNow", "manual", errMessage),
+      { title: errorMessage }
     );
   }
 }
