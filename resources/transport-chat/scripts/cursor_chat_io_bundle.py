@@ -291,7 +291,7 @@ def export_disk_kv_snapshot(global_db: Path, conversation_id: str) -> dict[str, 
             (key_composer, prefix_bubble + "%"),
         )
         for key, value in cur.fetchall():
-            text = cursor_disk_kv_value_as_text(value)
+            text = sqlite_value_as_text(value)
             if text is None:
                 continue
             rows.append(
@@ -1370,9 +1370,9 @@ def merge_state_db(
         existing_data: str | None = None
         for key, value in cur.fetchall():
             if key == "composer.composerHeaders":
-                existing_headers = item_table_value_as_text(value)
+                existing_headers = sqlite_value_as_text(value)
             if key == "composer.composerData":
-                existing_data = item_table_value_as_text(value)
+                existing_data = sqlite_value_as_text(value)
 
         headers_payload = headers_payload_for_import(bundle)
         cid = bundle.get("conversationId")

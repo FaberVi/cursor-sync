@@ -26,7 +26,7 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def cursor_disk_kv_value_as_text(value: Any) -> str | None:
+def sqlite_value_as_text(value: Any) -> str | None:
     if isinstance(value, str):
         return value
     if isinstance(value, memoryview):
@@ -36,13 +36,6 @@ def cursor_disk_kv_value_as_text(value: Any) -> str | None:
             return value.decode("utf-8")
         except UnicodeDecodeError:
             return value.decode("utf-8", errors="replace")
-    return None
-
-
-def item_table_value_as_text(value: Any) -> str | None:
-    text = cursor_disk_kv_value_as_text(value)
-    if text is not None:
-        return text
     if isinstance(value, (dict, list)):
         try:
             return json.dumps(value)
@@ -329,15 +322,14 @@ def read_composer_rows(db_path: Path) -> dict[str, Any]:
         out: dict[str, Any] = {}
         for key, value in cur.fetchall():
             short = key.replace("composer.", "", 1)
-            if isinstance(value, bytes):
-                value = value.decode("utf-8", errors="replace")
-            if isinstance(value, str):
-                try:
-                    out[short] = json.loads(value)
-                except json.JSONDecodeError:
-                    out[short] = value
-            else:
+            raw = sqlite_value_as_text(value)
+            if raw is None:
                 out[short] = value
+                continue
+            try:
+                out[short] = json.loads(raw)
+            except json.JSONDecodeError:
+                out[short] = raw
         return out
     finally:
         conn.close()
@@ -353,7 +345,7 @@ def read_composer_header_entry(db_path: Path, conversation_id: str) -> dict[str,
         conn.close()
     if not row or not row[0]:
         return None
-    raw = item_table_value_as_text(row[0])
+    raw = sqlite_value_as_text(row[0])
     if not raw:
         return None
     try:
@@ -618,7 +610,7 @@ def count_tool_bubbles_in_global_db(
             return None
         count = 0
         for (value,) in cur.fetchall():
-            text = cursor_disk_kv_value_as_text(value)
+            text = sqlite_value_as_text(value)
             if text is None:
                 continue
             try:
