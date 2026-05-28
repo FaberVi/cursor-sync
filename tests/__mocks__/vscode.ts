@@ -111,6 +111,16 @@ export const workspace = {
   onDidChangeConfiguration: () => ({ dispose: () => {} }),
 };
 
+export enum ProgressLocation {
+  Notification = 15,
+}
+
+let mockActiveTabInput: unknown;
+
+export function __setActiveTabInput(input: unknown): void {
+  mockActiveTabInput = input;
+}
+
 export const window = {
   createOutputChannel: (_name: string) => ({
     appendLine: (_msg: string) => {},
@@ -122,6 +132,20 @@ export const window = {
   showErrorMessage: async (_msg: string, ..._items: string[]) => undefined,
   showInputBox: async () => undefined,
   showQuickPick: async <T>(items: T[]) => items[0],
+  showSaveDialog: async () => undefined,
+  withProgress: async <T>(
+    _options: unknown,
+    task: (progress: { report: (_value: unknown) => void }) => PromiseLike<T> | T
+  ) => task({ report: () => {} }),
+  tabGroups: {
+    activeTabGroup: {
+      get activeTab() {
+        return mockActiveTabInput === undefined
+          ? undefined
+          : { input: mockActiveTabInput };
+      },
+    },
+  },
 };
 
 let registeredCommands = new Set<string>();

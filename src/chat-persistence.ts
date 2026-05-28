@@ -36,6 +36,10 @@ import {
 } from "./chat-bundle-format.js";
 import { pickChatsForExport, type ChatExportSelection } from "./chat-export-ux.js";
 import {
+  resolveChatEditorExportTarget,
+  type ChatEditorExportTargetResolution,
+} from "./chat-editor-target.js";
+import {
   bundleArtifactsDebug,
   composerPayloadDebug,
   loadChat,
@@ -282,20 +286,29 @@ export async function executeImportChatBundleActivate(
   );
 }
 
-export async function executeExportChatBundle(
-  context: vscode.ExtensionContext
+function chatEditorExportFailureMessage(
+  resolution: Exclude<ChatEditorExportTargetResolution, { ok: true }>
+): string {
+  if (resolution.reason === "not-chat") {
+    return "Open or right-click a Cursor chat tab to export that chat.";
+  }
+  if (resolution.reason === "store-not-found") {
+    return `Could not find local chat store for ${resolution.conversationId}.`;
+  }
+  return `Found chat ${resolution.conversationId} in multiple workspaces (${resolution.workspaceKeys.join(", ")}). Open the matching workspace and try again.`;
+}
+
+async function exportChatSelectionToBundleFile(
+  context: vscode.ExtensionContext,
+  selection: ChatExportSelection,
+  progressTitle = "Exporting chat bundle..."
 ): Promise<void> {
   const logger = getLogger();
-
-  const selection = await pickChatsForExport();
-  if (!selection) {
-    return;
-  }
 
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: "Exporting chat bundle...",
+      title: progressTitle,
       cancellable: false,
     },
     async (progress) => {
@@ -342,6 +355,33 @@ export async function executeExportChatBundle(
       }
     }
   );
+}
+
+export async function executeExportChatBundle(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  const selection = await pickChatsForExport();
+  if (!selection) {
+    return;
+  }
+
+  await exportChatSelectionToBundleFile(context, selection);
+}
+
+export async function executeExportCurrentChatBundle(
+  context: vscode.ExtensionContext,
+  target: unknown
+): Promise<void> {
+  const resolution = await resolveChatEditorExportTarget(target);
+  if (!resolution.ok) {
+    vscode.window.showWarningMessage(chatEditorExportFailureMessage(resolution));
+    return;
+  }
+
+  await exportChatSelectionToBundleFile(context, {
+    workspaceKey: resolution.target.workspaceKey,
+    conversationIds: [resolution.target.conversationId],
+  });
 }
 
 /** Transcript/sidebar/store only; schema v1. Layer 4 uses Python `build_bundle` (schema v2). */

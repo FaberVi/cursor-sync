@@ -6,32 +6,51 @@ export function resolveChatsRoot(): string {
   return path.join(os.homedir(), ".cursor", "chats");
 }
 
-export async function findStoreDbForConversation(
+async function storeDbExists(storePath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(storePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+export async function findWorkspaceKeysForConversation(
   conversationId: string
-): Promise<{ absolutePath: string; workspaceKey: string } | undefined> {
+): Promise<string[]> {
   let workspaceEntries: import("node:fs").Dirent[];
   try {
     workspaceEntries = await fs.readdir(resolveChatsRoot(), { withFileTypes: true });
   } catch {
+    return [];
+  }
+
+  const matches: string[] = [];
+  for (const workspaceEntry of workspaceEntries) {
+    if (!workspaceEntry.isDirectory()) continue;
+    const storePath = path.join(
+      resolveChatsRoot(),
+      workspaceEntry.name,
+      conversationId,
+      "store.db"
+    );
+    if (await storeDbExists(storePath)) {
+      matches.push(workspaceEntry.name);
+    }
+  }
+  return matches.sort((a, b) => a.localeCompare(b));
+}
+
+export async function findStoreDbForConversation(
+  conversationId: string
+): Promise<{ absolutePath: string; workspaceKey: string } | undefined> {
+  const workspaceKeys = await findWorkspaceKeysForConversation(conversationId);
+  const workspaceKey = workspaceKeys[0];
+  if (!workspaceKey) {
     return undefined;
   }
-
-  const sortedWorkspaceEntries = workspaceEntries
-    .filter((entry) => entry.isDirectory())
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  for (const workspaceEntry of sortedWorkspaceEntries) {
-    const candidate = path.join(resolveChatsRoot(), workspaceEntry.name, conversationId, "store.db");
-    try {
-      const stat = await fs.stat(candidate);
-      if (stat.isFile()) {
-        return {
-          absolutePath: candidate,
-          workspaceKey: workspaceEntry.name,
-        };
-      }
-    } catch {}
-  }
-
-  return undefined;
+  return {
+    absolutePath: path.join(resolveChatsRoot(), workspaceKey, conversationId, "store.db"),
+    workspaceKey,
+  };
 }
