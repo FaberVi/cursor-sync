@@ -6,7 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(
+    0,
+    str(Path(__file__).resolve().parents[1] / "resources" / "transport-chat" / "scripts"),
+)
 
 from cursor_chat_io import (  # noqa: E402
     bundle_to_partial_state,

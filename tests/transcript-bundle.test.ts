@@ -161,6 +161,18 @@ describe("transcript bundle helpers", () => {
     );
   });
 
+  it("maps subagent bundle paths to conversation-scoped sync keys", () => {
+    const projectKey = "home-user-dev-cursor-sync";
+    const conversationId = "conv-uuid";
+    const scoped = getConversationScopedRelativePath(
+      `${conversationId}/subagents/sub-111.jsonl`
+    );
+    expect(scoped).toBe("subagents/sub-111.jsonl");
+    expect(
+      bundleArtifactSyncKey(projectKey, conversationId, "transcript", scoped)
+    ).toBe(`artifacts/${projectKey}/${conversationId}/transcript/subagents/sub-111.jsonl`);
+  });
+
   it("uses deterministic artifact sync key paths for transcript store and sidebar kinds", () => {
     const projectKey = "home-user-dev-app";
     const conversationId = "conv-aaa";

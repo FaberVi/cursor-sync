@@ -253,6 +253,43 @@ describe("buildChatBundle scoped store lookup", () => {
     });
     expect(bundle.storeSnapshot).toBeNull();
   });
+
+  it("buildChatBundle includes subagent jsonl under subagents/", async () => {
+    const conversationId = "conv-with-subagents";
+    const projectKey = "proj-sub";
+    const transcriptDir = path.join(
+      tempHome,
+      ".cursor",
+      "projects",
+      projectKey,
+      "agent-transcripts",
+      conversationId
+    );
+    const subagentDir = path.join(transcriptDir, "subagents");
+    await fs.mkdir(subagentDir, { recursive: true });
+    await fs.writeFile(
+      path.join(transcriptDir, `${conversationId}.jsonl`),
+      '{"role":"user","content":"hello"}\n'
+    );
+    await fs.writeFile(
+      path.join(subagentDir, "sub-111.jsonl"),
+      '{"role":"assistant","content":"sub reply"}\n'
+    );
+
+    const { buildChatBundle } = await import("../src/chat-persistence.js");
+    const context = {
+      globalStorageUri: { fsPath: path.join(tempHome, "global-storage") },
+    } as import("vscode").ExtensionContext;
+    const { bundle } = await buildChatBundle(context, conversationId, { report: () => {} });
+
+    const rels = bundle.transcriptFiles.map((tf) => tf.relativePath).sort();
+    expect(rels).toContain(
+      `${projectKey}/agent-transcripts/${conversationId}/${conversationId}.jsonl`
+    );
+    expect(rels).toContain(
+      `${projectKey}/agent-transcripts/${conversationId}/subagents/sub-111.jsonl`
+    );
+  });
 });
 
 describe("restoreChatBundle disk parity", () => {

@@ -10,6 +10,7 @@ import {
   executeLoadChatLocal,
   executeImportChatBundle,
   executeExportChatBundle,
+  executeExportCurrentChatBundle,
   executeImportChatBundleActivate,
   executeVerifyChatImport,
 } from "./chat-persistence.js";
@@ -35,6 +36,7 @@ import {
   disposeActivationWatcher,
   registerActivationWatcher,
 } from "./chat-import-activate-watcher.js";
+import { executeInstallSkillTransportChat } from "./install-skill-transport-chat.js";
 let configListener: vscode.Disposable | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -149,6 +151,12 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.exportCurrentChatBundle", (target) =>
+      executeExportCurrentChatBundle(context, target)
+    )
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.importChatBundleActivate", () =>
       executeImportChatBundleActivate(context)
     )
@@ -169,6 +177,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.importChatFromGist", () =>
       executeImportChatFromGist(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.installSkillTransportChat", () =>
+      executeInstallSkillTransportChat(context)
     )
   );
 

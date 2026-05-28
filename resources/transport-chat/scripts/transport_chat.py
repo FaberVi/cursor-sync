@@ -28,6 +28,7 @@ from cursor_chat_io import (  # noqa: E402
     build_bundle,
     cursor_config_root,
     discover_conversations,
+    expected_tool_bubble_count_from_bundle,
     first_user_text,
     import_bundle,
     md5_folder_key,
@@ -252,6 +253,9 @@ def run_transport(args: argparse.Namespace) -> None:
                 ctx,
                 expect_rich_composer_data=False,
                 expect_store=bool(store_snap.get("content")),
+                expected_tool_bubble_count=expected_tool_bubble_count_from_bundle(
+                    bundle
+                ),
             )
             for c in checks:
                 print(c.format_line(), file=sys.stderr)
@@ -296,6 +300,7 @@ def run_transport(args: argparse.Namespace) -> None:
             ctx,
             expect_rich_composer_data=False,
             expect_store=bool(store_snap.get("content")),
+            expected_tool_bubble_count=expected_tool_bubble_count_from_bundle(bundle),
         )
         checks.extend(verify_activation_checks(args.conversation_id))
         for c in checks:

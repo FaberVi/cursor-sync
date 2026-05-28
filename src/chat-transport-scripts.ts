@@ -7,15 +7,21 @@ export type TransportChatScriptName =
   | "cursor_chat_io.py"
   | "cursor_composer_bridge.py";
 
-export async function resolveTransportChatScript(
+/** User-global override only; workspace/folder settings cannot redirect Python execution. */
+export function getUserTransportChatScriptDir(): string | undefined {
+  const inspect = vscode.workspace
+    .getConfiguration("cursorSync")
+    .inspect<string>("chatImport.transportChatScriptDir");
+  const dir = inspect?.globalValue?.trim();
+  return dir || undefined;
+}
+
+function buildTransportChatScriptCandidates(
   scriptName: TransportChatScriptName,
   extensionPath?: string
-): Promise<string | null> {
-  const overrideDir = vscode.workspace
-    .getConfiguration("cursorSync")
-    .get<string>("chatImport.transportChatScriptDir");
-
+): string[] {
   const candidates: string[] = [];
+  const overrideDir = getUserTransportChatScriptDir();
 
   if (overrideDir) {
     candidates.push(path.join(overrideDir, scriptName));
@@ -33,6 +39,10 @@ export async function resolveTransportChatScript(
     path.join(process.cwd(), "resources", "transport-chat", "scripts", scriptName)
   );
 
+  return candidates;
+}
+
+async function resolveScriptFromCandidates(candidates: string[]): Promise<string | null> {
   for (const candidate of candidates) {
     try {
       await fs.access(candidate);
@@ -42,6 +52,21 @@ export async function resolveTransportChatScript(
     }
   }
   return null;
+}
+
+export async function resolveTransportChatScript(
+  scriptName: TransportChatScriptName,
+  extensionPath?: string
+): Promise<string | null> {
+  return resolveScriptFromCandidates(
+    buildTransportChatScriptCandidates(scriptName, extensionPath)
+  );
+}
+
+export async function resolveComposerBridgeScript(
+  extensionPath?: string
+): Promise<string | null> {
+  return resolveTransportChatScript("cursor_composer_bridge.py", extensionPath);
 }
 
 export interface RunPythonDiskImportOptions {
@@ -132,6 +157,71 @@ export async function runPythonDiskImport(
   for (const line of stdout.trim().split("\n")) {
     if (line.trim()) {
       log(`chat_io: ${line}`);
+    }
+  }
+
+  return { ok: exitCode === 0, exitCode, stdout, stderr };
+}
+
+export interface RunPythonBundleInspectOptions {
+  bundlePath: string;
+  extensionPath?: string;
+  log?: (message: string) => void;
+}
+
+export interface RunPythonBundleInspectResult {
+  ok: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export async function runPythonBundleInspect(
+  options: RunPythonBundleInspectOptions
+): Promise<RunPythonBundleInspectResult> {
+  const log = options.log ?? (() => {});
+  const scriptPath = await resolveTransportChatScript(
+    "cursor_chat_io.py",
+    options.extensionPath
+  );
+  if (!scriptPath) {
+    return {
+      ok: false,
+      exitCode: 1,
+      stdout: "",
+      stderr: "transport-chat script not found (cursor_chat_io.py not in extension resources or fallback paths)",
+    };
+  }
+
+  const args = [scriptPath, "inspect", options.bundlePath];
+  const { exitCode, stdout, stderr } = await new Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+  }>((resolve, reject) => {
+    const proc = spawn("python3", args);
+    let stdoutAcc = "";
+    let stderrAcc = "";
+    proc.stdout?.on("data", (chunk: Buffer | string) => {
+      stdoutAcc += String(chunk);
+    });
+    proc.stderr?.on("data", (chunk: Buffer | string) => {
+      stderrAcc += String(chunk);
+    });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      resolve({ exitCode: code ?? 1, stdout: stdoutAcc, stderr: stderrAcc });
+    });
+  });
+
+  for (const line of stderr.trim().split("\n")) {
+    if (line.trim()) {
+      log(`chat_io inspect: ${line}`);
+    }
+  }
+  for (const line of stdout.trim().split("\n")) {
+    if (line.trim()) {
+      log(`chat_io inspect: ${line}`);
     }
   }
 

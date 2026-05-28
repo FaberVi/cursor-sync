@@ -1,5 +1,69 @@
 import * as vscode from "vscode";
-import type { ChatBundle } from "./chat-persistence.js";
+import type { ChatBundle, ChatBundleDiskKvSnapshot } from "./chat-persistence.js";
+
+export function isDiskKvKeyInConversationScope(
+  key: string,
+  conversationId: string
+): boolean {
+  if (key === `composerData:${conversationId}`) {
+    return true;
+  }
+  return key.startsWith(`bubbleId:${conversationId}:`);
+}
+
+function validateDiskKvSnapshot(
+  snapshot: unknown,
+  label: string,
+  conversationId: string
+): ChatBundleDiskKvSnapshot | undefined {
+  if (snapshot === undefined || snapshot === null) {
+    return undefined;
+  }
+  if (typeof snapshot !== "object" || snapshot === null) {
+    throw new Error(`${label}: diskKvSnapshot must be an object.`);
+  }
+  const snap = snapshot as Record<string, unknown>;
+  if (typeof snap.sourceStateDbPath !== "string" || !snap.sourceStateDbPath) {
+    throw new Error(`${label}: diskKvSnapshot.sourceStateDbPath must be a non-empty string.`);
+  }
+  if (!Array.isArray(snap.rows)) {
+    throw new Error(`${label}: diskKvSnapshot.rows must be an array.`);
+  }
+  const rows = snap.rows.map((row, i) => {
+    if (typeof row !== "object" || row === null) {
+      throw new Error(`${label}: diskKvSnapshot.rows[${i}] must be an object.`);
+    }
+    const r = row as Record<string, unknown>;
+    if (typeof r.key !== "string" || !r.key) {
+      throw new Error(`${label}: diskKvSnapshot.rows[${i}].key must be a non-empty string.`);
+    }
+    if (!isDiskKvKeyInConversationScope(r.key, conversationId)) {
+      throw new Error(
+        `${label}: diskKvSnapshot.rows[${i}].key is not scoped to conversationId ` +
+          `(allowed: composerData:{id}, bubbleId:{id}:*).`
+      );
+    }
+    if (typeof r.value !== "string") {
+      throw new Error(`${label}: diskKvSnapshot.rows[${i}].value must be a string.`);
+    }
+    if (typeof r.checksum !== "string" || !r.checksum) {
+      throw new Error(`${label}: diskKvSnapshot.rows[${i}].checksum must be a non-empty string.`);
+    }
+    return { key: r.key, value: r.value, checksum: r.checksum };
+  });
+  if (typeof snap.rowCount !== "number" || !Number.isFinite(snap.rowCount)) {
+    throw new Error(`${label}: diskKvSnapshot.rowCount must be a number.`);
+  }
+  if (typeof snap.toolBubbleCount !== "number" || !Number.isFinite(snap.toolBubbleCount)) {
+    throw new Error(`${label}: diskKvSnapshot.toolBubbleCount must be a number.`);
+  }
+  return {
+    sourceStateDbPath: snap.sourceStateDbPath,
+    rows,
+    rowCount: snap.rowCount,
+    toolBubbleCount: snap.toolBubbleCount,
+  };
+}
 
 export const CHAT_BUNDLE_GIST_FILE_NAME = "chat-bundle.json";
 export const CHAT_BUNDLES_GIST_FILE_NAME = "chat-bundles.json";
@@ -22,15 +86,30 @@ function validateSingleBundle(bundle: Partial<ChatBundle>, label: string): ChatB
       `${label}: expected type "chat-persistence", got "${String(bundle.type)}".`
     );
   }
-  if (bundle.schemaVersion !== 1) {
+  const schemaVersion = bundle.schemaVersion;
+  if (schemaVersion !== 1 && schemaVersion !== 2) {
     throw new Error(
-      `${label}: unsupported schema version ${String(bundle.schemaVersion)}.`
+      `${label}: unsupported schema version ${String(schemaVersion)}.`
     );
   }
   if (!bundle.conversationId || typeof bundle.conversationId !== "string") {
     throw new Error(`${label}: missing conversationId.`);
   }
-  return bundle as ChatBundle;
+  const diskKvSnapshot = validateDiskKvSnapshot(
+    bundle.diskKvSnapshot,
+    label,
+    bundle.conversationId
+  );
+  const validated: ChatBundle = {
+    ...(bundle as ChatBundle),
+    schemaVersion: schemaVersion as 1 | 2,
+    type: "chat-persistence",
+    conversationId: bundle.conversationId,
+  };
+  if (diskKvSnapshot !== undefined) {
+    validated.diskKvSnapshot = diskKvSnapshot;
+  }
+  return validated;
 }
 
 export function buildChatBundlesCollection(

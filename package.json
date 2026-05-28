@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync",
   "description": "Sync user-level Cursor settings and assets to a private GitHub Gist",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "icon": "assets/icon.png",
   "publisher": "MarceloBarella",
   "repository": {
@@ -46,6 +46,26 @@
           "command": "cursorSync.syncNow",
           "when": "view == cursorSync.sidebar && cursorSync.configured",
           "group": "navigation"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "cursorSync.exportCurrentChatBundle",
+          "when": "resourceScheme == 'cursor.composer'",
+          "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "cursorSync.exportCurrentChatBundle",
+          "when": "resourceScheme == 'cursor.composer'",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cursorSync.exportCurrentChatBundle",
+          "when": "false"
         }
       ]
     },
@@ -118,6 +138,11 @@
         "title": "Cursor Sync: Export Chat Bundle"
       },
       {
+        "command": "cursorSync.exportCurrentChatBundle",
+        "title": "Cursor Sync: Export into Bundle",
+        "icon": "$(archive)"
+      },
+      {
         "command": "cursorSync.importChatBundleActivate",
         "title": "Cursor Sync: Import Chat Bundle (Activate)"
       },
@@ -161,6 +186,10 @@
       {
         "command": "cursorSync.prepareSyncFromLandingZone",
         "title": "Cursor Sync: Prepare Sync from Landing Zone"
+      },
+      {
+        "command": "cursorSync.installSkillTransportChat",
+        "title": "Cursor Sync: Install Skill - Transport Chat"
       }
     ],
     "configuration": {
@@ -276,7 +305,7 @@
         "cursorSync.chatImport.transportChatScriptDir": {
           "type": "string",
           "default": "",
-          "description": "Override directory for transport-chat scripts (cursor_chat_io.py, cursor_composer_bridge.py). Empty = use the extension's bundled scripts."
+          "description": "User-level override directory for transport-chat scripts (cursor_chat_io.py, cursor_composer_bridge.py). Workspace settings are ignored for security. Empty = use the extension's bundled scripts."
         }
       }
     }

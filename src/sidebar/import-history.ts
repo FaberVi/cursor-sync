@@ -10,6 +10,11 @@ export interface ChatImportHistoryEntry {
   sidebarMerged: boolean;
   warnings: number;
   timestamp: string;
+  schemaVersion?: 1 | 2;
+  diskKvRowCount?: number;
+  toolBubbleCount?: number;
+  textOnlyLayer4?: boolean;
+  fidelityWarnings?: string[];
 }
 
 export async function recordImport(
