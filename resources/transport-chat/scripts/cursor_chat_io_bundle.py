@@ -1385,9 +1385,9 @@ def merge_state_db(
         existing_data: str | None = None
         for key, value in cur.fetchall():
             if key == "composer.composerHeaders":
-                existing_headers = value if isinstance(value, str) else json.dumps(value)
+                existing_headers = item_table_value_as_text(value)
             if key == "composer.composerData":
-                existing_data = value if isinstance(value, str) else json.dumps(value)
+                existing_data = item_table_value_as_text(value)
 
         headers_payload = headers_payload_for_import(bundle)
         cid = bundle.get("conversationId")

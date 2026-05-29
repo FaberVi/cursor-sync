@@ -65,6 +65,18 @@ def read_disk_kv_value(conn: sqlite3.Connection, key: str) -> Any | None:
     return row[0]
 
 
+def item_table_value_as_text(value: Any) -> str | None:
+    text = cursor_disk_kv_value_as_text(value)
+    if text is not None:
+        return text
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def escape_sql_literal(value: str) -> str:
     return value.replace("'", "''")
 
@@ -367,7 +379,13 @@ def read_composer_header_entry(db_path: Path, conversation_id: str) -> dict[str,
         conn.close()
     if not row or not row[0]:
         return None
-    data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    raw = item_table_value_as_text(row[0])
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
     for c in data.get("allComposers") or []:
         if isinstance(c, dict) and c.get("composerId") == conversation_id:
             return c

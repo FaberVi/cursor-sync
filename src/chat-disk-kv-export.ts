@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 import type { ChatBundle } from "./chat-persistence.js";
 import { isDiskKvKeyInConversationScope } from "./chat-bundle-format.js";
 import { escapeSqlLiteral } from "./composer-merge.js";
+import { runPythonExportDiskKvSnapshot } from "./chat-transport-scripts.js";
 import { listGlobalStateVscdbPaths, querySqliteRows } from "./transcripts-sqlite.js";
 
 export interface DiskKvSnapshotRow {
@@ -54,9 +55,7 @@ function countToolBubbles(rows: Array<{ value: string }>): number {
       if (obj.toolFormerData) {
         count += 1;
       }
-    } catch {
-      /* skip */
-    }
+    } catch {}
   }
   return count;
 }
@@ -67,11 +66,6 @@ function diskKvKeysSql(conversationId: string): string {
   return `SELECT key FROM cursorDiskKV WHERE key = '${keyComposer}' OR key LIKE '${prefixBubble}%';`;
 }
 
-/**
- * Export Layer 4 cursorDiskKV rows for a conversation from global state.vscdb.
- * Reads keys first, then each value separately — bulk SELECT key,value can fail with
- * "database disk image is malformed" on large live global state.vscdb under Cursor lock.
- */
 export async function exportDiskKvSnapshot(
   globalDbPath: string,
   conversationId: string,
@@ -141,7 +135,6 @@ export async function enrichBundleWithLiveDiskKv(
     if (!snap) {
       const onDisk = await countDiskKvBubblesOnGlobalDb(globalDb, bundle.conversationId);
       if (onDisk.bubbleCount > 0 && opts?.extensionPath) {
-        const { runPythonExportDiskKvSnapshot } = await import("./chat-transport-scripts.js");
         const pySnap = await runPythonExportDiskKvSnapshot({
           conversationId: bundle.conversationId,
           globalDbPath: globalDb,
@@ -182,17 +175,14 @@ export async function enrichBundleWithLiveDiskKv(
 export async function countDiskKvBubblesOnGlobalDb(
   globalDbPath: string,
   conversationId: string
-): Promise<{ bubbleCount: number; hasComposerData: boolean }> {
+): Promise<{ bubbleCount: number }> {
   const rawRows = await querySqliteRows(globalDbPath, diskKvKeysSql(conversationId));
   let bubbleCount = 0;
-  let hasComposerData = false;
   for (const raw of rawRows) {
     const key = String(raw.key ?? "");
-    if (key === `composerData:${conversationId}`) {
-      hasComposerData = true;
-    } else if (key.startsWith(`bubbleId:${conversationId}:`)) {
+    if (key.startsWith(`bubbleId:${conversationId}:`)) {
       bubbleCount += 1;
     }
   }
-  return { bubbleCount, hasComposerData };
+  return { bubbleCount };
 }
