@@ -25,7 +25,6 @@ export const SQLITE_PYTHON_FALLBACK_SCRIPT = [
 ].join(";");
 export const SQLITE_RETRY_BACKOFF_MS = 1_500;
 export const FILE_ACCESS_TIMEOUT_MS = 12_000;
-/** Above this size, the sqlite3 CLI often stalls on WAL-backed state.vscdb; prefer Python. */
 export const SQLITE_PYTHON_PREFER_BYTES = 256 * 1024 * 1024;
 
 type PythonSqliteInterpreter = {

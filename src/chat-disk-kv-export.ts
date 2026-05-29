@@ -18,7 +18,6 @@ export interface DiskKvSnapshot {
   toolBubbleCount: number;
 }
 
-/** Matches Python cursor_disk_kv_value_as_text (UTF-8 text or BLOB as hex from Python sqlite reader). */
 export function cursorDiskKvValueAsText(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -64,19 +63,29 @@ function diskKvKeysSql(conversationId: string): string {
   return `SELECT key FROM cursorDiskKV WHERE key = '${keyComposer}' OR key LIKE '${prefixBubble}%';`;
 }
 
+async function listDiskKvKeys(
+  globalDbPath: string,
+  conversationId: string,
+  opts?: { retries?: number }
+): Promise<string[]> {
+  const keyRows = await querySqliteRows(globalDbPath, diskKvKeysSql(conversationId), opts);
+  const keys: string[] = [];
+  for (const keyRow of keyRows) {
+    const key = String(keyRow.key ?? "");
+    if (isDiskKvKeyInConversationScope(key, conversationId)) {
+      keys.push(key);
+    }
+  }
+  return keys;
+}
+
 export async function exportDiskKvSnapshot(
   globalDbPath: string,
   conversationId: string,
   opts?: { retries?: number }
 ): Promise<DiskKvSnapshot | null> {
-  const keyRows = await querySqliteRows(globalDbPath, diskKvKeysSql(conversationId), opts);
-
   const rows: DiskKvSnapshotRow[] = [];
-  for (const keyRow of keyRows) {
-    const key = String(keyRow.key ?? "");
-    if (!isDiskKvKeyInConversationScope(key, conversationId)) {
-      continue;
-    }
+  for (const key of await listDiskKvKeys(globalDbPath, conversationId, opts)) {
     const escKey = escapeSqlLiteral(key);
     let valueRows: Array<Record<string, unknown>>;
     try {
@@ -110,10 +119,6 @@ export async function exportDiskKvSnapshot(
   };
 }
 
-/**
- * When a bundle lacks diskKvSnapshot (schema v1), capture native Layer 4 from global
- * state.vscdb if the conversation still exists on this machine (re-import / re-export).
- */
 export async function enrichBundleWithLiveDiskKv(
   bundle: ChatBundle,
   opts?: { retries?: number; extensionPath?: string }
@@ -122,45 +127,32 @@ export async function enrichBundleWithLiveDiskKv(
   if (bundle.diskKvSnapshot?.rows?.length) {
     return { bundle, warnings };
   }
-  const globalDbPaths = await listGlobalStateVscdbPaths();
-  const globalDb = globalDbPaths[0];
+  const globalDb = (await listGlobalStateVscdbPaths())[0];
   if (!globalDb) {
     return { bundle, warnings };
   }
   try {
-    let enrichedViaPython = false;
     let snap = await exportDiskKvSnapshot(globalDb, bundle.conversationId, opts);
+    let via = "global state.vscdb";
     if (!snap) {
-      const onDisk = await countDiskKvBubblesOnGlobalDb(globalDb, bundle.conversationId);
-      if (onDisk.bubbleCount > 0 && opts?.extensionPath) {
-        const pySnap = await runPythonExportDiskKvSnapshot({
+      const bubbleKeys = await countDiskKvBubbleKeys(globalDb, bundle.conversationId);
+      if (bubbleKeys > 0 && opts?.extensionPath) {
+        snap = await runPythonExportDiskKvSnapshot({
           conversationId: bundle.conversationId,
           globalDbPath: globalDb,
           extensionPath: opts.extensionPath,
         });
-        if (pySnap) {
-          snap = pySnap;
-          enrichedViaPython = true;
-          warnings.push(
-            `Enriched bundle via Python diskKv export (${pySnap.rowCount} rows, ${pySnap.toolBubbleCount} tool/MCP bubbles).`
-          );
-        }
+        via = "Python diskKv export";
       }
     }
     if (!snap) {
       return { bundle, warnings };
     }
-    if (!enrichedViaPython) {
-      warnings.push(
-        `Enriched bundle with live diskKvSnapshot (${snap.rowCount} rows, ${snap.toolBubbleCount} tool/MCP bubbles) from global state.vscdb.`
-      );
-    }
+    warnings.push(
+      `Enriched bundle via ${via} (${snap.rowCount} rows, ${snap.toolBubbleCount} tool/MCP bubbles).`
+    );
     return {
-      bundle: {
-        ...bundle,
-        schemaVersion: 2,
-        diskKvSnapshot: snap,
-      },
+      bundle: { ...bundle, schemaVersion: 2, diskKvSnapshot: snap },
       warnings,
     };
   } catch (err) {
@@ -170,17 +162,16 @@ export async function enrichBundleWithLiveDiskKv(
   }
 }
 
-export async function countDiskKvBubblesOnGlobalDb(
+export async function countDiskKvBubbleKeys(
   globalDbPath: string,
   conversationId: string
-): Promise<{ bubbleCount: number }> {
-  const rawRows = await querySqliteRows(globalDbPath, diskKvKeysSql(conversationId));
-  let bubbleCount = 0;
-  for (const raw of rawRows) {
-    const key = String(raw.key ?? "");
-    if (key.startsWith(`bubbleId:${conversationId}:`)) {
-      bubbleCount += 1;
+): Promise<number> {
+  const prefix = `bubbleId:${conversationId}:`;
+  let count = 0;
+  for (const key of await listDiskKvKeys(globalDbPath, conversationId)) {
+    if (key.startsWith(prefix)) {
+      count += 1;
     }
   }
-  return { bubbleCount };
+  return count;
 }

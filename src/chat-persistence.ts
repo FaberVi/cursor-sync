@@ -143,11 +143,6 @@ export function restoreOptionsFromConfiguration(): RestoreChatBundleOptions {
 
 const SQLITE_READ_RETRIES = 3;
 
-/**
- * Save a chat conversation to a local JSON bundle file.
- * Collects: store.db snapshot, sidebar metadata from state.vscdb, and transcript JSONL files.
- * Exports diskKvSnapshot (Layer 4) from global state.vscdb when cursorDiskKV rows exist.
- */
 export async function executeSaveChatLocal(
   context: vscode.ExtensionContext
 ): Promise<void> {
@@ -386,7 +381,6 @@ export async function executeExportCurrentChatBundle(
   });
 }
 
-/** Transcript/sidebar/store + Layer 4 diskKv when present on global state.vscdb (schema v2). */
 export async function buildChatBundle(
   _context: vscode.ExtensionContext,
   conversationId: string,

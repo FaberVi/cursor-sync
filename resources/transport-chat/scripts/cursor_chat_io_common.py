@@ -42,7 +42,6 @@ def cursor_disk_kv_value_as_text(value: Any) -> str | None:
 def list_disk_kv_keys_for_conversation(
     conn: sqlite3.Connection, conversation_id: str
 ) -> list[str]:
-    """List keys only; bulk SELECT value on live global state.vscdb can raise DatabaseError."""
     prefix_bubble = f"bubbleId:{conversation_id}:"
     key_composer = f"composerData:{conversation_id}"
     try:

@@ -234,7 +234,6 @@ export interface RunPythonExportDiskKvOptions {
   extensionPath?: string;
 }
 
-/** Layer 4 export via bundled Python when TS sqlite reads fail on live global state.vscdb. */
 export async function runPythonExportDiskKvSnapshot(
   options: RunPythonExportDiskKvOptions
 ): Promise<import("./chat-disk-kv-export.js").DiskKvSnapshot | null> {
