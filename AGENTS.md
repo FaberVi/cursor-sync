@@ -12,11 +12,13 @@
 ## Learned Workspace Facts
 
 - `cursor-sync` is a VS Code extension (publisher MarceloBarella) that syncs Cursor user config and selected `~/.cursor` assets to a private GitHub Gist.
-- Chat export/import is built into the extension: Python scripts live under `resources/transport-chat/scripts/` (bundled in the VSIX since v0.7.0; no separate skill install).
+- Chat export/import is built into the extension: Python scripts live under `resources/transport-chat/scripts/` (bundled in the VSIX since v0.7.0; no separate skill install); do not commit virtualenvs there (`.gitignore` excludes `.venv/`, `venv/`, `.pytest_cache/`).
+- Sync failure toasts (push, pull, Sync Now, scheduled) offer **Debug with Cursor** via `src/sync-debug.ts`: sanitized prompt, Composer prefill when available, clipboard fallback otherwise (v0.7.3+).
 - Opening imported chats is a two-phase flow: disk restore (transcripts, `store.db`, workspace/global `state.vscdb`) then IDE activation via `composer.*` APIs; see `docs/chat-import-activate.md`.
 - Cursor chat persistence spans four layers: JSONL transcripts, `store.db`, workspace/global `state.vscdb` (sidebar), and `cursorDiskKV` (Composer UI); tool/MCP UI fidelity depends on `cursorDiskKV`, not JSONL alone.
+- Tool/MCP Composer round-trip needs ChatBundle schema v2 with `diskKvSnapshot`; extension `buildChatBundle` exports Layer 4 from global `state.vscdb` when rows exist (re-export on source after opening chat in Composer if `toolBubbleCount` is 0).
 - Feature specs and implementation plans for this repo live under `docs/superpowers/specs/` and `docs/superpowers/plans/`.
-- `cursor-detective` is a personal read-only forensics skill at `~/.cursor/skills/cursor-detective/` (explicit `/cursor-detective`); design spec in-repo, not shipped in the extension VSIX.
+- `cursor-detective` is a personal read-only forensics skill at `~/.cursor/skills/cursor-detective/` (explicit `/cursor-detective`); probe to maximum depth in one pass (workbench bundle, DBs, module paths) without asking permission to go deeper; writes `.cursor/plans/detective-<theme>.plan.md` in the workspace; design spec in-repo, not shipped in the VSIX.
 - Git and release workflow for this repo is defined in `.cursor/rules/git.mdc`.
 - Keep `package-lock.json` version aligned with `package.json` on releases; `.worktrees` belongs in `.gitignore`.
 - Sidebar UX is webview-based with Sync, Chats, and Settings tabs (`src/sidebar/`).
