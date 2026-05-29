@@ -2,8 +2,21 @@
 
 ## [Unreleased]
 
+## v0.7.4
+
 ### Added
 - **Chat tab export**: `Cursor Sync: Export into Bundle` on chat editor tab title and context menus (`cursorSync.exportCurrentChatBundle`) exports the clicked tab's conversation without the multi-chat picker.
+- **Layer 4 in extension export**: `buildChatBundle` writes ChatBundle schema v2 with `diskKvSnapshot` from global `state.vscdb` when `cursorDiskKV` rows exist; warns when tool bubbles are missing on disk.
+- **`chat-disk-kv-export.ts`**: per-key `cursorDiskKV` reads (avoids malformed-image errors on bulk SELECT under Cursor lock); `enrichBundleWithLiveDiskKv` fills missing snapshots via bundled Python on export/import.
+- **`runPythonExportDiskKvSnapshot`**: Python fallback when TS sqlite reads fail on large or locked global `state.vscdb`.
+
+### Changed
+- Import restore enriches bundles with live Layer 4 before disk import; verify/activation use the enriched bundle.
+- Bundled Python `export_disk_kv_snapshot` and tool-bubble counting use per-key reads with `busy_timeout` on live global DBs.
+- SQLite helpers prefer Python for global `state.vscdb` at or above 256 MiB; import verify passes retry options for header reads.
+
+### Fixed
+- **Editor tab export**: resolves workspace when `~/.cursor/chats` has no store row but `agent-transcripts/<id>` exists on disk.
 
 ## v0.7.3
 
