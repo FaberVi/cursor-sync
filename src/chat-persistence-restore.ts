@@ -54,6 +54,7 @@ import {
 } from "./sidebar/chats-tab.js";
 import { recordImport as recordImportEntry } from "./sidebar/import-history.js";
 import type { ChatBundle, LoadChatResult, RestoreChatBundleOptions } from "./chat-persistence.js";
+import { enrichBundleWithLiveDiskKv } from "./chat-disk-kv-export.js";
 
 const { resolveChatsRoot } = __chatPersistenceInternals;
 
@@ -354,7 +355,15 @@ export async function restoreChatBundle(
     );
   }
 
-  const remappedBundle = applyProjectMappingToBundle(bundle, projectMapping);
+  let workingBundle = bundle;
+  const { bundle: diskKvEnriched, warnings: enrichWarnings } = await enrichBundleWithLiveDiskKv(
+    workingBundle,
+    { retries: 3, extensionPath }
+  );
+  workingBundle = diskKvEnriched;
+  warnings.push(...enrichWarnings);
+
+  const remappedBundle = applyProjectMappingToBundle(workingBundle, projectMapping);
   const tmpBundlePath = path.join(
     os.tmpdir(),
     `cursor-sync-import-${conversationId}-${Date.now()}.json`
@@ -404,7 +413,7 @@ export async function restoreChatBundle(
     }
   }
 
-  if (bundle.storeSnapshot && !storeWritten) {
+  if (workingBundle.storeSnapshot && !storeWritten) {
     throw new Error(
       "Bundle contained storeSnapshot but store.db was not written (required for import parity)."
     );
@@ -413,7 +422,7 @@ export async function restoreChatBundle(
   if (!dryRun) {
     progress.report({ message: "Verifying import..." });
     const diskChecks = await runDiskAndActivationVerify(conversationId, wsCtx, {
-      bundle,
+      bundle: workingBundle,
       postActivate: false,
     });
     verifyChecks.push(...diskChecks);
@@ -438,7 +447,7 @@ export async function restoreChatBundle(
       progress.report({ message: "Activating composer..." });
       emitChatImportProgress({ conversationId, phase: "B", step: "activation-start" });
       const activationOutcome = await runPostImportActivation(
-        bundle,
+        workingBundle,
         conversationId,
         wsCtx,
         {
@@ -496,7 +505,7 @@ export async function restoreChatBundle(
   } else {
     logChatRestoreDebug("[dry-run] skipped disk and activation verify");
     if (options.activate) {
-      await runPostImportActivation(bundle, conversationId, wsCtx, {
+      await runPostImportActivation(workingBundle, conversationId, wsCtx, {
         activateStrict: options.activateStrict,
         bridgeWaitResultMs: options.bridgeWaitResultMs,
         dryRun: true,
@@ -514,7 +523,7 @@ export async function restoreChatBundle(
     await pruneOldBackups(context);
   }
 
-  const fidelity = summarizeBundleFidelity(bundle);
+  const fidelity = summarizeBundleFidelity(workingBundle);
   for (const fw of fidelity.warnings) {
     if (!warnings.includes(fw)) {
       warnings.push(fw);

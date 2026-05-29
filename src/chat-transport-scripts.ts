@@ -227,3 +227,82 @@ export async function runPythonBundleInspect(
 
   return { ok: exitCode === 0, exitCode, stdout, stderr };
 }
+
+export interface RunPythonExportDiskKvOptions {
+  conversationId: string;
+  globalDbPath: string;
+  extensionPath?: string;
+}
+
+/** Layer 4 export via bundled Python when TS sqlite reads fail on live global state.vscdb. */
+export async function runPythonExportDiskKvSnapshot(
+  options: RunPythonExportDiskKvOptions
+): Promise<import("./chat-disk-kv-export.js").DiskKvSnapshot | null> {
+  const scriptPath = await resolveTransportChatScript(
+    "cursor_chat_io.py",
+    options.extensionPath
+  );
+  if (!scriptPath) {
+    return null;
+  }
+  const scriptsDir = path.dirname(scriptPath);
+  const py = [
+    "import json, sys",
+    "from pathlib import Path",
+    `sys.path.insert(0, ${JSON.stringify(scriptsDir)})`,
+    "from cursor_chat_io_bundle import export_disk_kv_snapshot",
+    "db = Path(sys.argv[1])",
+    "cid = sys.argv[2]",
+    "snap = export_disk_kv_snapshot(db, cid)",
+    "print(json.dumps(snap) if snap else 'null')",
+  ].join(";");
+  const { exitCode, stdout } = await new Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+  }>((resolve, reject) => {
+    const proc = spawn(
+      "python3",
+      ["-c", py, options.globalDbPath, options.conversationId],
+      { cwd: scriptsDir }
+    );
+    let stdoutAcc = "";
+    let stderrAcc = "";
+    proc.stdout?.on("data", (chunk: Buffer | string) => {
+      stdoutAcc += String(chunk);
+    });
+    proc.stderr?.on("data", (chunk: Buffer | string) => {
+      stderrAcc += String(chunk);
+    });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      resolve({ exitCode: code ?? 1, stdout: stdoutAcc, stderr: stderrAcc });
+    });
+  });
+  if (exitCode !== 0) {
+    return null;
+  }
+  const trimmed = stdout.trim();
+  if (!trimmed || trimmed === "null") {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      sourceStateDbPath: string;
+      rows: Array<{ key: string; value: string; checksum: string }>;
+      rowCount: number;
+      toolBubbleCount: number;
+    };
+    if (!Array.isArray(parsed.rows) || parsed.rows.length === 0) {
+      return null;
+    }
+    return {
+      sourceStateDbPath: parsed.sourceStateDbPath,
+      rows: parsed.rows,
+      rowCount: parsed.rowCount,
+      toolBubbleCount: parsed.toolBubbleCount,
+    };
+  } catch {
+    return null;
+  }
+}

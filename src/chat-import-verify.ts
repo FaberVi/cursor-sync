@@ -26,7 +26,8 @@ export interface VerifyIoDeps {
   readTextFile: (filePath: string) => Promise<string>;
   querySqliteRows: (
     dbPath: string,
-    sql: string
+    sql: string,
+    opts?: { retries?: number }
   ) => Promise<Array<Record<string, unknown>>>;
   globalStateDbPath: () => string;
   chatsRoot: () => string;
@@ -87,7 +88,8 @@ async function readComposerHeaderEntry(
   }
   const rows = await deps.querySqliteRows(
     dbPath,
-    "SELECT value FROM ItemTable WHERE key='composer.composerHeaders' LIMIT 1"
+    "SELECT value FROM ItemTable WHERE key='composer.composerHeaders' LIMIT 1",
+    { retries: 3 }
   );
   if (rows.length === 0) {
     return null;

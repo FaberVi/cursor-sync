@@ -286,17 +286,17 @@ def is_disk_kv_key_in_conversation_scope(key: str, conversation_id: str) -> bool
 def export_disk_kv_snapshot(global_db: Path, conversation_id: str) -> dict[str, Any] | None:
     if not global_db.is_file():
         return None
-    prefix_bubble = f"bubbleId:{conversation_id}:"
-    key_composer = f"composerData:{conversation_id}"
-    conn = sqlite3.connect(global_db)
+    conn = sqlite3.connect(global_db, timeout=20)
     try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        keys = list_disk_kv_keys_for_conversation(conn, conversation_id)
         rows: list[dict[str, Any]] = []
         tool_count = 0
-        cur = conn.execute(
-            "SELECT key, value FROM cursorDiskKV WHERE key = ? OR key LIKE ?;",
-            (key_composer, prefix_bubble + "%"),
-        )
-        for key, value in cur.fetchall():
+        for key in keys:
+            try:
+                value = read_disk_kv_value(conn, key)
+            except sqlite3.DatabaseError:
+                continue
             text = cursor_disk_kv_value_as_text(value)
             if text is None:
                 continue

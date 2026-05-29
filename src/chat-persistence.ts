@@ -48,6 +48,7 @@ import {
   safeJsonParse,
 } from "./chat-persistence-restore.js";
 import { enumerateTranscriptFilesInConversation } from "./transcripts-discovery.js";
+import { enrichBundleWithLiveDiskKv, exportDiskKvSnapshot } from "./chat-disk-kv-export.js";
 
 export {
   ensurePythonReady,
@@ -58,6 +59,7 @@ export {
 const {
   querySqliteRows,
   resolveStateDbCandidates,
+  listGlobalStateVscdbPaths,
   resolveChatsRoot,
   findStoreDbForConversation,
   isExecFileTimeoutError,
@@ -144,7 +146,7 @@ const SQLITE_READ_RETRIES = 3;
 /**
  * Save a chat conversation to a local JSON bundle file.
  * Collects: store.db snapshot, sidebar metadata from state.vscdb, and transcript JSONL files.
- * Does not export diskKvSnapshot (Layer 4); bundled Python export is authoritative until parity.
+ * Exports diskKvSnapshot (Layer 4) from global state.vscdb when cursorDiskKV rows exist.
  */
 export async function executeSaveChatLocal(
   context: vscode.ExtensionContext
@@ -384,7 +386,7 @@ export async function executeExportCurrentChatBundle(
   });
 }
 
-/** Transcript/sidebar/store only; schema v1. Layer 4 uses Python `build_bundle` (schema v2). */
+/** Transcript/sidebar/store + Layer 4 diskKv when present on global state.vscdb (schema v2). */
 export async function buildChatBundle(
   _context: vscode.ExtensionContext,
   conversationId: string,
@@ -483,6 +485,32 @@ export async function buildChatBundle(
     warnings.push("state.vscdb not found; sidebar metadata skipped.");
   }
 
+  progress.report({ message: "Exporting composer disk KV (tool/MCP bubbles)..." });
+  let diskKvSnapshot: ChatBundle["diskKvSnapshot"] = null;
+  const globalDbPaths = await listGlobalStateVscdbPaths();
+  const globalDbPath = globalDbPaths[0];
+  if (globalDbPath) {
+    try {
+      diskKvSnapshot = await exportDiskKvSnapshot(globalDbPath, conversationId, {
+        retries: SQLITE_READ_RETRIES,
+      });
+      if (!diskKvSnapshot) {
+        warnings.push(
+          `No cursorDiskKV rows for ${conversationId} in global state.vscdb; import will synthesize text-only composer bubbles (tool/MCP UI may show [REDACTED]). Open the chat in Composer on the source machine and re-export.`
+        );
+      }
+    } catch (err) {
+      const isTimeout = isExecFileTimeoutError(err);
+      warnings.push(
+        isTimeout
+          ? "Global state.vscdb timed out during diskKv export; Layer 4 skipped."
+          : `diskKv export failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  } else {
+    warnings.push("Global state.vscdb not found; diskKvSnapshot (Layer 4) skipped.");
+  }
+
   progress.report({ message: "Collecting transcript files..." });
   const transcriptFiles: ChatBundle["transcriptFiles"] = [];
   const projectsRoot = resolveProjectsRoot();
@@ -537,7 +565,7 @@ export async function buildChatBundle(
   }
 
   const bundle: ChatBundle = {
-    schemaVersion: 1,
+    schemaVersion: diskKvSnapshot ? 2 : 1,
     type: "chat-persistence",
     createdAt: new Date().toISOString(),
     conversationId,
@@ -547,6 +575,7 @@ export async function buildChatBundle(
     sidebarSnapshot,
     storeSnapshot,
     transcriptFiles,
+    ...(diskKvSnapshot ? { diskKvSnapshot } : {}),
   };
 
   logChatRestoreDebug(
@@ -571,11 +600,15 @@ export async function buildChatExportPayload(
   const bundles: ChatBundle[] = [];
   const warnings: string[] = [];
   for (const conversationId of selection.conversationIds) {
-    const { bundle, warnings: w } = await buildChatBundle(context, conversationId, progress, {
+    const built = await buildChatBundle(context, conversationId, progress, {
       workspaceKey: selection.workspaceKey,
     });
-    bundles.push(bundle);
-    warnings.push(...w);
+    const { bundle: enriched, warnings: enrichW } = await enrichBundleWithLiveDiskKv(
+      built.bundle,
+      { retries: SQLITE_READ_RETRIES, extensionPath: context.extensionUri?.fsPath }
+    );
+    bundles.push(enriched);
+    warnings.push(...built.warnings, ...enrichW);
   }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   let jsonForFile: string;

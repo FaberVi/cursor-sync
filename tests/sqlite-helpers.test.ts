@@ -4,7 +4,8 @@ vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
 import { __transcriptsTestUtils } from "../src/transcripts.js";
 
-const { isCommandMissingError, querySqliteRowsImpl } = __transcriptsTestUtils;
+const { isCommandMissingError, isExecFileTimeoutError, querySqliteRowsImpl } =
+  __transcriptsTestUtils;
 
 describe("isCommandMissingError", () => {
   it("detects POSIX spawn ENOENT", () => {
@@ -31,6 +32,27 @@ describe("isCommandMissingError", () => {
   it("returns false for unrelated failures", () => {
     expect(isCommandMissingError(new Error("SQLITE_BUSY: database is locked"), "sqlite3")).toBe(false);
     expect(isCommandMissingError(new Error("syntax error near foo"), "sqlite3")).toBe(false);
+  });
+});
+
+describe("isExecFileTimeoutError", () => {
+  it("detects killed and ETIMEDOUT", () => {
+    expect(isExecFileTimeoutError(Object.assign(new Error("x"), { killed: true }))).toBe(true);
+    expect(isExecFileTimeoutError(Object.assign(new Error("x"), { code: "ETIMEDOUT" }))).toBe(true);
+    expect(isExecFileTimeoutError(new Error("timed out"))).toBe(true);
+    expect(isExecFileTimeoutError(new Error("syntax error"))).toBe(false);
+  });
+});
+
+describe("querySqliteRowsImpl PRAGMA user_version", () => {
+  it("parses single JSON line from sqlite3 -json (no bundled PRAGMA busy_timeout)", async () => {
+    const stdout = '[{"user_version":2}]\n';
+    const runQuery = vi.fn().mockResolvedValue({ stdout, stderr: "" });
+    const rows = await querySqliteRowsImpl(runQuery, "/tmp/golden.db", "PRAGMA user_version;", {
+      retries: 1,
+    });
+    expect(rows).toEqual([{ user_version: 2 }]);
+    expect(runQuery).toHaveBeenCalledWith("/tmp/golden.db", "PRAGMA user_version;");
   });
 });
 

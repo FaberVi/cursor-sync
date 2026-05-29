@@ -1,6 +1,8 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { md5FolderKey } from "./chat-workspace-context.js";
+import { resolveSyncRoots } from "./paths.js";
 import { findWorkspaceKeysForConversation } from "./transcripts-cursor-paths.js";
 
 const CHAT_ID_RE =
@@ -80,6 +82,29 @@ function currentWorkspaceKey(): string | undefined {
   return fsPath ? md5FolderKey(path.resolve(fsPath)) : undefined;
 }
 
+async function conversationHasTranscriptDir(conversationId: string): Promise<boolean> {
+  const { dotCursor } = resolveSyncRoots();
+  const projectsRoot = path.join(dotCursor, "projects");
+  let projectDirs: import("node:fs").Dirent[];
+  try {
+    projectDirs = await fs.readdir(projectsRoot, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const dir of projectDirs) {
+    if (!dir.isDirectory()) continue;
+    try {
+      await fs.stat(
+        path.join(projectsRoot, dir.name, "agent-transcripts", conversationId)
+      );
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
 export async function resolveChatEditorExportTarget(
   target: unknown
 ): Promise<ChatEditorExportTargetResolution> {
@@ -92,6 +117,11 @@ export async function resolveChatEditorExportTarget(
 
   const workspaceKeys = await findWorkspaceKeysForConversation(conversationId);
   if (workspaceKeys.length === 0) {
+    const currentKey = currentWorkspaceKey();
+    const hasTranscripts = await conversationHasTranscriptDir(conversationId);
+    if (hasTranscripts && currentKey) {
+      return { ok: true, target: { conversationId, workspaceKey: currentKey } };
+    }
     return { ok: false, reason: "store-not-found", conversationId };
   }
 

@@ -39,6 +39,32 @@ def cursor_disk_kv_value_as_text(value: Any) -> str | None:
     return None
 
 
+def list_disk_kv_keys_for_conversation(
+    conn: sqlite3.Connection, conversation_id: str
+) -> list[str]:
+    """List keys only; bulk SELECT value on live global state.vscdb can raise DatabaseError."""
+    prefix_bubble = f"bubbleId:{conversation_id}:"
+    key_composer = f"composerData:{conversation_id}"
+    try:
+        cur = conn.execute(
+            "SELECT key FROM cursorDiskKV WHERE key = ? OR key LIKE ?;",
+            (key_composer, prefix_bubble + "%"),
+        )
+    except sqlite3.Error:
+        return []
+    return [str(row[0]) for row in cur.fetchall() if row and row[0]]
+
+
+def read_disk_kv_value(conn: sqlite3.Connection, key: str) -> Any | None:
+    row = conn.execute(
+        "SELECT value FROM cursorDiskKV WHERE key = ? LIMIT 1;",
+        (key,),
+    ).fetchone()
+    if not row:
+        return None
+    return row[0]
+
+
 def escape_sql_literal(value: str) -> str:
     return value.replace("'", "''")
 
@@ -589,17 +615,21 @@ def count_tool_bubbles_in_global_db(
     if not db.is_file():
         return None
     prefix = f"bubbleId:{conversation_id}:"
-    conn = sqlite3.connect(db)
+    conn = sqlite3.connect(db, timeout=20)
     try:
+        conn.execute("PRAGMA busy_timeout=5000")
         try:
-            cur = conn.execute(
-                "SELECT value FROM cursorDiskKV WHERE key LIKE ?;",
-                (prefix + "%",),
-            )
-        except sqlite3.OperationalError:
+            keys = list_disk_kv_keys_for_conversation(conn, conversation_id)
+        except sqlite3.Error:
             return None
         count = 0
-        for (value,) in cur.fetchall():
+        for key in keys:
+            if not key.startswith(prefix):
+                continue
+            try:
+                value = read_disk_kv_value(conn, key)
+            except sqlite3.DatabaseError:
+                continue
             text = cursor_disk_kv_value_as_text(value)
             if text is None:
                 continue
@@ -609,6 +639,8 @@ def count_tool_bubbles_in_global_db(
             except json.JSONDecodeError:
                 pass
         return count
+    except sqlite3.Error:
+        return None
     finally:
         conn.close()
 
