@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import type { ChatBundle } from "./chat-persistence.js";
+import { isDiskKvKeyInConversationScope } from "./chat-bundle-format.js";
 import { escapeSqlLiteral } from "./composer-merge.js";
 import { listGlobalStateVscdbPaths, querySqliteRows } from "./transcripts-sqlite.js";
 
@@ -14,13 +15,6 @@ export interface DiskKvSnapshot {
   rows: DiskKvSnapshotRow[];
   rowCount: number;
   toolBubbleCount: number;
-}
-
-export function isDiskKvKeyInConversationScope(key: string, conversationId: string): boolean {
-  if (key === `composerData:${conversationId}`) {
-    return true;
-  }
-  return key.startsWith(`bubbleId:${conversationId}:`);
 }
 
 /** Matches Python cursor_disk_kv_value_as_text (UTF-8 text or BLOB as hex from Python sqlite reader). */

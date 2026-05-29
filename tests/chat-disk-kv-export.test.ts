@@ -6,10 +6,10 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { isDiskKvKeyInConversationScope } from "../src/chat-bundle-format.js";
 import {
   cursorDiskKvValueAsText,
   exportDiskKvSnapshot,
-  isDiskKvKeyInConversationScope,
 } from "../src/chat-disk-kv-export.js";
 
 const execFileAsync = promisify(execFile);
