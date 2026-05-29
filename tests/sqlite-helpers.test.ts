@@ -8,26 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
 import { mergeComposerHeadersChain } from "../src/composer-merge.js";
+import { SQLITE_PYTHON_FALLBACK_SCRIPT } from "../src/transcripts-sqlite.js";
 import { __transcriptsTestUtils } from "../src/transcripts.js";
-
-const SQLITE_PYTHON_FALLBACK_SCRIPT = [
-  "import json, sqlite3, sys",
-  "def cell(v):",
-  "    if isinstance(v, memoryview):",
-  "        v = bytes(v)",
-  "    if isinstance(v, (bytes, bytearray)):",
-  "        return bytes(v).decode('utf-8', errors='replace')",
-  "    return v",
-  "db_path = sys.argv[1]",
-  "sql = sys.argv[2]",
-  "conn = sqlite3.connect(db_path)",
-  "conn.row_factory = sqlite3.Row",
-  "cur = conn.cursor()",
-  "cur.execute(sql)",
-  "rows = [{k: cell(r[k]) for k in r.keys()} for r in cur.fetchall()]",
-  "print(json.dumps(rows))",
-  "conn.close()",
-].join("\n");
 
 const execFile = promisify(execFileCallback);
 const { isCommandMissingError, isExecFileTimeoutError, querySqliteRowsImpl } =
@@ -127,7 +109,7 @@ describe("querySqliteRowsImpl", () => {
 });
 
 describe("runSqliteQuery python fallback", () => {
-  it("decodes ItemTable BLOB values as UTF-8 text when sqlite3 CLI is missing", async () => {
+  it("returns ItemTable BLOB values as hex when sqlite3 CLI is missing", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-sql-"));
     const dbPath = path.join(tmpDir, "state.vscdb");
     const sql =
@@ -161,9 +143,10 @@ describe("runSqliteQuery python fallback", () => {
     expect(rows).toHaveLength(1);
     const raw = rows[0]?.value;
     expect(typeof raw).toBe("string");
-    expect(raw).not.toMatch(/^[0-9a-f]+$/i);
+    expect(raw).toMatch(/^[0-9a-f]+$/i);
 
-    const merged = mergeComposerHeadersChain(String(raw), [
+    const decoded = Buffer.from(String(raw), "hex").toString("utf-8");
+    const merged = mergeComposerHeadersChain(decoded, [
       {
         allComposers: [
           {

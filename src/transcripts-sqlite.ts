@@ -9,6 +9,20 @@ const execFile = promisify(execFileCallback);
 
 export const SQLITE_SUBPROCESS_TIMEOUT_MS = 20_000;
 export const SQLITE_BUSY_TIMEOUT_MS = 5000;
+
+export const SQLITE_PYTHON_FALLBACK_SCRIPT = [
+  "import json, sqlite3, sys",
+  "db_path = sys.argv[1]",
+  "sql = sys.argv[2]",
+  `conn = sqlite3.connect(db_path, timeout=${Math.ceil(SQLITE_SUBPROCESS_TIMEOUT_MS / 1000)})`,
+  `conn.execute('PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}')`,
+  "conn.row_factory = sqlite3.Row",
+  "cur = conn.cursor()",
+  "cur.execute(sql)",
+  "rows = [{k: (bytes(r[k]).hex() if isinstance(r[k], (bytes, bytearray, memoryview)) else r[k]) for k in r.keys()} for r in cur.fetchall()]",
+  "print(json.dumps(rows))",
+  "conn.close()",
+].join(";");
 export const SQLITE_RETRY_BACKOFF_MS = 1_500;
 export const FILE_ACCESS_TIMEOUT_MS = 12_000;
 /** Above this size, the sqlite3 CLI often stalls on WAL-backed state.vscdb; prefer Python. */
@@ -156,21 +170,8 @@ async function runPythonSqliteQuery(
   sql: string,
   execOpts: { maxBuffer: number; timeout: number }
 ): Promise<{ stdout: string; stderr: string }> {
-  const pyScript = [
-    "import json, sqlite3, sys",
-    "db_path = sys.argv[1]",
-    "sql = sys.argv[2]",
-    `conn = sqlite3.connect(db_path, timeout=${Math.ceil(SQLITE_SUBPROCESS_TIMEOUT_MS / 1000)})`,
-    `conn.execute('PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}')`,
-    "conn.row_factory = sqlite3.Row",
-    "cur = conn.cursor()",
-    "cur.execute(sql)",
-    "rows = [{k: (bytes(r[k]).hex() if isinstance(r[k], (bytes, bytearray, memoryview)) else r[k]) for k in r.keys()} for r in cur.fetchall()]",
-    "print(json.dumps(rows))",
-    "conn.close()",
-  ].join(";");
   const py = await resolvePythonInterpreterForSqlite();
-  const args = [...py.argvPrefix, "-c", pyScript, dbPath, sql];
+  const args = [...py.argvPrefix, "-c", SQLITE_PYTHON_FALLBACK_SCRIPT, dbPath, sql];
   return execFile(py.command, args, execOpts);
 }
 
