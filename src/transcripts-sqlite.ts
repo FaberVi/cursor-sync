@@ -153,16 +153,22 @@ export async function runSqliteQuery(
     }
     const pyScript = [
       "import json, sqlite3, sys",
+      "def cell(v):",
+      "    if isinstance(v, memoryview):",
+      "        v = bytes(v)",
+      "    if isinstance(v, (bytes, bytearray)):",
+      "        return bytes(v).decode('utf-8', errors='replace')",
+      "    return v",
       "db_path = sys.argv[1]",
       "sql = sys.argv[2]",
       "conn = sqlite3.connect(db_path)",
       "conn.row_factory = sqlite3.Row",
       "cur = conn.cursor()",
       "cur.execute(sql)",
-      "rows = [{k: (bytes(r[k]).hex() if isinstance(r[k], (bytes, bytearray, memoryview)) else r[k]) for k in r.keys()} for r in cur.fetchall()]",
+      "rows = [{k: cell(r[k]) for k in r.keys()} for r in cur.fetchall()]",
       "print(json.dumps(rows))",
       "conn.close()",
-    ].join(";");
+    ].join("\n");
     const py = await resolvePythonInterpreterForSqlite();
     const args = [...py.argvPrefix, "-c", pyScript, dbPath, sql];
     return execFile(py.command, args, execOpts);
