@@ -12,7 +12,8 @@ import { SQLITE_PYTHON_FALLBACK_SCRIPT } from "../src/transcripts-sqlite.js";
 import { __transcriptsTestUtils } from "../src/transcripts.js";
 
 const execFile = promisify(execFileCallback);
-const { isCommandMissingError, querySqliteRowsImpl } = __transcriptsTestUtils;
+const { isCommandMissingError, isExecFileTimeoutError, querySqliteRowsImpl } =
+  __transcriptsTestUtils;
 
 describe("isCommandMissingError", () => {
   it("detects POSIX spawn ENOENT", () => {
@@ -39,6 +40,27 @@ describe("isCommandMissingError", () => {
   it("returns false for unrelated failures", () => {
     expect(isCommandMissingError(new Error("SQLITE_BUSY: database is locked"), "sqlite3")).toBe(false);
     expect(isCommandMissingError(new Error("syntax error near foo"), "sqlite3")).toBe(false);
+  });
+});
+
+describe("isExecFileTimeoutError", () => {
+  it("detects killed and ETIMEDOUT", () => {
+    expect(isExecFileTimeoutError(Object.assign(new Error("x"), { killed: true }))).toBe(true);
+    expect(isExecFileTimeoutError(Object.assign(new Error("x"), { code: "ETIMEDOUT" }))).toBe(true);
+    expect(isExecFileTimeoutError(new Error("timed out"))).toBe(true);
+    expect(isExecFileTimeoutError(new Error("syntax error"))).toBe(false);
+  });
+});
+
+describe("querySqliteRowsImpl PRAGMA user_version", () => {
+  it("parses single JSON line from sqlite3 -json (no bundled PRAGMA busy_timeout)", async () => {
+    const stdout = '[{"user_version":2}]\n';
+    const runQuery = vi.fn().mockResolvedValue({ stdout, stderr: "" });
+    const rows = await querySqliteRowsImpl(runQuery, "/tmp/golden.db", "PRAGMA user_version;", {
+      retries: 1,
+    });
+    expect(rows).toEqual([{ user_version: 2 }]);
+    expect(runQuery).toHaveBeenCalledWith("/tmp/golden.db", "PRAGMA user_version;");
   });
 });
 
@@ -87,7 +109,7 @@ describe("querySqliteRowsImpl", () => {
 });
 
 describe("runSqliteQuery python fallback", () => {
-  it("decodes ItemTable BLOB values as UTF-8 text when sqlite3 CLI is missing", async () => {
+  it("returns ItemTable BLOB values as hex when sqlite3 CLI is missing", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-sql-"));
     const dbPath = path.join(tmpDir, "state.vscdb");
     const sql =
@@ -121,9 +143,10 @@ describe("runSqliteQuery python fallback", () => {
     expect(rows).toHaveLength(1);
     const raw = rows[0]?.value;
     expect(typeof raw).toBe("string");
-    expect(raw).not.toMatch(/^[0-9a-f]+$/i);
+    expect(raw).toMatch(/^[0-9a-f]+$/i);
 
-    const merged = mergeComposerHeadersChain(String(raw), [
+    const decoded = Buffer.from(String(raw), "hex").toString("utf-8");
+    const merged = mergeComposerHeadersChain(decoded, [
       {
         allComposers: [
           {

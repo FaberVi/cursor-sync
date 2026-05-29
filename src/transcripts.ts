@@ -37,6 +37,7 @@ export const __transcriptsTestUtils = {
   mergeComposerHeadersChain,
   mergeComposerDataAdditive,
   isCommandMissingError,
+  isExecFileTimeoutError,
   querySqliteRowsImpl,
 };
 

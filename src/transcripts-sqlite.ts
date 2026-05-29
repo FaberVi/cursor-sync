@@ -7,29 +7,26 @@ import { getComposerId } from "./composer-merge.js";
 
 const execFile = promisify(execFileCallback);
 
+export const SQLITE_SUBPROCESS_TIMEOUT_MS = 20_000;
+export const SQLITE_BUSY_TIMEOUT_MS = 5000;
+
 export const SQLITE_PYTHON_FALLBACK_SCRIPT = [
   "import json, sqlite3, sys",
-  "def cell(v):",
-  "    if isinstance(v, memoryview):",
-  "        v = bytes(v)",
-  "    if isinstance(v, (bytes, bytearray)):",
-  "        return bytes(v).decode('utf-8', errors='replace')",
-  "    return v",
   "db_path = sys.argv[1]",
   "sql = sys.argv[2]",
-  "conn = sqlite3.connect(db_path)",
+  `conn = sqlite3.connect(db_path, timeout=${Math.ceil(SQLITE_SUBPROCESS_TIMEOUT_MS / 1000)})`,
+  `conn.execute('PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}')`,
   "conn.row_factory = sqlite3.Row",
   "cur = conn.cursor()",
   "cur.execute(sql)",
-  "rows = [{k: cell(r[k]) for k in r.keys()} for r in cur.fetchall()]",
+  "rows = [{k: (bytes(r[k]).hex() if isinstance(r[k], (bytes, bytearray, memoryview)) else r[k]) for k in r.keys()} for r in cur.fetchall()]",
   "print(json.dumps(rows))",
   "conn.close()",
-].join("\n");
-
-export const SQLITE_SUBPROCESS_TIMEOUT_MS = 20_000;
-export const SQLITE_BUSY_TIMEOUT_MS = 5000;
+].join(";");
 export const SQLITE_RETRY_BACKOFF_MS = 1_500;
 export const FILE_ACCESS_TIMEOUT_MS = 12_000;
+/** Above this size, the sqlite3 CLI often stalls on WAL-backed state.vscdb; prefer Python. */
+export const SQLITE_PYTHON_PREFER_BYTES = 256 * 1024 * 1024;
 
 type PythonSqliteInterpreter = {
   command: string;
@@ -159,20 +156,40 @@ export async function querySqliteRows(
   return querySqliteRowsImpl(runSqliteQuery, dbPath, sql, opts);
 }
 
+async function preferPythonForDbFile(dbPath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(dbPath);
+    return stat.size >= SQLITE_PYTHON_PREFER_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+async function runPythonSqliteQuery(
+  dbPath: string,
+  sql: string,
+  execOpts: { maxBuffer: number; timeout: number }
+): Promise<{ stdout: string; stderr: string }> {
+  const py = await resolvePythonInterpreterForSqlite();
+  const args = [...py.argvPrefix, "-c", SQLITE_PYTHON_FALLBACK_SCRIPT, dbPath, sql];
+  return execFile(py.command, args, execOpts);
+}
+
 export async function runSqliteQuery(
   dbPath: string,
   sql: string
 ): Promise<{ stdout: string; stderr: string }> {
   const execOpts = { maxBuffer: 64 * 1024 * 1024, timeout: SQLITE_SUBPROCESS_TIMEOUT_MS };
+  if (await preferPythonForDbFile(dbPath)) {
+    return runPythonSqliteQuery(dbPath, sql, execOpts);
+  }
   try {
     return await execFile("sqlite3", ["-json", dbPath, sql], execOpts);
   } catch (error) {
-    if (!isCommandMissingError(error, "sqlite3")) {
+    if (!isCommandMissingError(error, "sqlite3") && !isExecFileTimeoutError(error)) {
       throw error;
     }
-    const py = await resolvePythonInterpreterForSqlite();
-    const args = [...py.argvPrefix, "-c", SQLITE_PYTHON_FALLBACK_SCRIPT, dbPath, sql];
-    return execFile(py.command, args, execOpts);
+    return runPythonSqliteQuery(dbPath, sql, execOpts);
   }
 }
 
@@ -187,7 +204,7 @@ export async function runSqliteScript(dbPath: string, script: string): Promise<v
       await execFile("sqlite3", [dbPath, `.read ${tmpPath}`], execOpts);
       return;
     } catch (error) {
-      if (!isCommandMissingError(error, "sqlite3")) {
+      if (!isCommandMissingError(error, "sqlite3") && !isExecFileTimeoutError(error)) {
         throw error;
       }
       const pyScript = [
@@ -195,7 +212,7 @@ export async function runSqliteScript(dbPath: string, script: string): Promise<v
         "db_path = sys.argv[1]",
         "sql_path = sys.argv[2]",
         "sql_script = open(sql_path, 'r', encoding='utf-8').read()",
-        "conn = sqlite3.connect(db_path)",
+        `conn = sqlite3.connect(db_path, timeout=${Math.ceil(SQLITE_SUBPROCESS_TIMEOUT_MS / 1000)})`,
         "cur = conn.cursor()",
         "cur.executescript(sql_script)",
         "conn.commit()",

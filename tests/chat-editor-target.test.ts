@@ -48,6 +48,22 @@ async function createStore(workspaceKey: string, conversationId: string): Promis
   await fs.writeFile(path.join(storeDir, "store.db"), "sqlite");
 }
 
+async function createTranscript(
+  conversationId: string,
+  projectKey = "test-project"
+): Promise<void> {
+  const dir = path.join(
+    env.home,
+    ".cursor",
+    "projects",
+    projectKey,
+    "agent-transcripts",
+    conversationId
+  );
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, `${conversationId}.jsonl`), '{"role":"user"}\n');
+}
+
 describe("chat-editor-target", () => {
   beforeEach(async () => {
     env.home = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-chat-target-"));
@@ -101,6 +117,20 @@ describe("chat-editor-target", () => {
       ok: false,
       reason: "store-not-found",
       conversationId: CHAT_ID,
+    });
+  });
+
+  it("falls back to current workspace when transcripts exist without store.db", async () => {
+    const { md5FolderKey } = await import("../src/chat-workspace-context.js");
+    const folder = path.join(env.home, "repo-a");
+    const currentWorkspaceKey = md5FolderKey(path.resolve(folder));
+    env.workspaceFolders = [{ uri: { fsPath: folder } }];
+    await createTranscript(CHAT_ID);
+
+    const { resolveChatEditorExportTarget } = await import("../src/chat-editor-target.js");
+    await expect(resolveChatEditorExportTarget(CHAT_ID)).resolves.toEqual({
+      ok: true,
+      target: { conversationId: CHAT_ID, workspaceKey: currentWorkspaceKey },
     });
   });
 
