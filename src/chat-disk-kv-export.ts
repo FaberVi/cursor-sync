@@ -142,6 +142,7 @@ export async function enrichBundleWithLiveDiskKv(
     return { bundle, warnings };
   }
   try {
+    let enrichedViaPython = false;
     let snap = await exportDiskKvSnapshot(globalDb, bundle.conversationId, opts);
     if (!snap) {
       const onDisk = await countDiskKvBubblesOnGlobalDb(globalDb, bundle.conversationId);
@@ -154,6 +155,7 @@ export async function enrichBundleWithLiveDiskKv(
         });
         if (pySnap) {
           snap = pySnap;
+          enrichedViaPython = true;
           warnings.push(
             `Enriched bundle via Python diskKv export (${pySnap.rowCount} rows, ${pySnap.toolBubbleCount} tool/MCP bubbles).`
           );
@@ -163,9 +165,11 @@ export async function enrichBundleWithLiveDiskKv(
     if (!snap) {
       return { bundle, warnings };
     }
-    warnings.push(
-      `Enriched bundle with live diskKvSnapshot (${snap.rowCount} rows, ${snap.toolBubbleCount} tool/MCP bubbles) from global state.vscdb.`
-    );
+    if (!enrichedViaPython) {
+      warnings.push(
+        `Enriched bundle with live diskKvSnapshot (${snap.rowCount} rows, ${snap.toolBubbleCount} tool/MCP bubbles) from global state.vscdb.`
+      );
+    }
     return {
       bundle: {
         ...bundle,
