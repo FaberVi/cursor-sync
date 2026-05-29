@@ -1,9 +1,17 @@
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
+import { mergeComposerHeadersChain } from "../src/composer-merge.js";
+import { SQLITE_PYTHON_FALLBACK_SCRIPT } from "../src/transcripts-sqlite.js";
 import { __transcriptsTestUtils } from "../src/transcripts.js";
 
+const execFile = promisify(execFileCallback);
 const { isCommandMissingError, querySqliteRowsImpl } = __transcriptsTestUtils;
 
 describe("isCommandMissingError", () => {
@@ -75,5 +83,59 @@ describe("querySqliteRowsImpl", () => {
     expect(rows).toEqual([]);
     expect(runQuery).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
+  });
+});
+
+describe("runSqliteQuery python fallback", () => {
+  it("decodes ItemTable BLOB values as UTF-8 text when sqlite3 CLI is missing", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-sql-"));
+    const dbPath = path.join(tmpDir, "state.vscdb");
+    const sql =
+      "SELECT key, value FROM ItemTable WHERE key = 'composer.composerHeaders';";
+    await execFile("python3", [
+      "-c",
+      [
+        "import json, sqlite3, sys",
+        "db = sys.argv[1]",
+        "payload = json.dumps({'allComposers': [{'composerId': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'name': 'keep'}]})",
+        "conn = sqlite3.connect(db)",
+        "conn.execute('CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)')",
+        "conn.execute('INSERT INTO ItemTable VALUES (?, ?)', ('composer.composerHeaders', payload.encode()))",
+        "conn.commit()",
+        "conn.close()",
+      ].join(";"),
+      dbPath,
+    ]);
+
+    const runQuery = async (_dbPath: string, _sql: string) => {
+      const { stdout, stderr } = await execFile("python3", [
+        "-c",
+        SQLITE_PYTHON_FALLBACK_SCRIPT,
+        dbPath,
+        sql,
+      ]);
+      return { stdout, stderr };
+    };
+
+    const rows = await querySqliteRowsImpl(runQuery, dbPath, sql, { retries: 1 });
+    expect(rows).toHaveLength(1);
+    const raw = rows[0]?.value;
+    expect(typeof raw).toBe("string");
+    expect(raw).not.toMatch(/^[0-9a-f]+$/i);
+
+    const merged = mergeComposerHeadersChain(String(raw), [
+      {
+        allComposers: [
+          {
+            composerId: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+            name: "imported",
+            type: "head",
+          },
+        ],
+      },
+    ]);
+    const ids = merged.allComposers.map((c) => c.composerId);
+    expect(ids).toContain("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    expect(ids).toContain("bbbbbbbb-cccc-dddd-eeee-ffffffffffff");
   });
 });
