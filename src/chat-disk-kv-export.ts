@@ -27,13 +27,7 @@ export function cursorDiskKvValueAsText(value: unknown): string | null {
   if (trimmed.length === 0) {
     return trimmed;
   }
-  if (
-    trimmed.length >= 4 &&
-    trimmed.length % 2 === 0 &&
-    /^[0-9a-fA-F]+$/.test(trimmed) &&
-    !trimmed.startsWith("{") &&
-    !trimmed.startsWith("[")
-  ) {
+  if (trimmed.length >= 4 && trimmed.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(trimmed)) {
     try {
       return Buffer.from(trimmed, "hex").toString("utf-8");
     } catch {
@@ -55,7 +49,11 @@ function countToolBubbles(rows: Array<{ value: string }>): number {
       if (obj.toolFormerData) {
         count += 1;
       }
-    } catch {}
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) {
+        throw e;
+      }
+    }
   }
   return count;
 }
