@@ -81,6 +81,15 @@
         "title": "Cursor Sync: Configure GitHub"
       },
       {
+        "command": "cursorSync.changeGistId",
+        "title": "Cursor Sync: Change Gist ID",
+        "enablement": "cursorSync.configured"
+      },
+      {
+        "command": "cursorSync.copyGistUrl",
+        "title": "Cursor Sync: Copy Gist URL"
+      },
+      {
         "command": "cursorSync.push",
         "title": "Cursor Sync: Push Now",
         "icon": "$(cloud-upload)",

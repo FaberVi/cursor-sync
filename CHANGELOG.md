@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Gist commands**: `Cursor Sync: Change Gist ID` (`cursorSync.changeGistId`) sets or switches the stored sync Gist after token verification; `Cursor Sync: Copy Gist URL` (`cursorSync.copyGistUrl`) copies the configured Gist URL to the clipboard.
+
 ## v0.7.4
 
 ### Added

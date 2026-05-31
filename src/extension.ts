@@ -41,6 +41,10 @@ import {
   registerActivationWatcher,
 } from "./chat-import-activate-watcher.js";
 import { executeInstallSkillTransportChat } from "./install-skill-transport-chat.js";
+import {
+  executeChangeGistId,
+  executeCopyGistUrl,
+} from "./gist-settings.js";
 let configListener: vscode.Disposable | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -73,6 +77,18 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.configureGithub", () =>
       configureGithub(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.changeGistId", () =>
+      executeChangeGistId(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.copyGistUrl", () =>
+      executeCopyGistUrl(context)
     )
   );
 
