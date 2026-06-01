@@ -159,6 +159,10 @@
         "title": "Cursor Sync: Import Chat from Private Gist"
       },
       {
+        "command": "cursorSync.setChatEncryptionPassword",
+        "title": "Cursor Sync: Set Chat Encryption Password"
+      },
+      {
         "command": "cursorSync.refreshImportedTranscripts",
         "title": "Cursor Sync: Refresh Imported Transcripts (Deprecated)"
       },
@@ -306,6 +310,11 @@
           "type": "string",
           "default": "",
           "description": "User-level override directory for transport-chat scripts (cursor_chat_io.py, cursor_composer_bridge.py). Workspace settings are ignored for security. Empty = use the extension's bundled scripts."
+        },
+        "cursorSync.chatGist.encrypt": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, chat gist exports (chat-bundle.json / chat-bundles.json) are encrypted with your chat encryption password before upload."
         }
       }
     }

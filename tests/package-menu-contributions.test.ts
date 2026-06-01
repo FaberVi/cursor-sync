@@ -43,4 +43,21 @@ describe("package menu contributions", () => {
       when: "false",
     });
   });
+
+  it("declares chat gist encryption setting default true", () => {
+    const pkg = readPackageJson();
+    expect(pkg.contributes.configuration.properties["cursorSync.chatGist.encrypt"]).toEqual({
+      type: "boolean",
+      default: true,
+      description: expect.stringMatching(/encrypt/i),
+    });
+  });
+
+  it("declares set chat encryption password command", () => {
+    const pkg = readPackageJson();
+    const command = pkg.contributes.commands.find(
+      (entry: { command: string }) => entry.command === "cursorSync.setChatEncryptionPassword"
+    );
+    expect(command?.title).toMatch(/Set Chat Encryption Password/i);
+  });
 });
