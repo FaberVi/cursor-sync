@@ -27,6 +27,16 @@ export async function clearChatEncryptionPassword(
 
 export type RequirePasswordReason = "export" | "import-envelope";
 
+async function promptExistingPassword(): Promise<string | undefined> {
+  return vscode.window.showInputBox({
+    prompt: "Enter chat encryption password",
+    password: true,
+    ignoreFocusOut: true,
+    validateInput: (value) =>
+      value && value.trim().length > 0 ? undefined : "Password cannot be empty",
+  });
+}
+
 async function promptNewPassword(): Promise<string | undefined> {
   const password = await vscode.window.showInputBox({
     prompt: "Enter chat encryption password",
@@ -60,7 +70,10 @@ export async function requireChatEncryptionPassword(
     return stored;
   }
 
-  const password = await promptNewPassword();
+  const password =
+    reason === "import-envelope"
+      ? await promptExistingPassword()
+      : await promptNewPassword();
   if (!password) {
     return undefined;
   }

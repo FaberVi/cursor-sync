@@ -101,6 +101,19 @@ function parseEnvelope(raw: string): EnvelopeV1 {
       throw new ChatGistCryptoError(`Missing or invalid kdf.${field}.`, "INVALID_ENVELOPE");
     }
   }
+  const memoryKiB = kdfFields.memoryKiB as number;
+  const iterations = kdfFields.iterations as number;
+  const parallelism = kdfFields.parallelism as number;
+  if (
+    memoryKiB <= 0 ||
+    memoryKiB > 1048576 ||
+    iterations <= 0 ||
+    iterations > 100 ||
+    parallelism <= 0 ||
+    parallelism > 64
+  ) {
+    throw new ChatGistCryptoError("KDF parameters out of allowed range.", "INVALID_ENVELOPE");
+  }
   for (const field of ["iv", "ciphertext", "tag"] as const) {
     if (typeof cipherFields[field] !== "string") {
       throw new ChatGistCryptoError(`Missing or invalid cipher.${field}.`, "INVALID_ENVELOPE");
