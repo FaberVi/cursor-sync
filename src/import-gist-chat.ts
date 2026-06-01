@@ -22,8 +22,6 @@ import {
   clearChatEncryptionPassword,
 } from "./chat-encryption-auth.js";
 
-export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
-
 export async function executeImportChatFromGist(
   context: vscode.ExtensionContext
 ): Promise<void> {

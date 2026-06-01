@@ -9,8 +9,6 @@ import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import { encryptChatGistPayload } from "./chat-gist-crypto.js";
 import { requireChatEncryptionPassword, isChatGistEncryptionEnabled } from "./chat-encryption-auth.js";
 
-export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
-
 export async function executeExportChatToGist(
   context: vscode.ExtensionContext
 ): Promise<void> {
@@ -75,19 +73,19 @@ export async function executeExportChatToGist(
           [gistPayload.fileName]: { content: uploadContent },
         };
 
-        const result = await withRetry(() =>
+        const gistCreate = await withRetry(() =>
           client.createGist(gistFiles, "Cursor Sync - Chat Export")
         );
 
-        if (!result.ok) {
-          vscode.window.showErrorMessage(`Export failed: ${result.error.message}`);
+        if (!gistCreate.ok) {
+          vscode.window.showErrorMessage(`Export failed: ${gistCreate.error.message}`);
           logger.appendLine(
-            `[${new Date().toISOString()}] Chat export to Gist failed: ${result.error.category} - ${result.error.message}`
+            `[${new Date().toISOString()}] Chat export to Gist failed: ${gistCreate.error.category} - ${gistCreate.error.message}`
           );
           return;
         }
 
-        const gistUrl = result.data.html_url;
+        const gistUrl = gistCreate.data.html_url;
         logger.appendLine(`[${new Date().toISOString()}] Chat export to Gist succeeded: ${gistUrl}`);
 
         for (const w of warnings) {
