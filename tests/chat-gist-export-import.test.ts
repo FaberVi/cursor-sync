@@ -26,6 +26,10 @@ const {
   showInputBoxMock,
   showQuickPickMock,
   clipboardWriteTextMock,
+  requireChatEncryptionPasswordMock,
+  encryptChatGistPayloadMock,
+  decryptChatGistPayloadMock,
+  isEncryptedChatGistPayloadMock,
 } = vi.hoisted(() => ({
   createGistMock: vi.fn(),
   getGistMock: vi.fn(),
@@ -39,6 +43,10 @@ const {
   showInputBoxMock: vi.fn(),
   showQuickPickMock: vi.fn(),
   clipboardWriteTextMock: vi.fn(),
+  requireChatEncryptionPasswordMock: vi.fn(),
+  encryptChatGistPayloadMock: vi.fn(),
+  decryptChatGistPayloadMock: vi.fn(),
+  isEncryptedChatGistPayloadMock: vi.fn(),
 }));
 
 let mockedHomeDir = "";
@@ -58,6 +66,7 @@ const configurationValues: Record<string, unknown> = {
   "chatImport.activateStrict": false,
   "chatImport.bridgeWaitResultSeconds": 0,
   "chatImport.pingServer": false,
+  "chatGist.encrypt": false,
 };
 
 vi.mock("node:os", async () => {
@@ -151,6 +160,23 @@ vi.mock("../src/auth.js", () => ({
 vi.mock("../src/retry.js", () => ({
   withRetry: withRetryMock,
 }));
+
+vi.mock("../src/chat-encryption-auth.js", () => ({
+  requireChatEncryptionPassword: requireChatEncryptionPasswordMock,
+  isChatGistEncryptionEnabled: vi.fn(() => configurationValues["chatGist.encrypt"] !== false),
+  setChatEncryptionPassword: vi.fn(async () => {}),
+  clearChatEncryptionPassword: vi.fn(async () => {}),
+}));
+
+vi.mock("../src/chat-gist-crypto.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/chat-gist-crypto.js")>();
+  return {
+    encryptChatGistPayload: encryptChatGistPayloadMock,
+    decryptChatGistPayload: decryptChatGistPayloadMock,
+    isEncryptedChatGistPayload: isEncryptedChatGistPayloadMock,
+    ChatGistCryptoError: actual.ChatGistCryptoError,
+  };
+});
 
 vi.mock("../src/diagnostics.js", () => ({
   getLogger: () => ({
@@ -337,6 +363,15 @@ describe("chat gist export and import", () => {
     showInputBoxMock.mockReset();
     showQuickPickMock.mockReset();
     clipboardWriteTextMock.mockReset();
+    requireChatEncryptionPasswordMock.mockReset();
+    encryptChatGistPayloadMock.mockReset();
+    decryptChatGistPayloadMock.mockReset();
+    isEncryptedChatGistPayloadMock.mockReset();
+    requireChatEncryptionPasswordMock.mockResolvedValue(undefined);
+    encryptChatGistPayloadMock.mockImplementation(async (plain: string) => `{"cursorSyncEncrypted":{}}${plain}`);
+    isEncryptedChatGistPayloadMock.mockReturnValue(false);
+    decryptChatGistPayloadMock.mockImplementation(async (_env: string, _pw: string) => "");
+    configurationValues["chatGist.encrypt"] = false;
     configurationValues["transcripts.autoReloadAfterImport"] = false;
     requireTokenMock.mockResolvedValue("ghp_chat_export_token");
     getTokenMock.mockResolvedValue("ghp_chat_import_token");
@@ -814,5 +849,189 @@ describe("chat gist export and import", () => {
         String(c[0]).includes("2 chats in private Gist")
       )
     ).toBe(true);
+  });
+
+  it("encrypts gist payload when chatGist.encrypt is true", async () => {
+    configurationValues["chatGist.encrypt"] = true;
+    requireChatEncryptionPasswordMock.mockResolvedValue("test-pass");
+    encryptChatGistPayloadMock.mockImplementation(async (plain: string) =>
+      JSON.stringify({ cursorSyncEncrypted: { mock: true }, plainLen: plain.length })
+    );
+
+    const workspaceKey = "enc-export-wk";
+    const projectKey = "enc-export-project";
+    const conversationId = "conv-enc-export-001";
+    await setupExportConversation(tmpRoot, workspaceKey, conversationId, { projectKey });
+    mockExportPicker(workspaceKey, [conversationId]);
+    showInformationMessageMock.mockResolvedValue(undefined);
+    createGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-enc",
+        html_url: "https://gist.github.com/example/gist-enc",
+        description: "Cursor Sync - Chat Export",
+        files: {},
+        created_at: "2026-05-20T12:00:00.000Z",
+        updated_at: "2026-05-20T12:00:00.000Z",
+      },
+    });
+
+    const { executeExportChatToGist } = await import("../src/export-gist-chat.js");
+    await executeExportChatToGist(extensionContext as never);
+    await flushMicrotasks();
+
+    expect(requireChatEncryptionPasswordMock).toHaveBeenCalledWith(extensionContext, "export");
+    expect(encryptChatGistPayloadMock).toHaveBeenCalledTimes(1);
+    const uploaded = createGistMock.mock.calls[0]![0] as Record<string, { content: string }>;
+    expect(uploaded[CHAT_BUNDLE_GIST_FILE_NAME]!.content).toContain("cursorSyncEncrypted");
+    expect(
+      showInformationMessageMock.mock.calls.some((c) =>
+        String(c[0]).includes("encrypted") && !String(c[0]).includes("Anyone with the link")
+      )
+    ).toBe(true);
+  });
+
+  it("skips password and encryption when chatGist.encrypt is false", async () => {
+    configurationValues["chatGist.encrypt"] = false;
+    const workspaceKey = "plain-export-wk";
+    const conversationId = "conv-plain-export-001";
+    await setupExportConversation(tmpRoot, workspaceKey, conversationId);
+    mockExportPicker(workspaceKey, [conversationId]);
+    showInformationMessageMock.mockResolvedValue(undefined);
+    createGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-plain",
+        html_url: "https://gist.github.com/example/gist-plain",
+        description: "Cursor Sync - Chat Export",
+        files: {},
+        created_at: "2026-05-20T12:00:00.000Z",
+        updated_at: "2026-05-20T12:00:00.000Z",
+      },
+    });
+
+    const { executeExportChatToGist } = await import("../src/export-gist-chat.js");
+    await executeExportChatToGist(extensionContext as never);
+    await flushMicrotasks();
+
+    expect(requireChatEncryptionPasswordMock).not.toHaveBeenCalled();
+    expect(encryptChatGistPayloadMock).not.toHaveBeenCalled();
+    const uploaded = createGistMock.mock.calls[0]![0] as Record<string, { content: string }>;
+    const bundle = JSON.parse(uploaded[CHAT_BUNDLE_GIST_FILE_NAME]!.content);
+    expect(bundle.type).toBe("chat-persistence");
+  });
+
+  it("decrypts encrypted gist on import", async () => {
+    const sourceProjectKey = "enc-import-project";
+    const conversationId = "conv-enc-import-001";
+    const targetProjectKey = folderToProjectKey(mockWorkspaceFolder);
+    const bundle = buildChatBundleFixture({ conversationId, projectKey: sourceProjectKey });
+    const plainJson = JSON.stringify(bundle, null, 2);
+    const envelopeJson = JSON.stringify({ cursorSyncEncrypted: { v: 1 } });
+
+    isEncryptedChatGistPayloadMock.mockReturnValue(true);
+    decryptChatGistPayloadMock.mockResolvedValue(plainJson);
+    requireChatEncryptionPasswordMock.mockResolvedValue("import-pass");
+
+    getGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-enc-import",
+        html_url: "https://gist.github.com/example/gist-enc-import",
+        description: "Cursor Sync - Chat Export",
+        files: {
+          [CHAT_BUNDLE_GIST_FILE_NAME]: { content: envelopeJson },
+        },
+        created_at: "2026-05-20T12:00:00.000Z",
+        updated_at: "2026-05-20T12:00:00.000Z",
+      },
+    });
+
+    showInputBoxMock.mockResolvedValue("gist-enc-import");
+    showQuickPickMock.mockImplementation(
+      async (items: Array<{ description?: string; activate?: boolean }>) =>
+        items.find((item) => item.activate === false) ??
+        items.find((item) => item.description === targetProjectKey)
+    );
+    showInformationMessageMock.mockResolvedValue(undefined);
+
+    const chatMod = await import("../src/chat-persistence.js");
+    const restoreSpy = vi.spyOn(chatMod, "restoreChatBundle");
+
+    const { executeImportChatFromGist } = await import("../src/import-gist-chat.js");
+    await executeImportChatFromGist(extensionContext as never);
+
+    expect(requireChatEncryptionPasswordMock).toHaveBeenCalledWith(
+      extensionContext,
+      "import-envelope"
+    );
+    expect(decryptChatGistPayloadMock).toHaveBeenCalledWith(envelopeJson, "import-pass");
+    expect(restoreSpy).toHaveBeenCalledTimes(1);
+    restoreSpy.mockRestore();
+  });
+
+  it("does not require password for plain gist when encrypt setting is false", async () => {
+    configurationValues["chatGist.encrypt"] = false;
+    const bundle = buildChatBundleFixture({
+      conversationId: "conv-plain-import",
+      projectKey: "plain-import-project",
+    });
+    getGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-plain-import",
+        html_url: "https://gist.github.com/example/gist-plain-import",
+        description: "Cursor Sync - Chat Export",
+        files: {
+          [CHAT_BUNDLE_GIST_FILE_NAME]: { content: JSON.stringify(bundle) },
+        },
+        created_at: "2026-05-20T12:00:00.000Z",
+        updated_at: "2026-05-20T12:00:00.000Z",
+      },
+    });
+    isEncryptedChatGistPayloadMock.mockReturnValue(false);
+    showInputBoxMock.mockResolvedValue("gist-plain-import");
+    showQuickPickMock.mockImplementation(
+      async (items: Array<{ description?: string; activate?: boolean }>) =>
+        items.find((item) => item.activate === false) ??
+        items.find((item) => item.description === folderToProjectKey(mockWorkspaceFolder))
+    );
+    showInformationMessageMock.mockResolvedValue(undefined);
+
+    const chatMod = await import("../src/chat-persistence.js");
+    const restoreSpy = vi.spyOn(chatMod, "restoreChatBundle");
+
+    const { executeImportChatFromGist } = await import("../src/import-gist-chat.js");
+    await executeImportChatFromGist(extensionContext as never);
+
+    expect(requireChatEncryptionPasswordMock).not.toHaveBeenCalled();
+    expect(decryptChatGistPayloadMock).not.toHaveBeenCalled();
+    expect(restoreSpy).toHaveBeenCalledTimes(1);
+    restoreSpy.mockRestore();
+  });
+
+  it("surfaces DECRYPT_FAILED without leaking password", async () => {
+    const { ChatGistCryptoError } = await import("../src/chat-gist-crypto.js");
+    isEncryptedChatGistPayloadMock.mockReturnValue(true);
+    requireChatEncryptionPasswordMock.mockResolvedValue("wrong");
+    decryptChatGistPayloadMock.mockRejectedValue(
+      new ChatGistCryptoError("Decryption failed.", "DECRYPT_FAILED")
+    );
+    getGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-bad-pass",
+        files: { [CHAT_BUNDLE_GIST_FILE_NAME]: { content: '{"cursorSyncEncrypted":{}}' } },
+      },
+    });
+    showInputBoxMock.mockResolvedValue("gist-bad-pass");
+
+    const { executeImportChatFromGist } = await import("../src/import-gist-chat.js");
+    await executeImportChatFromGist(extensionContext as never);
+
+    expect(showErrorMessageMock).toHaveBeenCalledWith(
+      expect.stringMatching(/decrypt|password/i)
+    );
+    expect(showErrorMessageMock.mock.calls[0]![0]).not.toContain("wrong");
   });
 });

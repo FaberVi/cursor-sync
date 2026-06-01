@@ -11,6 +11,16 @@ import {
   parseChatBundleOrCollection,
   pickBundleFromCollection,
 } from "./chat-bundle-format.js";
+import {
+  decryptChatGistPayload,
+  isEncryptedChatGistPayload,
+  ChatGistCryptoError,
+} from "./chat-gist-crypto.js";
+import {
+  requireChatEncryptionPassword,
+  setChatEncryptionPassword,
+  clearChatEncryptionPassword,
+} from "./chat-encryption-auth.js";
 
 export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 
@@ -79,6 +89,56 @@ export async function executeImportChatFromGist(
   );
 }
 
+async function resolveGistChatFileContent(
+  context: vscode.ExtensionContext,
+  raw: string,
+  label: string
+): Promise<string> {
+  if (!isEncryptedChatGistPayload(raw)) {
+    return raw;
+  }
+  const password = await requireChatEncryptionPassword(context, "import-envelope");
+  if (!password) {
+    throw new Error(`${label}: chat encryption password required to decrypt this gist.`);
+  }
+  try {
+    const plaintext = await decryptChatGistPayload(raw, password);
+    await setChatEncryptionPassword(context, password);
+    return plaintext;
+  } catch (err) {
+    if (err instanceof ChatGistCryptoError && err.code === "DECRYPT_FAILED") {
+      await clearChatEncryptionPassword(context);
+      throw new Error(
+        "Could not decrypt chat gist. Check your chat encryption password (Cursor Sync: Set Chat Encryption Password)."
+      );
+    }
+    throw err;
+  }
+}
+
+async function resolveChatBundleFromGistContent(
+  context: vscode.ExtensionContext,
+  raw: string,
+  fileLabel: string,
+  requireCollection: boolean,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<ChatBundle> {
+  const plaintext = await resolveGistChatFileContent(context, raw, fileLabel);
+  const parsed = parseChatBundleOrCollection(plaintext);
+  if (requireCollection && parsed.kind !== "collection") {
+    throw new Error("Invalid chat-bundles.json: expected chat-bundles-collection.");
+  }
+  if (parsed.kind === "single") {
+    return parsed.bundle;
+  }
+  progress.report({ message: "Select chat to import..." });
+  const picked = await pickBundleFromCollection(parsed.collection);
+  if (!picked) {
+    throw new Error("Chat import cancelled.");
+  }
+  return picked;
+}
+
 async function fetchAndParseGistBundle(
   context: vscode.ExtensionContext,
   gistId: string,
@@ -104,28 +164,21 @@ async function fetchAndParseGistBundle(
   let bundle: ChatBundle;
 
   if (bundleRaw) {
-    const parsed = parseChatBundleOrCollection(bundleRaw);
-    if (parsed.kind === "single") {
-      bundle = parsed.bundle;
-    } else {
-      progress.report({ message: "Select chat to import..." });
-      const picked = await pickBundleFromCollection(parsed.collection);
-      if (!picked) {
-        throw new Error("Chat import cancelled.");
-      }
-      bundle = picked;
-    }
+    bundle = await resolveChatBundleFromGistContent(
+      context,
+      bundleRaw,
+      "chat-bundle.json",
+      false,
+      progress
+    );
   } else if (collectionRaw) {
-    const parsed = parseChatBundleOrCollection(collectionRaw);
-    if (parsed.kind !== "collection") {
-      throw new Error("Invalid chat-bundles.json: expected chat-bundles-collection.");
-    }
-    progress.report({ message: "Select chat to import..." });
-    const picked = await pickBundleFromCollection(parsed.collection);
-    if (!picked) {
-      throw new Error("Chat import cancelled.");
-    }
-    bundle = picked;
+    bundle = await resolveChatBundleFromGistContent(
+      context,
+      collectionRaw,
+      "chat-bundles.json",
+      true,
+      progress
+    );
   } else {
     if (gist.files?.[TRANSCRIPT_MANIFEST_FILE_NAME]) {
       throw new Error(
