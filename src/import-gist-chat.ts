@@ -11,6 +11,12 @@ import {
   parseChatBundleOrCollection,
   pickBundleFromCollection,
 } from "./chat-bundle-format.js";
+import {
+  decryptChatGistPayload,
+  isEncryptedChatGistPayload,
+  ChatGistCryptoError,
+} from "./chat-gist-crypto.js";
+import { requireChatEncryptionPassword } from "./chat-encryption-auth.js";
 
 export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 
@@ -79,6 +85,30 @@ export async function executeImportChatFromGist(
   );
 }
 
+async function resolveGistChatFileContent(
+  context: vscode.ExtensionContext,
+  raw: string,
+  label: string
+): Promise<string> {
+  if (!isEncryptedChatGistPayload(raw)) {
+    return raw;
+  }
+  const password = await requireChatEncryptionPassword(context, { reason: "import-envelope" });
+  if (!password) {
+    throw new Error(`${label}: chat encryption password required to decrypt this gist.`);
+  }
+  try {
+    return await decryptChatGistPayload(raw, password);
+  } catch (err) {
+    if (err instanceof ChatGistCryptoError && err.code === "DECRYPT_FAILED") {
+      throw new Error(
+        "Could not decrypt chat gist. Check your chat encryption password (Cursor Sync: Set Chat Encryption Password)."
+      );
+    }
+    throw err;
+  }
+}
+
 async function fetchAndParseGistBundle(
   context: vscode.ExtensionContext,
   gistId: string,
@@ -104,7 +134,8 @@ async function fetchAndParseGistBundle(
   let bundle: ChatBundle;
 
   if (bundleRaw) {
-    const parsed = parseChatBundleOrCollection(bundleRaw);
+    const plaintext = await resolveGistChatFileContent(context, bundleRaw, "chat-bundle.json");
+    const parsed = parseChatBundleOrCollection(plaintext);
     if (parsed.kind === "single") {
       bundle = parsed.bundle;
     } else {
@@ -116,7 +147,8 @@ async function fetchAndParseGistBundle(
       bundle = picked;
     }
   } else if (collectionRaw) {
-    const parsed = parseChatBundleOrCollection(collectionRaw);
+    const plaintext = await resolveGistChatFileContent(context, collectionRaw, "chat-bundles.json");
+    const parsed = parseChatBundleOrCollection(plaintext);
     if (parsed.kind !== "collection") {
       throw new Error("Invalid chat-bundles.json: expected chat-bundles-collection.");
     }
