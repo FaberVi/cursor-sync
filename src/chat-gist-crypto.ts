@@ -101,13 +101,17 @@ function parseEnvelope(raw: string): EnvelopeV1 {
   return parsed as EnvelopeV1;
 }
 
-async function deriveKey(password: string, salt: Buffer): Promise<Buffer> {
+async function deriveKey(
+  password: string,
+  salt: Buffer,
+  kdf: Pick<typeof CHAT_GIST_KDF, "memoryKiB" | "iterations" | "parallelism">
+): Promise<Buffer> {
   const keyBytes = await argon2id({
     password,
     salt,
-    parallelism: CHAT_GIST_KDF.parallelism,
-    iterations: CHAT_GIST_KDF.iterations,
-    memorySize: CHAT_GIST_KDF.memoryKiB,
+    parallelism: kdf.parallelism,
+    iterations: kdf.iterations,
+    memorySize: kdf.memoryKiB,
     hashLength: 32,
     outputType: "binary",
   });
@@ -130,7 +134,7 @@ export async function encryptChatGistPayload(
 ): Promise<string> {
   const salt = randomBytes(16);
   const iv = randomBytes(12);
-  const key = await deriveKey(password, salt);
+  const key = await deriveKey(password, salt, CHAT_GIST_KDF);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -167,7 +171,7 @@ export async function decryptChatGistPayload(
     const iv = fromB64(cipher.iv, "cipher.iv");
     const ciphertext = fromB64(cipher.ciphertext, "cipher.ciphertext");
     const tag = fromB64(cipher.tag, "cipher.tag");
-    const key = await deriveKey(password, salt);
+    const key = await deriveKey(password, salt, kdf);
     const decipher = createDecipheriv("aes-256-gcm", key, iv);
     decipher.setAuthTag(tag);
     const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
