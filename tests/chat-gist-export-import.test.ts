@@ -164,6 +164,8 @@ vi.mock("../src/retry.js", () => ({
 vi.mock("../src/chat-encryption-auth.js", () => ({
   requireChatEncryptionPassword: requireChatEncryptionPasswordMock,
   isChatGistEncryptionEnabled: vi.fn(() => configurationValues["chatGist.encrypt"] !== false),
+  setChatEncryptionPassword: vi.fn(async () => {}),
+  clearChatEncryptionPassword: vi.fn(async () => {}),
 }));
 
 vi.mock("../src/chat-gist-crypto.js", async (importOriginal) => {

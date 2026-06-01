@@ -16,7 +16,11 @@ import {
   isEncryptedChatGistPayload,
   ChatGistCryptoError,
 } from "./chat-gist-crypto.js";
-import { requireChatEncryptionPassword } from "./chat-encryption-auth.js";
+import {
+  requireChatEncryptionPassword,
+  setChatEncryptionPassword,
+  clearChatEncryptionPassword,
+} from "./chat-encryption-auth.js";
 
 export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 
@@ -98,9 +102,12 @@ async function resolveGistChatFileContent(
     throw new Error(`${label}: chat encryption password required to decrypt this gist.`);
   }
   try {
-    return await decryptChatGistPayload(raw, password);
+    const plaintext = await decryptChatGistPayload(raw, password);
+    await setChatEncryptionPassword(context, password);
+    return plaintext;
   } catch (err) {
     if (err instanceof ChatGistCryptoError && err.code === "DECRYPT_FAILED") {
+      await clearChatEncryptionPassword(context);
       throw new Error(
         "Could not decrypt chat gist. Check your chat encryption password (Cursor Sync: Set Chat Encryption Password)."
       );

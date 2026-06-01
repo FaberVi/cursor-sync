@@ -19,6 +19,12 @@ export async function setChatEncryptionPassword(
   await context.secrets.store(CHAT_ENCRYPTION_PASSWORD_SECRET, password);
 }
 
+export async function clearChatEncryptionPassword(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  await context.secrets.delete(CHAT_ENCRYPTION_PASSWORD_SECRET);
+}
+
 export type RequirePasswordReason = "export" | "import-envelope";
 
 async function promptNewPassword(): Promise<string | undefined> {
@@ -58,7 +64,9 @@ export async function requireChatEncryptionPassword(
   if (!password) {
     return undefined;
   }
-  await setChatEncryptionPassword(context, password);
+  if (reason === "export") {
+    await setChatEncryptionPassword(context, password);
+  }
   return password;
 }
 
