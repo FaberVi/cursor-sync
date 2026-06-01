@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## v0.7.5
+
+### Added
+- **Chat gist encryption**: optional client-side encryption for `chat-bundle.json` and `chat-bundles.json` Gist uploads (`cursorSync.chatGist.encrypt`, default on) using Argon2id + AES-256-GCM (`hash-wasm`).
+- **`cursorSync.setChatEncryptionPassword`**: stores the chat encryption password in VS Code `SecretStorage` for export/import.
+- Encrypted gist envelope (`cursorSyncEncrypted` v1) with per-export KDF salt and bound KDF parameters in the ciphertext metadata.
+
+### Changed
+- Chat gist export encrypts bundle JSON before `createGist` when encryption is enabled; import decrypts encrypted payloads before disk restore.
+- Import verifies the encryption password (trial decrypt) before persisting it to `SecretStorage`.
+
+### Fixed
+- Decryption uses envelope-stored Argon2id parameters instead of hardcoded defaults.
+- Single password prompt on import when the gist is encrypted (no duplicate prompts).
+- Import does not save a wrong password when verification fails.
+
 ## v0.7.4
 
 ### Added
