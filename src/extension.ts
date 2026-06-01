@@ -16,6 +16,7 @@ import {
 } from "./chat-persistence.js";
 import { executeExportChatToGist } from "./export-gist-chat.js";
 import { executeImportChatFromGist } from "./import-gist-chat.js";
+import { executeSetChatEncryptionPassword } from "./chat-encryption-auth.js";
 import { executeImportTranscriptsFromGist } from "./import-gist-transcripts.js";
 import { showStatus } from "./diagnostics.js";
 import { resolveConflictsCommand } from "./conflicts.js";
@@ -181,6 +182,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.importChatFromGist", () =>
       executeImportChatFromGist(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.setChatEncryptionPassword", () =>
+      executeSetChatEncryptionPassword(context)
     )
   );
 
