@@ -93,7 +93,7 @@ async function resolveGistChatFileContent(
   if (!isEncryptedChatGistPayload(raw)) {
     return raw;
   }
-  const password = await requireChatEncryptionPassword(context, { reason: "import-envelope" });
+  const password = await requireChatEncryptionPassword(context, "import-envelope");
   if (!password) {
     throw new Error(`${label}: chat encryption password required to decrypt this gist.`);
   }

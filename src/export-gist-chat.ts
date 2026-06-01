@@ -51,7 +51,7 @@ export async function executeExportChatToGist(
         let encrypted = false;
 
         if (isChatGistEncryptionEnabled()) {
-          const password = await requireChatEncryptionPassword(context, { reason: "export" });
+          const password = await requireChatEncryptionPassword(context, "export");
           if (!password) {
             vscode.window.showWarningMessage("Chat export cancelled: encryption password required.");
             logger.appendLine(

@@ -19,17 +19,7 @@ export async function setChatEncryptionPassword(
   await context.secrets.store(CHAT_ENCRYPTION_PASSWORD_SECRET, password);
 }
 
-export async function clearChatEncryptionPassword(
-  context: vscode.ExtensionContext
-): Promise<void> {
-  await context.secrets.delete(CHAT_ENCRYPTION_PASSWORD_SECRET);
-}
-
 export type RequirePasswordReason = "export" | "import-envelope";
-
-export interface RequirePasswordOptions {
-  reason: RequirePasswordReason;
-}
 
 async function promptNewPassword(): Promise<string | undefined> {
   const password = await vscode.window.showInputBox({
@@ -53,9 +43,9 @@ async function promptNewPassword(): Promise<string | undefined> {
 
 export async function requireChatEncryptionPassword(
   context: vscode.ExtensionContext,
-  options: RequirePasswordOptions
+  reason: RequirePasswordReason
 ): Promise<string | undefined> {
-  if (options.reason === "export" && !isChatGistEncryptionEnabled()) {
+  if (reason === "export" && !isChatGistEncryptionEnabled()) {
     return undefined;
   }
 

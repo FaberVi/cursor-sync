@@ -87,15 +87,15 @@ function parseEnvelope(raw: string): EnvelopeV1 {
   if (k.name !== "argon2id" || c.name !== "aes-256-gcm") {
     throw new ChatGistCryptoError("Unsupported kdf or cipher name.", "INVALID_ENVELOPE");
   }
-  for (const [obj, fields] of [
-    [k, ["salt", "memoryKiB", "iterations", "parallelism"]] as const,
-    [c, ["iv", "ciphertext", "tag"]] as const,
-  ]) {
-    for (const field of fields) {
-      if (typeof (obj as Record<string, unknown>)[field] !== "string" &&
-          typeof (obj as Record<string, unknown>)[field] !== "number") {
-        throw new ChatGistCryptoError(`Missing or invalid ${field}.`, "INVALID_ENVELOPE");
-      }
+  for (const field of ["salt", "memoryKiB", "iterations", "parallelism"] as const) {
+    const expected = field === "salt" ? "string" : "number";
+    if (typeof k[field] !== expected) {
+      throw new ChatGistCryptoError(`Missing or invalid kdf.${field}.`, "INVALID_ENVELOPE");
+    }
+  }
+  for (const field of ["iv", "ciphertext", "tag"] as const) {
+    if (typeof c[field] !== "string") {
+      throw new ChatGistCryptoError(`Missing or invalid cipher.${field}.`, "INVALID_ENVELOPE");
     }
   }
   return parsed as EnvelopeV1;

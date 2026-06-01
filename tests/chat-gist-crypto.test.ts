@@ -1,7 +1,15 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("vscode", () => ({
+  workspace: {
+    getConfiguration: () => ({
+      get: () => undefined,
+    }),
+  },
+}));
 
 const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const plainSingle = readFileSync(
@@ -84,5 +92,19 @@ describe("chat-gist-crypto", () => {
     await expect(
       decryptChatGistPayload(JSON.stringify({ cursorSyncEncrypted: { formatVersion: 99 } }), "pw")
     ).rejects.toThrow(/invalid|unsupported/i);
+  });
+
+  it("encrypted envelope decrypts to parseable chat bundle", async () => {
+    const { encryptChatGistPayload, decryptChatGistPayload } = await import(
+      "../src/chat-gist-crypto.js"
+    );
+    const { parseChatBundleOrCollection } = await import("../src/chat-bundle-format.js");
+    const envelope = await encryptChatGistPayload(plainSingle, "e2e-pass", "chat-bundle");
+    const decrypted = await decryptChatGistPayload(envelope, "e2e-pass");
+    const parsed = parseChatBundleOrCollection(decrypted);
+    expect(parsed.kind).toBe("single");
+    if (parsed.kind === "single") {
+      expect(parsed.bundle.conversationId).toBe("conv-crypto-fixture-001");
+    }
   });
 });

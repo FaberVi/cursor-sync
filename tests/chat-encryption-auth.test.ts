@@ -56,7 +56,7 @@ describe("chat-encryption-auth", () => {
     configurationValues["chatGist.encrypt"] = false;
     const { requireChatEncryptionPassword } = await import("../src/chat-encryption-auth.js");
     const ctx = makeContext() as never;
-    const pw = await requireChatEncryptionPassword(ctx, { reason: "export" });
+    const pw = await requireChatEncryptionPassword(ctx, "export");
     expect(pw).toBeUndefined();
     expect(showInputBoxMock).not.toHaveBeenCalled();
   });
@@ -67,7 +67,7 @@ describe("chat-encryption-auth", () => {
       "../src/chat-encryption-auth.js"
     );
     const ctx = makeContext() as never;
-    const pw = await requireChatEncryptionPassword(ctx, { reason: "export" });
+    const pw = await requireChatEncryptionPassword(ctx, "export");
     expect(pw).toBe("new-pass");
     expect(await getChatEncryptionPassword(ctx)).toBe("new-pass");
     expect(showInputBoxMock).toHaveBeenCalledTimes(2);
@@ -80,7 +80,7 @@ describe("chat-encryption-auth", () => {
     );
     const ctx = makeContext() as never;
     await setChatEncryptionPassword(ctx, "stored-for-import");
-    const pw = await requireChatEncryptionPassword(ctx, { reason: "import-envelope" });
+    const pw = await requireChatEncryptionPassword(ctx, "import-envelope");
     expect(pw).toBe("stored-for-import");
     expect(showInputBoxMock).not.toHaveBeenCalled();
   });
@@ -89,7 +89,7 @@ describe("chat-encryption-auth", () => {
     showInputBoxMock.mockResolvedValueOnce(undefined);
     const { requireChatEncryptionPassword } = await import("../src/chat-encryption-auth.js");
     const ctx = makeContext() as never;
-    const pw = await requireChatEncryptionPassword(ctx, { reason: "export" });
+    const pw = await requireChatEncryptionPassword(ctx, "export");
     expect(pw).toBeUndefined();
   });
 });

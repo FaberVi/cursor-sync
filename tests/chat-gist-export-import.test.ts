@@ -878,10 +878,7 @@ describe("chat gist export and import", () => {
     await executeExportChatToGist(extensionContext as never);
     await flushMicrotasks();
 
-    expect(requireChatEncryptionPasswordMock).toHaveBeenCalledWith(
-      extensionContext,
-      { reason: "export" }
-    );
+    expect(requireChatEncryptionPasswordMock).toHaveBeenCalledWith(extensionContext, "export");
     expect(encryptChatGistPayloadMock).toHaveBeenCalledTimes(1);
     const uploaded = createGistMock.mock.calls[0]![0] as Record<string, { content: string }>;
     expect(uploaded[CHAT_BUNDLE_GIST_FILE_NAME]!.content).toContain("cursorSyncEncrypted");
@@ -964,7 +961,7 @@ describe("chat gist export and import", () => {
 
     expect(requireChatEncryptionPasswordMock).toHaveBeenCalledWith(
       extensionContext,
-      { reason: "import-envelope" }
+      "import-envelope"
     );
     expect(decryptChatGistPayloadMock).toHaveBeenCalledWith(envelopeJson, "import-pass");
     expect(restoreSpy).toHaveBeenCalledTimes(1);
