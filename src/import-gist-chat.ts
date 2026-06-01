@@ -109,6 +109,29 @@ async function resolveGistChatFileContent(
   }
 }
 
+async function resolveChatBundleFromGistContent(
+  context: vscode.ExtensionContext,
+  raw: string,
+  fileLabel: string,
+  requireCollection: boolean,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<ChatBundle> {
+  const plaintext = await resolveGistChatFileContent(context, raw, fileLabel);
+  const parsed = parseChatBundleOrCollection(plaintext);
+  if (requireCollection && parsed.kind !== "collection") {
+    throw new Error("Invalid chat-bundles.json: expected chat-bundles-collection.");
+  }
+  if (parsed.kind === "single") {
+    return parsed.bundle;
+  }
+  progress.report({ message: "Select chat to import..." });
+  const picked = await pickBundleFromCollection(parsed.collection);
+  if (!picked) {
+    throw new Error("Chat import cancelled.");
+  }
+  return picked;
+}
+
 async function fetchAndParseGistBundle(
   context: vscode.ExtensionContext,
   gistId: string,
@@ -134,30 +157,21 @@ async function fetchAndParseGistBundle(
   let bundle: ChatBundle;
 
   if (bundleRaw) {
-    const plaintext = await resolveGistChatFileContent(context, bundleRaw, "chat-bundle.json");
-    const parsed = parseChatBundleOrCollection(plaintext);
-    if (parsed.kind === "single") {
-      bundle = parsed.bundle;
-    } else {
-      progress.report({ message: "Select chat to import..." });
-      const picked = await pickBundleFromCollection(parsed.collection);
-      if (!picked) {
-        throw new Error("Chat import cancelled.");
-      }
-      bundle = picked;
-    }
+    bundle = await resolveChatBundleFromGistContent(
+      context,
+      bundleRaw,
+      "chat-bundle.json",
+      false,
+      progress
+    );
   } else if (collectionRaw) {
-    const plaintext = await resolveGistChatFileContent(context, collectionRaw, "chat-bundles.json");
-    const parsed = parseChatBundleOrCollection(plaintext);
-    if (parsed.kind !== "collection") {
-      throw new Error("Invalid chat-bundles.json: expected chat-bundles-collection.");
-    }
-    progress.report({ message: "Select chat to import..." });
-    const picked = await pickBundleFromCollection(parsed.collection);
-    if (!picked) {
-      throw new Error("Chat import cancelled.");
-    }
-    bundle = picked;
+    bundle = await resolveChatBundleFromGistContent(
+      context,
+      collectionRaw,
+      "chat-bundles.json",
+      true,
+      progress
+    );
   } else {
     if (gist.files?.[TRANSCRIPT_MANIFEST_FILE_NAME]) {
       throw new Error(

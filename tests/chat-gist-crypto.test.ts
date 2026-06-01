@@ -62,13 +62,13 @@ describe("chat-gist-crypto", () => {
   });
 
   it("decrypt fails with wrong password", async () => {
-    const { encryptChatGistPayload, decryptChatGistPayload, ChatGistCryptoError } =
-      await import("../src/chat-gist-crypto.js");
+    const { encryptChatGistPayload, decryptChatGistPayload } = await import(
+      "../src/chat-gist-crypto.js"
+    );
     const envelopeJson = await encryptChatGistPayload(plainSingle, "correct", "chat-bundle");
     await expect(decryptChatGistPayload(envelopeJson, "wrong")).rejects.toMatchObject({
       code: "DECRYPT_FAILED",
     });
-    expect(ChatGistCryptoError).toBeDefined();
   });
 
   it("decrypt fails when auth tag is tampered", async () => {

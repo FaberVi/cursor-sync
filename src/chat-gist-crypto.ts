@@ -67,34 +67,42 @@ function parseEnvelope(raw: string): EnvelopeV1 {
   if (typeof enc !== "object" || enc === null) {
     throw new ChatGistCryptoError("Missing cursorSyncEncrypted.", "INVALID_ENVELOPE");
   }
-  const e = enc as Record<string, unknown>;
-  if (e.formatVersion !== 1) {
+  const encrypted = enc as Record<string, unknown>;
+  if (encrypted.formatVersion !== 1) {
     throw new ChatGistCryptoError(
-      `Unsupported envelope formatVersion: ${String(e.formatVersion)}.`,
+      `Unsupported envelope formatVersion: ${String(encrypted.formatVersion)}.`,
       "INVALID_ENVELOPE"
     );
   }
-  if (e.plaintextKind !== "chat-bundle" && e.plaintextKind !== "chat-bundles-collection") {
+  if (
+    encrypted.plaintextKind !== "chat-bundle" &&
+    encrypted.plaintextKind !== "chat-bundles-collection"
+  ) {
     throw new ChatGistCryptoError("Invalid plaintextKind.", "INVALID_ENVELOPE");
   }
-  const kdf = e.kdf;
-  const cipher = e.cipher;
-  if (typeof kdf !== "object" || kdf === null || typeof cipher !== "object" || cipher === null) {
+  const kdfBlock = encrypted.kdf;
+  const cipherBlock = encrypted.cipher;
+  if (
+    typeof kdfBlock !== "object" ||
+    kdfBlock === null ||
+    typeof cipherBlock !== "object" ||
+    cipherBlock === null
+  ) {
     throw new ChatGistCryptoError("Invalid kdf or cipher block.", "INVALID_ENVELOPE");
   }
-  const k = kdf as Record<string, unknown>;
-  const c = cipher as Record<string, unknown>;
-  if (k.name !== "argon2id" || c.name !== "aes-256-gcm") {
+  const kdfFields = kdfBlock as Record<string, unknown>;
+  const cipherFields = cipherBlock as Record<string, unknown>;
+  if (kdfFields.name !== "argon2id" || cipherFields.name !== "aes-256-gcm") {
     throw new ChatGistCryptoError("Unsupported kdf or cipher name.", "INVALID_ENVELOPE");
   }
   for (const field of ["salt", "memoryKiB", "iterations", "parallelism"] as const) {
     const expected = field === "salt" ? "string" : "number";
-    if (typeof k[field] !== expected) {
+    if (typeof kdfFields[field] !== expected) {
       throw new ChatGistCryptoError(`Missing or invalid kdf.${field}.`, "INVALID_ENVELOPE");
     }
   }
   for (const field of ["iv", "ciphertext", "tag"] as const) {
-    if (typeof c[field] !== "string") {
+    if (typeof cipherFields[field] !== "string") {
       throw new ChatGistCryptoError(`Missing or invalid cipher.${field}.`, "INVALID_ENVELOPE");
     }
   }
