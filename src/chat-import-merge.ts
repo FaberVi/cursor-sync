@@ -9,6 +9,8 @@ import {
   mergeComposerDataAdditive,
   mergeComposerHeadersChain,
 } from "./composer-merge.js";
+import { clearSessionBindingInTree } from "./chat-partial-state.js";
+import { agentDebugLog } from "./debug-session-log.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
 const { querySqliteRows, runSqliteScript, listGlobalStateVscdbPaths, resolveStateDbCandidates } =
@@ -194,6 +196,18 @@ export function pinComposerAsMostRecent(
   return { allComposers: updated };
 }
 
+export function rebindComposerRecord(
+  record: Record<string, unknown>,
+  workspaceIdentifier: WorkspaceIdentifier
+): Record<string, unknown> {
+  const cleared = clearSessionBindingInTree(record);
+  const row =
+    cleared && typeof cleared === "object" && !Array.isArray(cleared)
+      ? (cleared as Record<string, unknown>)
+      : {};
+  return { ...row, workspaceIdentifier };
+}
+
 export function stampWorkspaceIdentifierOnHeaders(
   headers: { allComposers: Array<Record<string, unknown>> },
   conversationId: string,
@@ -210,7 +224,7 @@ export function stampWorkspaceIdentifierOnHeaders(
     if (entry.composerId !== conversationId) {
       return entry;
     }
-    return { ...entry, workspaceIdentifier };
+    return rebindComposerRecord(entry, workspaceIdentifier);
   });
   return { allComposers: updated };
 }
@@ -327,7 +341,8 @@ export function prepareHeadersForImport(
 export function prepareComposerDataForImport(
   existingDataRaw: string | undefined,
   bundle: ChatBundle,
-  conversationId: string
+  conversationId: string,
+  workspaceIdentifier: WorkspaceIdentifier
 ): Record<string, unknown> {
   let merged = composerDataForFocus(conversationId, existingDataRaw);
   const snap = bundle.sidebarSnapshot;
@@ -338,6 +353,33 @@ export function prepareComposerDataForImport(
       if (Object.keys(extra).length > 0) {
         merged = mergeComposerDataAdditive(JSON.stringify(merged), [extra]);
       }
+    }
+  }
+  const blob = merged[conversationId];
+  if (!blob || typeof blob !== "object" || Array.isArray(blob)) {
+    merged[conversationId] = buildMinimalComposerDataForOpen(
+      conversationId,
+      bundle.title ?? conversationId,
+      workspaceIdentifier
+    );
+  } else {
+    const beforeRequestId = (blob as Record<string, unknown>).requestId;
+    merged[conversationId] = rebindComposerRecord(
+      blob as Record<string, unknown>,
+      workspaceIdentifier
+    );
+    const afterRequestId = (merged[conversationId] as Record<string, unknown>).requestId;
+    if (beforeRequestId) {
+      agentDebugLog(
+        "R",
+        "chat-import-merge.ts:prepareComposerDataForImport",
+        "cleared requestId on ItemTable composer blob",
+        {
+          conversationId,
+          beforeRequestId: String(beforeRequestId),
+          afterRequestId: afterRequestId ?? null,
+        }
+      );
     }
   }
   return merged;
@@ -449,7 +491,12 @@ export async function mergeSidebarIntoStateDb(
     { pinRecent }
   );
 
-  const mergedData = prepareComposerDataForImport(existingDataRaw, bundle, cid);
+  const mergedData = prepareComposerDataForImport(
+    existingDataRaw,
+    bundle,
+    cid,
+    workspaceIdentifier
+  );
 
   const scriptParts: string[] = ["BEGIN IMMEDIATE;"];
 

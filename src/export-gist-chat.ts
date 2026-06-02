@@ -3,24 +3,20 @@ import { GistClient } from "./gist.js";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { getLogger } from "./diagnostics.js";
-import { pickChatsForExport } from "./chat-export-ux.js";
-import { buildChatExportPayload } from "./chat-persistence.js";
+import { pickChatsForExport, type ChatExportSelection } from "./chat-export-ux.js";
+import { buildChatExportPayload, chatEditorExportFailureMessage } from "./chat-persistence.js";
 import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import { encryptChatGistPayload } from "./chat-gist-crypto.js";
 import { requireChatEncryptionPassword, isChatGistEncryptionEnabled } from "./chat-encryption-auth.js";
+import { resolveChatEditorExportTarget } from "./chat-editor-target.js";
 
 export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 
-export async function executeExportChatToGist(
-  context: vscode.ExtensionContext
+export async function exportChatSelectionToGist(
+  context: vscode.ExtensionContext,
+  selection: ChatExportSelection
 ): Promise<void> {
   const logger = getLogger();
-  logger.appendLine(`[${new Date().toISOString()}] Chat export to Gist started`);
-
-  const selection = await pickChatsForExport();
-  if (!selection) {
-    return;
-  }
 
   const token = await requireToken(context);
   if (!token) {
@@ -115,4 +111,34 @@ export async function executeExportChatToGist(
       }
     }
   );
+}
+
+export async function executeExportChatToGist(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  const logger = getLogger();
+  logger.appendLine(`[${new Date().toISOString()}] Chat export to Gist started`);
+
+  const selection = await pickChatsForExport();
+  if (!selection) {
+    return;
+  }
+
+  await exportChatSelectionToGist(context, selection);
+}
+
+export async function executeExportCurrentChatBundleToGist(
+  context: vscode.ExtensionContext,
+  target: unknown
+): Promise<void> {
+  const resolution = await resolveChatEditorExportTarget(target);
+  if (!resolution.ok) {
+    vscode.window.showWarningMessage(chatEditorExportFailureMessage(resolution));
+    return;
+  }
+
+  await exportChatSelectionToGist(context, {
+    workspaceKey: resolution.target.workspaceKey,
+    conversationIds: [resolution.target.conversationId],
+  });
 }

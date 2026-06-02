@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { pythonDebugEnv } from "./debug-session-log.js";
 
 export type TransportChatScriptName =
   | "cursor_chat_io.py"
@@ -134,7 +135,10 @@ export async function runPythonDiskImport(
     stdout: string;
     stderr: string;
   }>((resolve, reject) => {
-    const proc = spawn("python3", args, { cwd: options.workspaceFolder });
+    const proc = spawn("python3", args, {
+      cwd: options.workspaceFolder,
+      env: pythonDebugEnv(),
+    });
     let stdoutAcc = "";
     let stderrAcc = "";
     proc.stdout?.on("data", (chunk: Buffer | string) => {
@@ -199,7 +203,7 @@ export async function runPythonBundleInspect(
     stdout: string;
     stderr: string;
   }>((resolve, reject) => {
-    const proc = spawn("python3", args);
+    const proc = spawn("python3", args, { env: pythonDebugEnv() });
     let stdoutAcc = "";
     let stderrAcc = "";
     proc.stdout?.on("data", (chunk: Buffer | string) => {

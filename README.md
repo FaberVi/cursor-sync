@@ -131,7 +131,7 @@ Single-conversation chat bundles (`type: chat-persistence`, `schemaVersion: 1`) 
 ### Private Gist
 
 - **Export**: Run **Cursor Sync: Export Chat to Private Gist** (`cursorSync.exportChatToGist`). Enter a conversation ID; requires a configured GitHub token. Creates a **private** Gist with `chat-bundle.json` only (description: `Cursor Sync - Chat Export`). Copy the URL to share; anyone with the link can open the gist.
-- **Import**: Run **Cursor Sync: Import Chat from Private Gist** (`cursorSync.importChatFromGist`). Enter a Gist URL or ID; uses your token for private gists. Fetches and validates `chat-bundle.json`, then restores the conversation. Gists that contain only a transcript manifest are rejected—use **Import Agent Transcripts from Private Gist** for those. Offers **Reload Window** after import because Cursor may not hot-reload sidebar state.
+- **Import**: Run **Cursor Sync: Import Chat from Private Gist** (`cursorSync.importChatFromGist`). Enter a Gist URL or ID; uses your token for private gists. Fetches and validates `chat-bundle.json`, then restores the conversation. Gists that contain only a transcript manifest are rejected—use **Import Agent Transcripts from Private Gist** for those. Restores without requiring a window reload; imported chats should appear in the sidebar after import (reload only if Cursor UI is stale).
 
 ## Agent Transcript Export and Import
 

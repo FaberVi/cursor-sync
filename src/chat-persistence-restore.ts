@@ -44,19 +44,208 @@ import {
 } from "./chat-import-verify.js";
 import { pickImportWorkspaceFolder } from "./chat-import-ux.js";
 import { humanWorkspaceLabel, projectQuickPickLabel } from "./chat-workspace-label.js";
-import {
-  parseChatBundleOrCollection,
-  pickBundleFromCollection,
-} from "./chat-bundle-format.js";
+import { parseChatBundleOrCollection } from "./chat-bundle-format.js";
 import {
   fidelityFieldsForImportHistory,
   publishImportFidelitySummary,
 } from "./sidebar/chats-tab.js";
 import { recordImport as recordImportEntry } from "./sidebar/import-history.js";
 import type { ChatBundle, LoadChatResult, RestoreChatBundleOptions } from "./chat-persistence.js";
+import type { WorkspaceContext } from "./chat-workspace-context.js";
 import { enrichBundleWithLiveDiskKv } from "./chat-disk-kv-export.js";
+import {
+  applyImmediateSidebarWriteback,
+  queueSidebarWriteback,
+} from "./chat-import-sidebar-writeback.js";
+import { agentDebugLog } from "./debug-session-log.js";
 
-const { resolveChatsRoot } = __chatPersistenceInternals;
+const { resolveChatsRoot, querySqliteRows } = __chatPersistenceInternals;
+
+function parseSidebarMergedFromPythonOutput(pyText: string): boolean {
+  const match = pyText.match(/sidebar_merged=(true|false)/i);
+  if (match?.[1]?.toLowerCase() === "true") {
+    return true;
+  }
+  if (/Merged composer state into/i.test(pyText)) {
+    return true;
+  }
+  if (/No sidebarSnapshot|sidebar merge skipped/i.test(pyText)) {
+    return false;
+  }
+  return false;
+}
+
+function sidebarVisibleOnDiskFromVerify(checks: VerifyCheck[]): boolean {
+  const globalHeaders = checks.find((c) => c.name === "global.composerHeaders");
+  if (globalHeaders?.status === "OK") {
+    return true;
+  }
+  const wsHeaders = checks.find((c) => c.name.startsWith("workspace.composerHeaders"));
+  return wsHeaders?.status === "OK";
+}
+
+async function probeImportedComposerDiskState(
+  conversationId: string,
+  wsCtx: WorkspaceContext
+): Promise<Record<string, unknown>> {
+  const { cursorUser } = resolveSyncRoots();
+  const globalDb = path.join(cursorUser, "globalStorage", "state.vscdb");
+  const wsDb = path.join(
+    cursorUser,
+    "workspaceStorage",
+    wsCtx.workspaceStorageId,
+    "state.vscdb"
+  );
+  const probe: Record<string, unknown> = {
+    conversationId,
+    globalDb,
+    workspaceStateDb: wsDb,
+    expectedWorkspaceStorageId: wsCtx.workspaceStorageId,
+    expectedFolderFsPath: wsCtx.folderFsPath,
+  };
+
+  const openFolders =
+    vscode.workspace.workspaceFolders?.map((f) => path.resolve(f.uri.fsPath)) ?? [];
+  probe.openWorkspaceFolders = openFolders;
+  probe.importFolderMatchesOpen = openFolders.some(
+    (f) => f === path.resolve(wsCtx.folderFsPath)
+  );
+
+  async function headerProbe(dbPath: string, label: string): Promise<void> {
+    try {
+      const rows = await querySqliteRows(
+        dbPath,
+        "SELECT value FROM ItemTable WHERE key='composer.composerHeaders' LIMIT 1",
+        { retries: 1 }
+      );
+      const raw = rows[0]?.value;
+      if (typeof raw !== "string" || !raw.trim()) {
+        probe[`${label}.headers`] = "missing-or-empty";
+        return;
+      }
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const list = parsed.allComposers;
+      if (!Array.isArray(list)) {
+        probe[`${label}.headers`] = "no-allComposers";
+        return;
+      }
+      probe[`${label}.allComposersCount`] = list.length;
+      const ent = list.find(
+        (e): e is Record<string, unknown> =>
+          !!e && typeof e === "object" && !Array.isArray(e) && e.composerId === conversationId
+      );
+      if (!ent) {
+        probe[`${label}.conversationInHeaders`] = false;
+        return;
+      }
+      probe[`${label}.conversationInHeaders`] = true;
+      const wi = ent.workspaceIdentifier as Record<string, unknown> | undefined;
+      probe[`${label}.headerWorkspaceId`] = wi?.id ?? null;
+      probe[`${label}.headerFsPath`] =
+        wi && typeof wi.uri === "object" && wi.uri && !Array.isArray(wi.uri)
+          ? (wi.uri as Record<string, unknown>).fsPath
+          : null;
+      probe[`${label}.isArchived`] = ent.isArchived ?? null;
+      probe[`${label}.isDraft`] = ent.isDraft ?? null;
+      probe[`${label}.type`] = ent.type ?? null;
+      probe[`${label}.lastUpdatedAt`] = ent.lastUpdatedAt ?? null;
+    } catch (err) {
+      probe[`${label}.headersError`] = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  await headerProbe(globalDb, "global");
+  await headerProbe(wsDb, "workspace");
+
+  try {
+    const escCid = conversationId.replace(/'/g, "''");
+    const kvRows = await querySqliteRows(
+      globalDb,
+      `SELECT key, value FROM cursorDiskKV WHERE key = 'composerData:${escCid}' OR key LIKE 'bubbleId:${escCid}:%' LIMIT 5`,
+      { retries: 1 }
+    );
+    probe.diskKvRowSampleCount = kvRows.length;
+    for (const row of kvRows) {
+      const key = String(row.key ?? "");
+      const raw = row.value;
+      const text = typeof raw === "string" ? raw : null;
+      if (!text) continue;
+      try {
+        const obj = JSON.parse(text) as Record<string, unknown>;
+        if (key.startsWith("composerData:")) {
+          const wi = obj.workspaceIdentifier as Record<string, unknown> | undefined;
+          probe.diskKvComposerWorkspaceId = wi?.id ?? null;
+          probe.diskKvComposerFsPath =
+            wi && typeof wi.uri === "object" && wi.uri && !Array.isArray(wi.uri)
+              ? (wi.uri as Record<string, unknown>).fsPath
+              : null;
+        } else if (key.startsWith("bubbleId:")) {
+          probe.sampleBubbleRequestId = obj.requestId ?? null;
+          probe.sampleBubbleWorkspaceUris = obj.workspaceUris ?? null;
+          break;
+        }
+      } catch {
+        probe.diskKvParseError = key;
+      }
+    }
+  } catch (err) {
+    probe.diskKvError = err instanceof Error ? err.message : String(err);
+  }
+
+  try {
+    for (const [label, dbPath] of [
+      ["workspace", wsDb],
+      ["global", globalDb],
+    ] as const) {
+      const rows = await querySqliteRows(
+        dbPath,
+        "SELECT value FROM ItemTable WHERE key='composer.composerData' LIMIT 1",
+        { retries: 1 }
+      );
+      const raw = rows[0]?.value;
+      if (typeof raw !== "string" || !raw.trim()) {
+        probe[`${label}.itemTableComposerDataRequestId`] = "missing";
+        continue;
+      }
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const blob = parsed[conversationId];
+      if (!blob || typeof blob !== "object" || Array.isArray(blob)) {
+        probe[`${label}.itemTableComposerDataRequestId`] = "no-blob";
+        continue;
+      }
+      const rid = (blob as Record<string, unknown>).requestId;
+      probe[`${label}.itemTableComposerDataRequestId`] =
+        rid === undefined || rid === null || rid === "" ? "" : String(rid);
+    }
+  } catch (err) {
+    probe.itemTableComposerDataError = err instanceof Error ? err.message : String(err);
+  }
+
+  return probe;
+}
+
+function sampleSidebarBlobRequestId(
+  bundle: ChatBundle,
+  conversationId: string
+): string | null {
+  const snap = bundle.sidebarSnapshot;
+  if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
+    return null;
+  }
+  const data = snap.composerData;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+  const blob = (data as Record<string, unknown>)[conversationId];
+  if (!blob || typeof blob !== "object" || Array.isArray(blob)) {
+    return null;
+  }
+  const rid = (blob as Record<string, unknown>).requestId;
+  if (rid === undefined || rid === null || rid === "") {
+    return null;
+  }
+  return String(rid);
+}
 
 let pythonInterpreterMemo: string | null | undefined;
 
@@ -280,6 +469,15 @@ export async function restoreChatBundle(
   logChatRestoreDebug(
     `workspace context folder=${wsCtx.folderFsPath} chatsKey=${storeWorkspaceKey} storageId=${wsCtx.workspaceStorageId} dryRun=${dryRun} activate=${!!options.activate}`
   );
+  agentDebugLog("A", "chat-persistence-restore.ts:workspace-context", "import workspace context", {
+    conversationId,
+    folderFsPath: wsCtx.folderFsPath,
+    chatsWorkspaceKey: storeWorkspaceKey,
+    workspaceStorageId: wsCtx.workspaceStorageId,
+    storageIdLooksLikeChatsKey: wsCtx.workspaceStorageId === storeWorkspaceKey,
+    openWorkspaceFolders:
+      vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [],
+  });
 
   const sourceProjectKeys = new Set<string>();
   for (const tf of bundle.transcriptFiles) {
@@ -364,6 +562,29 @@ export async function restoreChatBundle(
   warnings.push(...enrichWarnings);
 
   const remappedBundle = applyProjectMappingToBundle(workingBundle, projectMapping);
+  let workspaceStateDbExists = false;
+  try {
+    await fs.access(workspaceStateDb);
+    workspaceStateDbExists = true;
+  } catch {
+    workspaceStateDbExists = false;
+  }
+  agentDebugLog("B", "chat-persistence-restore.ts:pre-python-import", "bundle before disk import", {
+    conversationId,
+    hasSidebarSnapshot:
+      remappedBundle.sidebarSnapshot != null &&
+      typeof remappedBundle.sidebarSnapshot === "object",
+    sidebarSnapshotKeys:
+      remappedBundle.sidebarSnapshot && typeof remappedBundle.sidebarSnapshot === "object"
+        ? Object.keys(remappedBundle.sidebarSnapshot)
+        : [],
+    hasDiskKvSnapshot: !!remappedBundle.diskKvSnapshot?.rows?.length,
+    diskKvRowCount: remappedBundle.diskKvSnapshot?.rowCount ?? 0,
+    workspaceStateDb,
+    workspaceStateDbExists,
+    syncGlobal,
+    targetProjectKey,
+  });
   const tmpBundlePath = path.join(
     os.tmpdir(),
     `cursor-sync-import-${conversationId}-${Date.now()}.json`
@@ -391,7 +612,9 @@ export async function restoreChatBundle(
     }
     transcriptsWritten = remappedBundle.transcriptFiles.length;
     storeWritten = !!remappedBundle.storeSnapshot;
-    sidebarMerged = true;
+    const pyText = `${diskOutcome.stdout}\n${diskOutcome.stderr}`;
+    const sidebarMergedMatch = pyText.match(/sidebar_merged=(true|false)/i);
+    sidebarMerged = parseSidebarMergedFromPythonOutput(pyText);
     if (!storeWritten && !dryRun) {
       const golden = await ensureGoldenStoreDb(
         context,
@@ -405,6 +628,16 @@ export async function restoreChatBundle(
     logChatRestoreDebug(
       `disk restore via transport-chat conversationId=${conversationId} transcripts=${transcriptsWritten} store=${storeWritten}`
     );
+    agentDebugLog("E", "chat-persistence-restore.ts:post-python-import", "python import output", {
+      conversationId,
+      exitCode: diskOutcome.exitCode,
+      sidebarMergedFromPython: sidebarMergedMatch?.[1] ?? null,
+      mergedComposer: /Merged composer state into/i.test(pyText),
+      skippedSidebar: /sidebar merge skipped/i.test(pyText),
+      noSidebarSnapshot: /No sidebarSnapshot/i.test(pyText),
+      globalNotUpdated: /Global state\.vscdb was not updated/i.test(pyText),
+      tsSidebarMergedFlag: sidebarMerged,
+    });
   } finally {
     try {
       await fs.unlink(tmpBundlePath);
@@ -429,10 +662,68 @@ export async function restoreChatBundle(
     for (const c of diskChecks) {
       logChatRestoreDebug(`verify: ${formatVerifyCheckLine(c)}`);
     }
+    const pick = (name: string) => diskChecks.find((c) => c.name === name);
+    agentDebugLog("C", "chat-persistence-restore.ts:post-verify", "verify summary", {
+      conversationId,
+      allOk: verifyChecksAllOk(diskChecks),
+      globalHeaders: pick("global.composerHeaders"),
+      globalWi: pick("global.workspaceIdentifier"),
+      workspaceHeaders: diskChecks.find((c) => c.name.startsWith("workspace.composerHeaders")),
+    });
+    const diskProbe = await probeImportedComposerDiskState(conversationId, wsCtx);
+    agentDebugLog("I", "chat-persistence-restore.ts:disk-probe", "post-import composer disk probe", diskProbe);
     if (!verifyChecksAllOk(diskChecks)) {
       throw new Error(
         `Import verify failed (see verify lines above):\n${formatVerifyReport(diskChecks)}`
       );
+    }
+
+    const sidebarOnDisk = sidebarVisibleOnDiskFromVerify(diskChecks);
+    const hadPythonSidebarFlag = sidebarMerged;
+    if (
+      !sidebarMerged &&
+      sidebarOnDisk &&
+      remappedBundle.sidebarSnapshot != null &&
+      typeof remappedBundle.sidebarSnapshot === "object"
+    ) {
+      sidebarMerged = true;
+      agentDebugLog("A", "chat-persistence-restore.ts:sidebar-infer-verify", "sidebarMerged inferred from verify", {
+        conversationId,
+        hadPythonSidebarFlag,
+        sidebarOnDisk,
+      });
+    }
+
+    if (sidebarMerged && remappedBundle.sidebarSnapshot) {
+      const bundleBlobRequestId = sampleSidebarBlobRequestId(remappedBundle, conversationId);
+      const immediate = await applyImmediateSidebarWriteback(remappedBundle, wsCtx);
+      const requestProbe = await probeImportedComposerDiskState(conversationId, wsCtx);
+      agentDebugLog("D", "chat-persistence-restore.ts:immediate-writeback", "immediate sidebar write-back", {
+        conversationId,
+        ...immediate,
+      });
+      agentDebugLog("R", "chat-persistence-restore.ts:post-immediate-requestId", "requestId on disk after TS merge", {
+        conversationId,
+        bundleBlobRequestIdBeforeMerge: bundleBlobRequestId,
+        workspaceItemTableRequestId: requestProbe["workspace.itemTableComposerDataRequestId"],
+        globalItemTableRequestId: requestProbe["global.itemTableComposerDataRequestId"],
+        sampleBubbleRequestId: requestProbe.sampleBubbleRequestId ?? null,
+        diskKvError: requestProbe.diskKvError ?? null,
+      });
+      await queueSidebarWriteback(context, remappedBundle, wsCtx);
+      agentDebugLog(
+        "L",
+        "chat-persistence-restore.ts:queue-sidebar-writeback",
+        "queued post-reload sidebar write-back",
+        { conversationId, folderFsPath: wsCtx.folderFsPath, hadPythonSidebarFlag, sidebarOnDisk }
+      );
+    } else {
+      agentDebugLog("B", "chat-persistence-restore.ts:no-writeback", "skipped sidebar writeback chain", {
+        conversationId,
+        sidebarMerged,
+        sidebarOnDisk,
+        hasSidebarSnapshot: !!remappedBundle.sidebarSnapshot,
+      });
     }
 
     if (options.activate) {
@@ -556,26 +847,12 @@ export async function restoreChatBundle(
   return result;
 }
 
-export async function loadChat(
+export async function enrichImportResultWithBundleInspect(
   context: vscode.ExtensionContext,
   bundlePath: string,
-  progress: vscode.Progress<{ message?: string; increment?: number }>,
-  restoreOptions: RestoreChatBundleOptions
+  bundle: ChatBundle,
+  result: LoadChatResult
 ): Promise<LoadChatResult> {
-  progress.report({ message: "Reading bundle..." });
-  const raw = await fs.readFile(bundlePath, "utf-8");
-  const parsed = parseChatBundleOrCollection(raw);
-  let bundle: ChatBundle;
-  if (parsed.kind === "single") {
-    bundle = parsed.bundle;
-  } else {
-    const picked = await pickBundleFromCollection(parsed.collection);
-    if (!picked) {
-      throw new Error("Chat import cancelled.");
-    }
-    bundle = picked;
-  }
-  const result = await restoreChatBundle(context, bundle, progress, restoreOptions);
   const extensionPath = context.extensionPath;
   try {
     const inspectOutcome = await runPythonBundleInspect({
@@ -605,6 +882,26 @@ export async function loadChat(
     );
   }
   return result;
+}
+
+export async function loadChat(
+  context: vscode.ExtensionContext,
+  bundlePath: string,
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  restoreOptions: RestoreChatBundleOptions
+): Promise<LoadChatResult> {
+  progress.report({ message: "Reading bundle..." });
+  const raw = await fs.readFile(bundlePath, "utf-8");
+  const parsed = parseChatBundleOrCollection(raw);
+  if (parsed.kind === "collection" && parsed.collection.bundles.length > 1) {
+    throw new Error(
+      "This file contains multiple conversations. Use Cursor Sync: Import Chat Bundle to import them."
+    );
+  }
+  const bundle =
+    parsed.kind === "single" ? parsed.bundle : parsed.collection.bundles[0]!;
+  const result = await restoreChatBundle(context, bundle, progress, restoreOptions);
+  return enrichImportResultWithBundleInspect(context, bundlePath, bundle, result);
 }
 
 export function resolveProjectsRoot(): string {

@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { getLogger } from "./diagnostics.js";
+import { refreshSidebar } from "./sidebar/index.js";
 import {
   formatVerifyCheckLine,
   formatVerifyReport,
@@ -8,13 +9,97 @@ import {
 } from "./chat-import-verify.js";
 import {
   restoreOptionsFromConfiguration,
+  type ChatBundle,
   type LoadChatResult,
   type RestoreChatBundleOptions,
 } from "./chat-persistence.js";
+import { agentDebugLog } from "./debug-session-log.js";
 
 export interface ChatImportPromptResult {
   workspaceFolder: string;
   restoreOptions: RestoreChatBundleOptions;
+}
+
+export interface BatchChatImportFailure {
+  bundle: ChatBundle;
+  error: string;
+}
+
+export interface BatchChatImportResult {
+  successes: LoadChatResult[];
+  failures: BatchChatImportFailure[];
+}
+
+function bundleTitleOrId(bundle: ChatBundle): string {
+  const title = bundle.title?.trim();
+  return title || bundle.conversationId;
+}
+
+function formatFailedImportLabels(
+  failures: BatchChatImportFailure[],
+  maxShown = 3
+): string {
+  const labels = failures.map((f) => bundleTitleOrId(f.bundle));
+  if (labels.length <= maxShown) {
+    return labels.join(", ");
+  }
+  const rest = labels.length - maxShown;
+  return `${labels.slice(0, maxShown).join(", ")} and ${rest} more`;
+}
+
+export async function restoreChatBundlesBatch(
+  context: vscode.ExtensionContext,
+  bundles: ChatBundle[],
+  restoreOptions: RestoreChatBundleOptions,
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  logTag: "chat-load" | "gist-chat-import"
+): Promise<BatchChatImportResult> {
+  const logger = getLogger();
+  const { restoreChatBundle } = await import("./chat-persistence.js");
+  const successes: LoadChatResult[] = [];
+  const failures: BatchChatImportFailure[] = [];
+  const n = bundles.length;
+
+  for (let i = 0; i < n; i++) {
+    const bundle = bundles[i]!;
+    const titleOrId = bundleTitleOrId(bundle);
+    progress.report({ message: `Importing chat ${i + 1}/${n}: ${titleOrId}...` });
+    try {
+      const result = await restoreChatBundle(context, bundle, progress, restoreOptions);
+      successes.push(result);
+      logger.appendLine(
+        `[${new Date().toISOString()}] [${logTag}] ok conversationId=${result.conversationId}`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      failures.push({ bundle, error: msg });
+      logger.appendLine(
+        `[${new Date().toISOString()}] [${logTag}] fail conversationId=${bundle.conversationId}: ${msg}`
+      );
+    }
+  }
+
+  return { successes, failures };
+}
+
+export function shouldUseBatchImportOutcome(
+  bundles: ChatBundle[],
+  batch: BatchChatImportResult,
+  pickerShown: boolean
+): boolean {
+  if (pickerShown) {
+    return true;
+  }
+  if (bundles.length > 1) {
+    return true;
+  }
+  if (batch.failures.length > 0) {
+    return true;
+  }
+  if (batch.successes.length !== 1) {
+    return true;
+  }
+  return false;
 }
 
 export async function pickImportWorkspaceFolder(): Promise<string | null> {
@@ -165,6 +250,32 @@ export function buildChatImportResultMessage(
   return parts.join(" | ");
 }
 
+/** Cursor does not hot-reload composer.composerHeaders from state.vscdb; reload after disk merge. */
+export async function offerComposerSidebarReload(): Promise<void> {
+  const config = vscode.workspace.getConfiguration("cursorSync");
+  const autoReload = config.get<boolean>("transcripts.autoReloadAfterImport") ?? false;
+  agentDebugLog("F", "chat-import-ux.ts:offerComposerSidebarReload", "reload flow start", {
+    autoReload,
+  });
+  if (autoReload) {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    agentDebugLog("F", "chat-import-ux.ts:offerComposerSidebarReload", "auto reload executed", {});
+    return;
+  }
+  const reloadAction = "Reload Window";
+  const selected = await vscode.window.showInformationMessage(
+    "Composer sidebar was updated on disk. Reload Cursor to see imported chats.",
+    reloadAction
+  );
+  agentDebugLog("F", "chat-import-ux.ts:offerComposerSidebarReload", "reload prompt result", {
+    selected: selected ?? null,
+    willReload: selected === reloadAction,
+  });
+  if (selected === reloadAction) {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+}
+
 export async function presentChatImportOutcome(
   result: LoadChatResult,
   restoreOptions: RestoreChatBundleOptions,
@@ -192,22 +303,100 @@ export async function presentChatImportOutcome(
     }
   }
 
-  const config = vscode.workspace.getConfiguration("cursorSync");
-  const autoReload = config.get<boolean>("transcripts.autoReloadAfterImport") ?? false;
-  if (autoReload) {
-    await vscode.commands.executeCommand("workbench.action.reloadWindow");
-  } else {
-    const reloadAction = "Reload Window";
-    const choice = await vscode.window.showInformationMessage(
-      "Cursor may need a reload to reflect imported chat in the sidebar.",
-      reloadAction
-    );
-    if (choice === reloadAction) {
-      vscode.commands.executeCommand("workbench.action.reloadWindow");
-    }
-  }
-
   for (const w of result.warnings) {
     logger.appendLine(`[${new Date().toISOString()}] [${logTag}] ${w}`);
   }
+
+  agentDebugLog("G", "chat-import-ux.ts:presentChatImportOutcome", "import outcome UX", {
+    conversationId: result.conversationId,
+    sidebarMerged: result.sidebarMerged,
+    storeWritten: result.storeWritten,
+    transcriptsWritten: result.transcriptsWritten,
+    willOfferReload: true,
+  });
+  refreshSidebar();
+  await offerComposerSidebarReload();
+}
+
+export async function presentBatchChatImportOutcome(
+  batch: BatchChatImportResult,
+  restoreOptions: RestoreChatBundleOptions,
+  logTag: "chat-load" | "gist-chat-import",
+  totalAttempted: number
+): Promise<void> {
+  const logger = getLogger();
+
+  for (const result of batch.successes) {
+    if (result.verifyChecks && result.verifyChecks.length > 0) {
+      const report = formatVerifyReport(result.verifyChecks);
+      for (const line of report.split("\n")) {
+        logger.appendLine(
+          `[${new Date().toISOString()}] [${logTag}] verify (${result.conversationId}): ${line}`
+        );
+      }
+      for (const check of result.verifyChecks) {
+        logger.appendLine(
+          `[${new Date().toISOString()}] [chat-restore-debug] verify (${result.conversationId}): ${formatVerifyCheckLine(check)}`
+        );
+      }
+    }
+    for (const w of result.warnings) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] [${logTag}] (${result.conversationId}) ${w}`
+      );
+    }
+  }
+
+  for (const failure of batch.failures) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] [${logTag}] FAILED ${failure.bundle.conversationId}: ${failure.error}`
+    );
+  }
+
+  const successCount = batch.successes.length;
+  const chatWord = totalAttempted === 1 ? "chat" : "chats";
+  const partialFail = batch.failures.length > 0;
+  const anyTextOnlyLayer4 = batch.successes.some((r) => r.fidelity?.textOnlyLayer4);
+
+  if (successCount === 0) {
+    const detail = formatFailedImportLabels(batch.failures);
+    vscode.window.showErrorMessage(
+      `Chat import failed: 0/${totalAttempted} imported.${detail ? ` ${detail}` : ""}`
+    );
+    return;
+  }
+
+  let summary = `Imported ${successCount}/${totalAttempted} ${chatWord}.`;
+  if (partialFail) {
+    summary += ` ${batch.failures.length} failed: ${formatFailedImportLabels(batch.failures)}.`;
+  }
+  if (anyTextOnlyLayer4) {
+    summary +=
+      " Text-only Layer 4: no diskKvSnapshot on some imports; tool/MCP UI cards may not match the source.";
+  }
+
+  if (partialFail || anyTextOnlyLayer4) {
+    vscode.window.showWarningMessage(summary);
+  } else {
+    vscode.window.showInformationMessage(summary);
+  }
+
+  if (batch.successes.length > 0) {
+    refreshSidebar();
+    await offerComposerSidebarReload();
+  }
+}
+
+export async function presentChatImportOutcomeForBatch(
+  bundles: ChatBundle[],
+  batch: BatchChatImportResult,
+  restoreOptions: RestoreChatBundleOptions,
+  logTag: "chat-load" | "gist-chat-import",
+  pickerShown: boolean
+): Promise<void> {
+  if (!shouldUseBatchImportOutcome(bundles, batch, pickerShown) && batch.successes.length === 1) {
+    await presentChatImportOutcome(batch.successes[0]!, restoreOptions, logTag);
+    return;
+  }
+  await presentBatchChatImportOutcome(batch, restoreOptions, logTag, bundles.length);
 }

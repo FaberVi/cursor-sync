@@ -44,6 +44,40 @@ describe("package menu contributions", () => {
     });
   });
 
+  it("declares the current-chat gist bundle export command", () => {
+    const pkg = readPackageJson();
+    const command = pkg.contributes.commands.find(
+      (entry: { command: string }) => entry.command === "cursorSync.exportCurrentChatBundleToGist"
+    );
+    expect(command).toEqual({
+      command: "cursorSync.exportCurrentChatBundleToGist",
+      title: "Cursor Sync: Export into Bundle (GIST)",
+      icon: "$(cloud-upload)",
+    });
+  });
+
+  it("contributes current-chat gist export to editor title and tab context menus", () => {
+    const pkg = readPackageJson();
+    expect(pkg.contributes.menus["editor/title"]).toContainEqual({
+      command: "cursorSync.exportCurrentChatBundleToGist",
+      when: "resourceScheme == 'cursor.composer'",
+      group: "navigation",
+    });
+    expect(pkg.contributes.menus["editor/title/context"]).toContainEqual({
+      command: "cursorSync.exportCurrentChatBundleToGist",
+      when: "resourceScheme == 'cursor.composer'",
+      group: "navigation",
+    });
+  });
+
+  it("hides the gist context command from the Command Palette", () => {
+    const pkg = readPackageJson();
+    expect(pkg.contributes.menus.commandPalette).toContainEqual({
+      command: "cursorSync.exportCurrentChatBundleToGist",
+      when: "false",
+    });
+  });
+
   it("declares chat gist encryption setting default true", () => {
     const pkg = readPackageJson();
     expect(pkg.contributes.configuration.properties["cursorSync.chatGist.encrypt"]).toEqual({

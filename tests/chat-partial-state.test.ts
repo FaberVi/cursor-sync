@@ -68,6 +68,7 @@ describe("chat-partial-state", () => {
     expect(partial).not.toHaveProperty("agentSessionId");
     expect(partial).not.toHaveProperty("capabilities");
     expect(partial).not.toHaveProperty("conversationActionManager");
+    expect(partial.requestId).toBe("");
   });
 
   it("sidebarSnapshotHasComposerData matches Python", () => {

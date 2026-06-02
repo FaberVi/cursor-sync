@@ -1,7 +1,51 @@
-import type { ApiResult, GistResponse, FailureCategory } from "./types.js";
+import type { ApiResult, GistFile, GistResponse, FailureCategory } from "./types.js";
 
 const GITHUB_API = "https://api.github.com";
 const USER_AGENT = "cursor-sync-extension";
+
+export async function fetchGistFileContent(
+  file: GistFile | undefined,
+  token?: string
+): Promise<string> {
+  if (!file) {
+    throw new Error("Gist file missing.");
+  }
+  if (!file.truncated) {
+    if (file.content === undefined) {
+      throw new Error("Gist file has no content.");
+    }
+    return file.content;
+  }
+  if (!file.raw_url) {
+    throw new Error(
+      "Gist file is too large and has no download URL. Try re-exporting a smaller chat bundle."
+    );
+  }
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github.v3.raw",
+    "User-Agent": USER_AGENT,
+  };
+  if (token) {
+    headers.Authorization = `token ${token}`;
+  }
+  let response: Response;
+  try {
+    response = await fetch(file.raw_url, { headers });
+  } catch (err) {
+    throw new Error(
+      err instanceof Error ? err.message : "Network error while downloading gist file"
+    );
+  }
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(
+        "Gist file not found at download URL. If the gist is private, configure your GitHub token (Cursor Sync: Configure GitHub)."
+      );
+    }
+    throw new Error(`Failed to download gist file (${response.status}).`);
+  }
+  return await response.text();
+}
 
 export class GistClient {
   private pat?: string;

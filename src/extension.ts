@@ -14,7 +14,10 @@ import {
   executeImportChatBundleActivate,
   executeVerifyChatImport,
 } from "./chat-persistence.js";
-import { executeExportChatToGist } from "./export-gist-chat.js";
+import {
+  executeExportChatToGist,
+  executeExportCurrentChatBundleToGist,
+} from "./export-gist-chat.js";
 import { executeImportChatFromGist } from "./import-gist-chat.js";
 import { executeSetChatEncryptionPassword } from "./chat-encryption-auth.js";
 import { executeImportTranscriptsFromGist } from "./import-gist-transcripts.js";
@@ -41,6 +44,8 @@ import {
   disposeActivationWatcher,
   registerActivationWatcher,
 } from "./chat-import-activate-watcher.js";
+import { flushPendingSidebarWriteback } from "./chat-import-sidebar-writeback.js";
+import { agentDebugLog } from "./debug-session-log.js";
 import { executeInstallSkillTransportChat } from "./install-skill-transport-chat.js";
 let configListener: vscode.Disposable | undefined;
 
@@ -180,6 +185,12 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.exportCurrentChatBundleToGist", (target) =>
+      executeExportCurrentChatBundleToGist(context, target)
+    )
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.importChatFromGist", () =>
       executeImportChatFromGist(context)
     )
@@ -247,6 +258,17 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(configListener);
 
   void notifyPendingStateBundleIfAny(context);
+
+  void flushPendingSidebarWriteback(context).then((applied) => {
+    agentDebugLog("D", "extension.ts:activate-flush", "extension activate flush writeback", {
+      applied,
+    });
+    if (applied) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] Applied pending chat import sidebar write-back after reload`
+      );
+    }
+  });
 
   registerActivationWatcher(context);
 

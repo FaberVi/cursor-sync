@@ -167,6 +167,44 @@ describe("GistClient", () => {
     expect(body.files["old-file.json"]).toBeNull();
   });
 
+  describe("fetchGistFileContent", () => {
+    it("returns inline content when not truncated", async () => {
+      const { fetchGistFileContent } = await import("../src/gist.js");
+      const content = await fetchGistFileContent({ content: '{"ok":true}' });
+      expect(content).toBe('{"ok":true}');
+      expect(globalThis.fetch).toBe(originalFetch);
+    });
+
+    it("downloads full content from raw_url when truncated", async () => {
+      const fullPayload = '{"cursorSyncEncrypted":{"formatVersion":1}}';
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => fullPayload,
+      });
+
+      const { fetchGistFileContent } = await import("../src/gist.js");
+      const content = await fetchGistFileContent(
+        {
+          content: '{"cursorSyncEncrypted":{"incomplete":',
+          truncated: true,
+          raw_url: "https://gist.githubusercontent.com/example/raw/file.json",
+        },
+        "ghp_token"
+      );
+
+      expect(content).toBe(fullPayload);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "https://gist.githubusercontent.com/example/raw/file.json",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "token ghp_token",
+          }),
+        })
+      );
+    });
+  });
+
   it("fetches a gist by ID", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,

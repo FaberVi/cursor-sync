@@ -113,11 +113,28 @@ describe("listConversationsForWorkspace labels", () => {
     await fs.writeFile(path.join(chatsRoot, wk, convId, "store.db"), "x");
     const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
     const { listConversationsForWorkspace } = await import("../src/chat-export-ux.js");
-    const index = new Map([[convId, "Composer Sidebar Name"]]);
+    const workspaceIndex = new Map([[convId, "Composer Sidebar Name"]]);
     const rows = await listConversationsForWorkspace(wk, chatsRoot, projectsRoot, {
-      composerIndex: index,
+      workspaceIndex,
+      globalIndex: new Map(),
     });
     expect(rows[0]!.label).toBe("Composer Sidebar Name");
+  });
+
+  it("uses workspace-scoped composer index over global-only wrong name", async () => {
+    const wk = "wk-1";
+    const convId = "conv-shared";
+    await fs.mkdir(path.join(chatsRoot, wk, convId), { recursive: true });
+    await fs.writeFile(path.join(chatsRoot, wk, convId, "store.db"), "x");
+    const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
+    const { listConversationsForWorkspace } = await import("../src/chat-export-ux.js");
+    const workspaceIndex = new Map([[convId, "Workspace Correct Name"]]);
+    const globalIndex = new Map([[convId, "Global Wrong Name"]]);
+    const rows = await listConversationsForWorkspace(wk, chatsRoot, projectsRoot, {
+      workspaceIndex,
+      globalIndex,
+    });
+    expect(rows[0]!.label).toBe("Workspace Correct Name");
   });
 
   it("skips skills preamble and uses first user message", async () => {
@@ -151,7 +168,8 @@ describe("listConversationsForWorkspace labels", () => {
     await fs.writeFile(path.join(transcriptDir, `${convId}.jsonl`), transcript, "utf8");
     const { listConversationsForWorkspace } = await import("../src/chat-export-ux.js");
     const rows = await listConversationsForWorkspace(wk, chatsRoot, projectsRoot, {
-      composerIndex: new Map(),
+      workspaceIndex: new Map(),
+      globalIndex: new Map(),
     });
     expect(rows[0]!.label).toContain("Real user question here");
   });
@@ -164,7 +182,8 @@ describe("listConversationsForWorkspace labels", () => {
     const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
     const { listConversationsForWorkspace } = await import("../src/chat-export-ux.js");
     const rows = await listConversationsForWorkspace(wk, chatsRoot, projectsRoot, {
-      composerIndex: new Map(),
+      workspaceIndex: new Map(),
+      globalIndex: new Map(),
     });
     expect(rows[0]!.label).toBe("only-id");
   });

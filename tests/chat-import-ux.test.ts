@@ -3,6 +3,9 @@ import * as path from "node:path";
 
 const showQuickPickMock = vi.fn();
 const showErrorMessageMock = vi.fn();
+const showInformationMessageMock = vi.fn();
+const showWarningMessageMock = vi.fn();
+const executeCommandMock = vi.fn();
 
 const configurationValues: Record<string, unknown> = {
   "chatImport.activateDefault": false,
@@ -28,8 +31,36 @@ vi.mock("vscode", () => ({
   window: {
     showQuickPick: showQuickPickMock,
     showErrorMessage: showErrorMessageMock,
+    showInformationMessage: showInformationMessageMock,
+    showWarningMessage: showWarningMessageMock,
+  },
+  commands: {
+    executeCommand: executeCommandMock,
   },
 }));
+
+vi.mock("../src/diagnostics.js", () => ({
+  getLogger: () => ({
+    appendLine: vi.fn(),
+    show: vi.fn(),
+    dispose: vi.fn(),
+  }),
+}));
+
+import type { ChatBundle } from "../src/chat-persistence.js";
+
+const chatBundleFixture: ChatBundle = {
+  schemaVersion: 1,
+  type: "chat-persistence",
+  createdAt: "2026-05-21T00:00:00.000Z",
+  conversationId: "conv-1",
+  title: "One",
+  subtitle: "1 file",
+  previewText: "One",
+  sidebarSnapshot: null,
+  storeSnapshot: null,
+  transcriptFiles: [],
+};
 
 describe("chat-import-ux", () => {
   beforeEach(() => {
@@ -96,6 +127,64 @@ describe("chat-import-ux", () => {
     ).toContain("1 OK");
   });
 
+  it("presentChatImportOutcome reloads after successful import even when sidebar flag is false", async () => {
+    configurationValues["transcripts.autoReloadAfterImport"] = true;
+    const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
+    await presentChatImportOutcome(
+      {
+        conversationId: "c1",
+        transcriptsWritten: 0,
+        storeWritten: false,
+        sidebarMerged: false,
+        warnings: [],
+      },
+      { activate: false },
+      "chat-load"
+    );
+    expect(executeCommandMock).toHaveBeenCalledWith("workbench.action.reloadWindow");
+  });
+
+  it("presentChatImportOutcome auto-reloads when sidebar merged and setting enabled", async () => {
+    configurationValues["transcripts.autoReloadAfterImport"] = true;
+    const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
+    await presentChatImportOutcome(
+      {
+        conversationId: "c1",
+        transcriptsWritten: 1,
+        storeWritten: true,
+        sidebarMerged: true,
+        warnings: [],
+      },
+      { activate: false },
+      "chat-load"
+    );
+    expect(executeCommandMock).toHaveBeenCalledWith("workbench.action.reloadWindow");
+  });
+
+  it("presentChatImportOutcome offers Reload Window when sidebar merged", async () => {
+    configurationValues["transcripts.autoReloadAfterImport"] = false;
+    showInformationMessageMock
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce("Reload Window");
+    const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
+    await presentChatImportOutcome(
+      {
+        conversationId: "c1",
+        transcriptsWritten: 1,
+        storeWritten: true,
+        sidebarMerged: true,
+        warnings: [],
+      },
+      { activate: false },
+      "chat-load"
+    );
+    expect(showInformationMessageMock).toHaveBeenCalledWith(
+      expect.stringContaining("Composer sidebar was updated"),
+      "Reload Window"
+    );
+    expect(executeCommandMock).toHaveBeenCalledWith("workbench.action.reloadWindow");
+  });
+
   it("buildChatImportResultMessage includes verify summary", async () => {
     const { buildChatImportResultMessage } = await import("../src/chat-import-ux.js");
     const msg = buildChatImportResultMessage(
@@ -112,5 +201,108 @@ describe("chat-import-ux", () => {
     expect(msg).toContain('Chat "c1" loaded.');
     expect(msg).toContain("verify");
     expect(msg).toContain("activation requested");
+  });
+
+  it("restoreChatBundlesBatch continues after failure", async () => {
+    const restoreMod = await import("../src/chat-persistence-restore.js");
+    const restoreSpy = vi.spyOn(restoreMod, "restoreChatBundle");
+    const okResult = {
+      conversationId: "conv-ok",
+      transcriptsWritten: 1,
+      storeWritten: true,
+      sidebarMerged: true,
+      warnings: [] as string[],
+    };
+    restoreSpy
+      .mockRejectedValueOnce(new Error("first failed"))
+      .mockResolvedValueOnce(okResult);
+
+    const { restoreChatBundlesBatch } = await import("../src/chat-import-ux.js");
+    const bundles: ChatBundle[] = [
+      { ...chatBundleFixture, conversationId: "conv-fail", title: "Fail Chat" },
+      { ...chatBundleFixture, conversationId: "conv-ok", title: "Ok Chat" },
+    ];
+    const progress = { report: vi.fn() };
+    const batch = await restoreChatBundlesBatch(
+      {} as never,
+      bundles,
+      { activate: false, workspaceFolder: "/repo/a" },
+      progress,
+      "gist-chat-import"
+    );
+
+    expect(restoreSpy).toHaveBeenCalledTimes(2);
+    expect(batch.successes).toHaveLength(1);
+    expect(batch.successes[0]?.conversationId).toBe("conv-ok");
+    expect(batch.failures).toHaveLength(1);
+    expect(batch.failures[0]?.bundle.conversationId).toBe("conv-fail");
+    expect(batch.failures[0]?.error).toContain("first failed");
+    expect(progress.report).toHaveBeenCalledWith({
+      message: "Importing chat 1/2: Fail Chat...",
+    });
+    expect(progress.report).toHaveBeenCalledWith({
+      message: "Importing chat 2/2: Ok Chat...",
+    });
+
+    restoreSpy.mockRestore();
+  });
+
+  it("presentBatchChatImportOutcome shows X/Y summary", async () => {
+    const { presentBatchChatImportOutcome } = await import("../src/chat-import-ux.js");
+    await presentBatchChatImportOutcome(
+      {
+        successes: [
+          {
+            conversationId: "a",
+            transcriptsWritten: 0,
+            storeWritten: false,
+            sidebarMerged: false,
+            warnings: [],
+          },
+          {
+            conversationId: "b",
+            transcriptsWritten: 0,
+            storeWritten: false,
+            sidebarMerged: false,
+            warnings: [],
+          },
+        ],
+        failures: [],
+      },
+      { activate: false },
+      "gist-chat-import",
+      2
+    );
+    expect(showInformationMessageMock).toHaveBeenCalledWith("Imported 2/2 chats.");
+    expect(showWarningMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("presentBatchChatImportOutcome warns on partial failure", async () => {
+    const { presentBatchChatImportOutcome } = await import("../src/chat-import-ux.js");
+    await presentBatchChatImportOutcome(
+      {
+        successes: [
+          {
+            conversationId: "a",
+            transcriptsWritten: 0,
+            storeWritten: false,
+            sidebarMerged: false,
+            warnings: [],
+          },
+        ],
+        failures: [
+          {
+            bundle: { ...chatBundleFixture, conversationId: "b", title: "Broken" },
+            error: "boom",
+          },
+        ],
+      },
+      { activate: false },
+      "gist-chat-import",
+      2
+    );
+    expect(showWarningMessageMock).toHaveBeenCalledWith(
+      "Imported 1/2 chats. 1 failed: Broken."
+    );
   });
 });

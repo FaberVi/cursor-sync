@@ -263,7 +263,12 @@ async function ensureSidebarStateForOpen(
     wi,
     { pinRecent: true }
   );
-  const mergedData = prepareComposerDataForImport(existingDataStr, bundle, conversationId);
+  const mergedData = prepareComposerDataForImport(
+    existingDataStr,
+    bundle,
+    conversationId,
+    wi
+  );
   const escapedHeaders = escapeSqlLiteral(JSON.stringify(mergedHeaders));
   const escapedData = escapeSqlLiteral(JSON.stringify(mergedData));
   const script = [

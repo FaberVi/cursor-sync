@@ -16,6 +16,34 @@
     ],
     "selectedComposerIds": []
   },
+  "prepareComposerDataForImport": {
+    "aaaa1111-bbbb-2222-cccc-333333333333": {
+      "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",
+      "rich": true,
+      "workspaceIdentifier": {
+        "id": "ws-storage-abc123",
+        "uri": {
+          "$mid": 1,
+          "_sep": 47,
+          "external": "file:///home/dev/my-repo",
+          "fsPath": "/home/dev/my-repo",
+          "path": "/home/dev/my-repo",
+          "scheme": "file"
+        }
+      }
+    },
+    "bbbb2222-cccc-3333-dddd-444444444444": {
+      "composerId": "bbbb2222-cccc-3333-dddd-444444444444",
+      "rich": false
+    },
+    "customFlag": true,
+    "hasMigratedComposerData": true,
+    "hasMigratedMultipleComposers": true,
+    "lastFocusedComposerIds": [
+      "aaaa1111-bbbb-2222-cccc-333333333333"
+    ],
+    "selectedComposerIds": []
+  },
   "filterComposerDataForConversation": {
     "aaaa1111-bbbb-2222-cccc-333333333333": {
       "composerId": "aaaa1111-bbbb-2222-cccc-333333333333",

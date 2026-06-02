@@ -13,6 +13,7 @@ import {
   prepareComposerDataForImport,
   prepareHeadersForImport,
   stampWorkspaceIdentifierOnHeaders,
+  rebindComposerRecord,
   type WorkspaceIdentifier,
 } from "../src/chat-import-merge.js";
 
@@ -115,8 +116,13 @@ describe("chat-import-merge", () => {
   });
 
   it("prepareComposerDataForImport matches Python golden", () => {
-    const result = prepareComposerDataForImport(JSON.stringify(existingData), bundle, cid);
-    expect(result).toEqual(golden.composerDataForFocus);
+    const result = prepareComposerDataForImport(
+      JSON.stringify(existingData),
+      bundle,
+      cid,
+      workspaceIdentifier
+    );
+    expect(result).toEqual(golden.prepareComposerDataForImport);
   });
 
   it("prepareHeadersForImport matches Python golden (pin + stamp)", () => {
@@ -130,6 +136,41 @@ describe("chat-import-merge", () => {
     expect(normalizePinTimestamps(result)).toEqual(
       normalizePinTimestamps(golden.prepareHeadersForImport)
     );
+  });
+
+  it("rebindComposerRecord clears requestId and stamps workspace", () => {
+    const result = rebindComposerRecord(
+      {
+        composerId: cid,
+        requestId: "source-session-request-must-clear",
+        workspaceUris: ["/old/path"],
+        agentSessionId: "stale",
+      },
+      workspaceIdentifier
+    );
+    expect(result.requestId).toBe("");
+    expect(result.workspaceUris).toEqual([]);
+    expect(result.agentSessionId).toBeUndefined();
+    expect(result.workspaceIdentifier).toEqual(workspaceIdentifier);
+  });
+
+  it("prepareComposerDataForImport clears requestId from sidebar snapshot blob", () => {
+    const snap = bundle.sidebarSnapshot as Record<string, unknown>;
+    const data = { ...(snap.composerData as Record<string, unknown>) };
+    const row = { ...(data[cid] as Record<string, unknown>) };
+    row.requestId = "stale-request-from-export";
+    data[cid] = row;
+    const bundleWithRequest = {
+      ...bundle,
+      sidebarSnapshot: { ...snap, composerData: data },
+    };
+    const result = prepareComposerDataForImport(
+      JSON.stringify(existingData),
+      bundleWithRequest,
+      cid,
+      workspaceIdentifier
+    );
+    expect((result[cid] as Record<string, unknown>).requestId).toBe("");
   });
 
   it("stamp leaves non-target rows workspaceIdentifier unchanged", () => {

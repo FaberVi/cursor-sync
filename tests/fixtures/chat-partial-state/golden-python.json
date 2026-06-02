@@ -30,7 +30,8 @@
         "path": "/home/user/proj",
         "scheme": "file"
       }
-    }
+    },
+    "requestId": ""
   },
   "partialFull": {
     "composerId": "43aae2fb-71fc-4e9c-9add-3e995caaaa80",
@@ -68,7 +69,9 @@
     "status": "completed",
     "modelConfig": {
       "modelName": "default"
-    }
+    },
+    "requestId": "",
+    "workspaceUris": []
   },
   "storeIndex": {
     "meta": {

@@ -24,15 +24,16 @@ import {
 } from "./chat-import-verify.js";
 import {
   pickImportWorkspaceFolder,
-  presentChatImportOutcome,
+  presentChatImportOutcomeForBatch,
   promptChatImportOptions,
+  restoreChatBundlesBatch,
 } from "./chat-import-ux.js";
 import {
   buildChatBundlesCollection,
   selectGistExportFile,
   defaultLocalExportFilename,
   parseChatBundleOrCollection,
-  pickBundleFromCollection,
+  resolveBundlesFromParsedExport,
 } from "./chat-bundle-format.js";
 import { pickChatsForExport, type ChatExportSelection } from "./chat-export-ux.js";
 import {
@@ -42,7 +43,7 @@ import {
 import {
   bundleArtifactsDebug,
   composerPayloadDebug,
-  loadChat,
+  enrichImportResultWithBundleInspect,
   logChatRestoreDebug,
   resolveProjectsRoot,
   safeJsonParse,
@@ -234,6 +235,24 @@ async function executeImportChatBundleCore(
 
   const bundlePath = uris[0]!.fsPath;
 
+  let parsed: ReturnType<typeof parseChatBundleOrCollection>;
+  try {
+    const raw = await fs.readFile(bundlePath, "utf-8");
+    parsed = parseChatBundleOrCollection(raw);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.appendLine(`[${new Date().toISOString()}] [chat-load] FAILED: ${msg}`);
+    vscode.window.showErrorMessage(`Chat import failed: ${msg}`);
+    return;
+  }
+
+  const pickerShown =
+    parsed.kind === "collection" && parsed.collection.bundles.length > 1;
+  const bundles = await resolveBundlesFromParsedExport(parsed);
+  if (!bundles) {
+    return;
+  }
+
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -242,13 +261,31 @@ async function executeImportChatBundleCore(
     },
     async (progress) => {
       try {
-        const result = await loadChat(
+        const batch = await restoreChatBundlesBatch(
           context,
-          bundlePath,
+          bundles,
+          promptResult.restoreOptions,
           progress,
-          promptResult.restoreOptions
+          "chat-load"
         );
-        await presentChatImportOutcome(result, promptResult.restoreOptions, "chat-load");
+        if (bundles.length === 1) {
+          const bundle = bundles[0]!;
+          for (let i = 0; i < batch.successes.length; i++) {
+            batch.successes[i] = await enrichImportResultWithBundleInspect(
+              context,
+              bundlePath,
+              bundle,
+              batch.successes[i]!
+            );
+          }
+        }
+        await presentChatImportOutcomeForBatch(
+          bundles,
+          batch,
+          promptResult.restoreOptions,
+          "chat-load",
+          pickerShown
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.appendLine(`[${new Date().toISOString()}] [chat-load] FAILED: ${msg}`);
@@ -288,7 +325,7 @@ export async function executeImportChatBundleActivate(
   );
 }
 
-function chatEditorExportFailureMessage(
+export function chatEditorExportFailureMessage(
   resolution: Exclude<ChatEditorExportTargetResolution, { ok: true }>
 ): string {
   if (resolution.reason === "not-chat") {

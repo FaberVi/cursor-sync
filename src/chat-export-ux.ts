@@ -3,8 +3,11 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { buildChatsKeyToFolderMap } from "./chat-workspace-context.js";
 import { workspaceQuickPickLabel } from "./chat-workspace-label.js";
-import { loadComposerNameIndex } from "./composer-merge.js";
-import { resolveConversationDisplayTitle } from "./transcript-bundle.js";
+import {
+  loadComposerNameIndexForChatsWorkspaceKey,
+  loadGlobalComposerNameIndex,
+  resolveComposerConversationTitle,
+} from "./composer-title.js";
 import { resolveSyncRoots } from "./paths.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
@@ -30,7 +33,8 @@ export interface ChatExportSelection {
 }
 
 export interface ListConversationsOptions {
-  composerIndex?: Map<string, string>;
+  workspaceIndex?: Map<string, string>;
+  globalIndex?: Map<string, string>;
 }
 
 function resolveProjectsRoot(): string {
@@ -112,8 +116,11 @@ export async function listConversationsForWorkspace(
   projectsRoot: string,
   options: ListConversationsOptions = {}
 ): Promise<ConversationExportRow[]> {
-  const composerIndex =
-    options.composerIndex ?? (await loadComposerNameIndex());
+  const workspaceIndex =
+    options.workspaceIndex ??
+    (await loadComposerNameIndexForChatsWorkspaceKey(workspaceKey));
+  const globalIndex =
+    options.globalIndex ?? (await loadGlobalComposerNameIndex());
   const workspacePath = path.join(chatsRoot, workspaceKey);
   let entries: import("node:fs").Dirent[];
   try {
@@ -135,10 +142,11 @@ export async function listConversationsForWorkspace(
     const jsonlCount = await countJsonlForConversation(projectsRoot, conversationId);
     const transcriptContent =
       (await readTranscriptContentForConversation(projectsRoot, conversationId)) ?? null;
-    const title = resolveConversationDisplayTitle({
+    const title = await resolveComposerConversationTitle({
       conversationId,
-      composerName: composerIndex.get(conversationId),
       transcriptContent,
+      workspaceIndex,
+      globalIndex,
     });
     const parts = [
       jsonlCount > 0 ? `${jsonlCount} jsonl` : "no jsonl",

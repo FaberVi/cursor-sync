@@ -296,6 +296,10 @@ describe("chat-import-v2 integration", () => {
     const { restoreChatBundle } = await import("../src/chat-persistence.js");
     const context = {
       globalStorageUri: { fsPath: path.join(tempHome, "global-storage") },
+      globalState: {
+        get: () => undefined,
+        update: async () => {},
+      },
     } as import("vscode").ExtensionContext;
 
     const result = await restoreChatBundle(context, bundle, { report: () => {} }, {
@@ -376,6 +380,10 @@ describe("chat-import-v2 integration", () => {
 
     const context = {
       globalStorageUri: { fsPath: path.join(tempHome, "global-storage") },
+      globalState: {
+        get: () => undefined,
+        update: async () => {},
+      },
     } as import("vscode").ExtensionContext;
 
     await restoreChatBundle(context, bundle, { report: () => {} }, {

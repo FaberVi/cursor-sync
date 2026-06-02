@@ -1,15 +1,20 @@
 import * as vscode from "vscode";
-import { GistClient } from "./gist.js";
+import { GistClient, fetchGistFileContent } from "./gist.js";
+import type { GistFile } from "./types.js";
 import { getLogger } from "./diagnostics.js";
 import { getToken } from "./auth.js";
-import { restoreChatBundle, type ChatBundle } from "./chat-persistence.js";
-import { presentChatImportOutcome, promptChatImportOptions } from "./chat-import-ux.js";
+import type { ChatBundle } from "./chat-persistence.js";
+import {
+  presentChatImportOutcomeForBatch,
+  promptChatImportOptions,
+  restoreChatBundlesBatch,
+} from "./chat-import-ux.js";
 import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
 import {
   CHAT_BUNDLE_GIST_FILE_NAME,
   CHAT_BUNDLES_GIST_FILE_NAME,
   parseChatBundleOrCollection,
-  pickBundleFromCollection,
+  resolveBundlesFromParsedExport,
 } from "./chat-bundle-format.js";
 import {
   decryptChatGistPayload,
@@ -61,24 +66,33 @@ export async function executeImportChatFromGist(
           `[${new Date().toISOString()}] [chat-restore-debug] gist import start gistId=${gistId}`
         );
         progress.report({ message: "Fetching Gist..." });
-        const bundle = await fetchAndParseGistBundle(context, gistId, progress);
+        const { bundles, pickerShown } = await fetchAndResolveGistBundles(
+          context,
+          gistId,
+          progress
+        );
         const promptResult = await promptChatImportOptions();
         if (!promptResult) {
           return;
         }
-        const result = await restoreChatBundle(
+        const batch = await restoreChatBundlesBatch(
           context,
-          bundle,
-          progress,
-          promptResult.restoreOptions
-        );
-        logger.appendLine(
-          `[${new Date().toISOString()}] [chat-restore-debug] gist import done gistId=${gistId} conversationId=${result.conversationId} transcriptsWritten=${result.transcriptsWritten} storeWritten=${result.storeWritten} sidebarMerged=${result.sidebarMerged} warnings=${result.warnings.length}`
-        );
-        await presentChatImportOutcome(
-          result,
+          bundles,
           promptResult.restoreOptions,
+          progress,
           "gist-chat-import"
+        );
+        for (const result of batch.successes) {
+          logger.appendLine(
+            `[${new Date().toISOString()}] [chat-restore-debug] gist import done gistId=${gistId} conversationId=${result.conversationId} transcriptsWritten=${result.transcriptsWritten} storeWritten=${result.storeWritten} sidebarMerged=${result.sidebarMerged} warnings=${result.warnings.length}`
+          );
+        }
+        await presentChatImportOutcomeForBatch(
+          bundles,
+          batch,
+          promptResult.restoreOptions,
+          "gist-chat-import",
+          pickerShown
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -116,34 +130,35 @@ async function resolveGistChatFileContent(
   }
 }
 
-async function resolveChatBundleFromGistContent(
+async function resolveChatBundlesFromGistContent(
   context: vscode.ExtensionContext,
   raw: string,
   fileLabel: string,
   requireCollection: boolean,
   progress: vscode.Progress<{ message?: string; increment?: number }>
-): Promise<ChatBundle> {
+): Promise<{ bundles: ChatBundle[]; pickerShown: boolean }> {
   const plaintext = await resolveGistChatFileContent(context, raw, fileLabel);
   const parsed = parseChatBundleOrCollection(plaintext);
   if (requireCollection && parsed.kind !== "collection") {
     throw new Error("Invalid chat-bundles.json: expected chat-bundles-collection.");
   }
-  if (parsed.kind === "single") {
-    return parsed.bundle;
+  const pickerShown =
+    parsed.kind === "collection" && parsed.collection.bundles.length > 1;
+  if (pickerShown) {
+    progress.report({ message: "Select conversations to import..." });
   }
-  progress.report({ message: "Select chat to import..." });
-  const picked = await pickBundleFromCollection(parsed.collection);
-  if (!picked) {
+  const bundles = await resolveBundlesFromParsedExport(parsed);
+  if (!bundles) {
     throw new Error("Chat import cancelled.");
   }
-  return picked;
+  return { bundles, pickerShown };
 }
 
-async function fetchAndParseGistBundle(
+async function fetchAndResolveGistBundles(
   context: vscode.ExtensionContext,
   gistId: string,
   progress: vscode.Progress<{ message?: string; increment?: number }>
-): Promise<ChatBundle> {
+): Promise<{ bundles: ChatBundle[]; pickerShown: boolean }> {
   const logger = getLogger();
   const token = await getToken(context);
   if (!token) {
@@ -158,21 +173,23 @@ async function fetchAndParseGistBundle(
   }
 
   progress.report({ message: "Reading chat bundle..." });
-  const bundleRaw = gist.files?.[CHAT_BUNDLE_GIST_FILE_NAME]?.content;
-  const collectionRaw = gist.files?.[CHAT_BUNDLES_GIST_FILE_NAME]?.content;
+  const bundleFile = gist.files?.[CHAT_BUNDLE_GIST_FILE_NAME] as GistFile | undefined;
+  const collectionFile = gist.files?.[CHAT_BUNDLES_GIST_FILE_NAME] as GistFile | undefined;
 
-  let bundle: ChatBundle;
+  let resolved: { bundles: ChatBundle[]; pickerShown: boolean };
 
-  if (bundleRaw) {
-    bundle = await resolveChatBundleFromGistContent(
+  if (bundleFile) {
+    const bundleRaw = await fetchGistFileContent(bundleFile, token);
+    resolved = await resolveChatBundlesFromGistContent(
       context,
       bundleRaw,
       "chat-bundle.json",
       false,
       progress
     );
-  } else if (collectionRaw) {
-    bundle = await resolveChatBundleFromGistContent(
+  } else if (collectionFile) {
+    const collectionRaw = await fetchGistFileContent(collectionFile, token);
+    resolved = await resolveChatBundlesFromGistContent(
       context,
       collectionRaw,
       "chat-bundles.json",
@@ -195,14 +212,26 @@ async function fetchAndParseGistBundle(
     );
   }
 
+  const { bundles, pickerShown } = resolved;
+
   progress.report({ message: "Validating chat bundle..." });
-  const tfCount = bundle.transcriptFiles?.length ?? 0;
-  const storeBytes = bundle.storeSnapshot?.sizeBytes ?? 0;
-  const sidebarKeys = bundle.sidebarSnapshot ? Object.keys(bundle.sidebarSnapshot).join(",") : "none";
-  logger.appendLine(
-    `[${new Date().toISOString()}] [chat-restore-debug] gist import validated gistId=${gistId} conversationId=${bundle.conversationId} transcriptFiles=${tfCount} storeSnapshot=${bundle.storeSnapshot ? `${storeBytes}b` : "absent"} sidebarSnapshot=${sidebarKeys}`
-  );
-  return bundle;
+  if (bundles.length === 1) {
+    const bundle = bundles[0]!;
+    const tfCount = bundle.transcriptFiles?.length ?? 0;
+    const storeBytes = bundle.storeSnapshot?.sizeBytes ?? 0;
+    const sidebarKeys = bundle.sidebarSnapshot
+      ? Object.keys(bundle.sidebarSnapshot).join(",")
+      : "none";
+    logger.appendLine(
+      `[${new Date().toISOString()}] [chat-restore-debug] gist import validated gistId=${gistId} conversationId=${bundle.conversationId} transcriptFiles=${tfCount} storeSnapshot=${bundle.storeSnapshot ? `${storeBytes}b` : "absent"} sidebarSnapshot=${sidebarKeys}`
+    );
+  } else {
+    const ids = bundles.map((b) => b.conversationId).join(",");
+    logger.appendLine(
+      `[${new Date().toISOString()}] [chat-restore-debug] gist import validated gistId=${gistId} batchCount=${bundles.length} conversationIds=${ids}`
+    );
+  }
+  return { bundles, pickerShown };
 }
 
 async function fetchGist(

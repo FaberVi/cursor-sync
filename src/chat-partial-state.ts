@@ -13,6 +13,28 @@ export const PARTIAL_STATE_STRIPPED = new Set([
   "agentSessionId",
 ]);
 
+export function clearSessionBindingInTree(value: unknown): unknown {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (k === "requestId") {
+        out[k] = "";
+      } else if (k === "workspaceUris") {
+        out[k] = [];
+      } else if (PARTIAL_STATE_STRIPPED.has(k)) {
+        continue;
+      } else {
+        out[k] = clearSessionBindingInTree(v);
+      }
+    }
+    return out;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => clearSessionBindingInTree(item));
+  }
+  return value;
+}
+
 export type PartialState = Record<string, unknown>;
 
 export interface BundleToPartialStateOptions {
@@ -223,6 +245,15 @@ export function bundleToPartialState(
   const rich = sidebarRichComposerBlob(snapDict, cid);
   if (rich) {
     mergeRichComposerIntoPartial(partial, rich, cid);
+  }
+
+  const cleared = clearSessionBindingInTree(partial);
+  if (cleared && typeof cleared === "object" && !Array.isArray(cleared)) {
+    Object.assign(partial, cleared as PartialState);
+  }
+  partial.requestId = "";
+  if (rich) {
+    partial.workspaceUris = [];
   }
 
   return partial;
