@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## v0.7.6
+
+### Added
+- **Export into Bundle (GIST)** on the Composer editor tab (`cursorSync.exportCurrentChatBundleToGist`) for single-conversation private Gist upload.
+- **Batch chat bundle import** from local `chat-bundles.json` and Gist collections (multi-select picker, continue-on-failure summary via `restoreChatBundlesBatch`).
+- **Composer conversation titles** from `composer.composerHeaders` / `allComposers[].name` in export and import pickers (`composer-title.ts`).
+- **Sidebar writeback queue** after disk import: immediate `state.vscdb` merge plus deferred flush on extension activate (`chat-import-sidebar-writeback.ts`).
+- **`fetchGistFileContent`** downloads full gist payloads when the GitHub API marks files truncated.
+
+### Changed
+- Import rebind clears session bindings (`requestId`, `workspaceUris`) on sidebar ItemTable and Layer 4 composer rows (TypeScript + bundled Python).
+- Chat bundle and Gist import outcomes use batch summaries for multi-chat imports; README notes window reload is optional when the UI is stale.
+- Python transport: destination workspace rebind on `cursorDiskKV`, pin imported composer in `allComposers`, ItemTable `composerData` workspace stamp, SQLite busy timeouts; optional debug logging when `CURSOR_SYNC_DEBUG_LOG` is set.
+
+### Fixed
+- Gist collection import restores all selected conversations without aborting on the first failure.
+- `restoreChatBundle` tolerates extension contexts without `globalState` (integration tests).
+
 ## v0.7.5
 
 ### Added
