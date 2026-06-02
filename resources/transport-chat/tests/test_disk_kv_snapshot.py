@@ -15,6 +15,7 @@ from cursor_chat_io import (  # noqa: E402
     export_disk_kv_snapshot,
     is_disk_kv_key_in_conversation_scope,
     merge_cursor_disk_kv,
+    rebind_existing_conversation_disk_kv_keys,
     remap_disk_kv_snapshot_for_destination,
     verify_checks_all_ok,
     verify_import_visibility,
@@ -170,6 +171,146 @@ def test_remap_disk_kv_snapshot_remaps_workspace_identifier(tmp_path):
     composer = json.loads(rows[f"composerData:{CID}"])
     assert composer["workspaceIdentifier"]["id"] == DEST_WS_ID
     assert composer["workspaceIdentifier"]["uri"]["fsPath"] == DEST_FOLDER
+
+
+def test_remap_disk_kv_snapshot_clears_composer_data_request_id(tmp_path):
+    snap = {
+        "rows": [
+            {
+                "key": f"composerData:{CID}",
+                "value": json.dumps(
+                    {
+                        "composerId": CID,
+                        "requestId": "source-request-should-clear",
+                        "workspaceIdentifier": {
+                            "id": "source-ws",
+                            "uri": {"fsPath": "/source"},
+                        },
+                    }
+                ),
+                "checksum": "x",
+            }
+        ]
+    }
+    rows = remap_disk_kv_snapshot_for_destination(snap, CID, DEST_WORKSPACE_IDENTIFIER)
+    composer = json.loads(rows[f"composerData:{CID}"])
+    assert composer.get("requestId") == ""
+    assert composer["workspaceIdentifier"]["id"] == DEST_WS_ID
+
+
+def test_rebind_existing_conversation_disk_kv_keys_clears_stale_request_id(tmp_path):
+    dest_db = tmp_path / "dest-global.vscdb"
+    conn = sqlite3.connect(dest_db)
+    conn.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT);")
+    stale_bubble = f"bubbleId:{CID}:stale"
+    conn.execute(
+        "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?);",
+        (
+            stale_bubble,
+            json.dumps({"requestId": "stale-request", "text": "old"}),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    count, _warnings = rebind_existing_conversation_disk_kv_keys(
+        dest_db, CID, DEST_WORKSPACE_IDENTIFIER, dry_run=False
+    )
+    assert count == 1
+    conn = sqlite3.connect(dest_db)
+    try:
+        row = conn.execute(
+            "SELECT value FROM cursorDiskKV WHERE key = ?",
+            (stale_bubble,),
+        ).fetchone()
+        assert json.loads(row[0]).get("requestId") == ""
+    finally:
+        conn.close()
+
+
+def test_purge_disk_kv_removes_stale_bubble_before_merge(tmp_path):
+    dest_db = tmp_path / "dest-global.vscdb"
+    conn = sqlite3.connect(dest_db)
+    conn.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT);")
+    stale_bubble = f"bubbleId:{CID}:stale-only-on-disk"
+    conn.execute(
+        "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?);",
+        (
+            stale_bubble,
+            json.dumps({"requestId": "stale-request", "text": "old"}),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    from cursor_chat_io_common import purge_disk_kv_for_conversation
+
+    purged, _ = purge_disk_kv_for_conversation(dest_db, CID, dry_run=False)
+    assert purged == 1
+
+    rows = {
+        f"bubbleId:{CID}:new-bubble": json.dumps({"requestId": "", "text": "new"}),
+    }
+    merge_cursor_disk_kv(dest_db, rows, dry_run=False, conversation_id=CID)
+    conn = sqlite3.connect(dest_db)
+    try:
+        assert (
+            conn.execute(
+                "SELECT 1 FROM cursorDiskKV WHERE key = ?", (stale_bubble,)
+            ).fetchone()
+            is None
+        )
+        row = conn.execute(
+            "SELECT value FROM cursorDiskKV WHERE key = ?",
+            (f"bubbleId:{CID}:new-bubble",),
+        ).fetchone()
+        assert json.loads(row[0]).get("requestId") == ""
+    finally:
+        conn.close()
+
+
+def test_merge_cursor_disk_kv_clears_request_id_on_imported_rows(tmp_path):
+    dest_db = tmp_path / "dest-global.vscdb"
+    conn = sqlite3.connect(dest_db)
+    conn.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT);")
+    conn.commit()
+    conn.close()
+
+    rows = {
+        f"composerData:{CID}": json.dumps(
+            {
+                "composerId": CID,
+                "workspaceIdentifier": DEST_WORKSPACE_IDENTIFIER,
+            }
+        ),
+        f"bubbleId:{CID}:new-bubble": json.dumps({"requestId": "", "text": "new"}),
+    }
+    merge_cursor_disk_kv(dest_db, rows, dry_run=False, conversation_id=CID)
+    conn = sqlite3.connect(dest_db)
+    try:
+        new_val = conn.execute(
+            "SELECT value FROM cursorDiskKV WHERE key = ?",
+            (f"bubbleId:{CID}:new-bubble",),
+        ).fetchone()
+        assert json.loads(new_val[0]).get("requestId") == ""
+    finally:
+        conn.close()
+
+
+def test_remap_disk_kv_snapshot_clears_bubble_request_id(tmp_path):
+    source_db = tmp_path / "source.vscdb"
+    _seed_global_db(source_db)
+    snap = export_disk_kv_snapshot(source_db, CID)
+    assert snap is not None
+    rows = remap_disk_kv_snapshot_for_destination(snap, CID, DEST_WORKSPACE_IDENTIFIER)
+    for key, value in rows.items():
+        if not key.startswith(f"bubbleId:{CID}:"):
+            continue
+        obj = json.loads(value)
+        assert obj.get("requestId") == ""
+        assert obj.get("workspaceUris") == []
+        return
+    raise AssertionError("no bubble rows in remapped snapshot")
 
 
 def test_import_disk_kv_snapshot_preserves_tool_former_data(tmp_path):

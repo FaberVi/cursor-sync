@@ -401,6 +401,20 @@ def import_bundle(
 
     do_sync_global = sync_global
     merge_targets = merge_targets_for_import(state_db, sync_global=do_sync_global)
+    agent_debug_log(
+        "K",
+        "cursor_chat_io_import.py:merge-targets",
+        "state db merge targets",
+        {
+            "conversationId": cid,
+            "mergeTargetPaths": [str(p) for p in merge_targets],
+            "mergeTargetCount": len(merge_targets),
+            "syncGlobal": do_sync_global,
+            "stateDbArg": str(state_db) if state_db else None,
+            "workspaceStorageId": ws_ctx.workspace_storage_id if ws_ctx else None,
+            "folderFsPath": ws_ctx.folder_fs_path if ws_ctx else None,
+        },
+    )
 
     if bundle.get("sidebarSnapshot"):
         if dry_run:
@@ -440,14 +454,87 @@ def import_bundle(
             )
         else:
             disk_kv_rows = build_cursor_disk_kv_rows_from_bundle(bundle, cid, ws_identifier)
-        ok_kv, kv_warnings = merge_cursor_disk_kv(
-            global_db, disk_kv_rows, dry_run=dry_run, conversation_id=cid
+        non_empty_request_ids = 0
+        for row_key, row_val in disk_kv_rows.items():
+            try:
+                parsed = json.loads(row_val)
+                if isinstance(parsed, dict) and parsed.get("requestId"):
+                    non_empty_request_ids += 1
+            except json.JSONDecodeError:
+                pass
+        agent_debug_log(
+            "M",
+            "cursor_chat_io_import.py:disk-kv-remap",
+            "remapped diskKv rows before write",
+            {
+                "conversationId": cid,
+                "incomingRowCount": len(disk_kv_rows),
+                "rowsWithNonEmptyRequestId": non_empty_request_ids,
+            },
         )
-        warnings.extend(kv_warnings)
-        if ok_kv and not dry_run:
-            print(
-                f"Wrote {len(disk_kv_rows)} cursorDiskKV rows into {global_db} "
-                f"(composerData + {len(disk_kv_rows) - 1} bubbles)"
+        if sqlite_integrity_ok(global_db):
+            purged, purge_warnings = purge_disk_kv_for_conversation(
+                global_db, cid, dry_run=dry_run
+            )
+            warnings.extend(purge_warnings)
+            agent_debug_log(
+                "P",
+                "cursor_chat_io_import.py:disk-kv-purge",
+                "purged stale cursorDiskKV before merge",
+                {
+                    "conversationId": cid,
+                    "purgedKeyCount": purged,
+                },
+            )
+            ok_kv, kv_warnings = merge_cursor_disk_kv(
+                global_db, disk_kv_rows, dry_run=dry_run, conversation_id=cid
+            )
+            warnings.extend(kv_warnings)
+            if ok_kv and not dry_run:
+                print(
+                    f"Wrote {len(disk_kv_rows)} cursorDiskKV rows into {global_db} "
+                    f"(composerData + {len(disk_kv_rows) - 1} bubbles)"
+                )
+                rebind_count, rebind_warnings = rebind_existing_conversation_disk_kv_keys(
+                    global_db, cid, ws_identifier, dry_run=False
+                )
+                warnings.extend(rebind_warnings)
+                if rebind_count:
+                    print(
+                        f"Rebound session bindings on {rebind_count} existing cursorDiskKV "
+                        f"rows for {cid} (no purge)"
+                    )
+                agent_debug_log(
+                    "O",
+                    "cursor_chat_io_import.py:disk-kv-rebind-existing",
+                    "rebound existing disk kv keys in place",
+                    {
+                        "conversationId": cid,
+                        "rebindCount": rebind_count,
+                        "warningCount": len(rebind_warnings),
+                    },
+                )
+                kv_probe = probe_disk_kv_session_bindings(global_db, cid)
+                expected_ws = (
+                    ws_identifier.get("id")
+                    if isinstance(ws_identifier, dict)
+                    else None
+                )
+                agent_debug_log(
+                    "R",
+                    "cursor_chat_io_import.py:disk-kv-post-merge",
+                    "diskKv session bindings after purge merge rebind",
+                    {
+                        "conversationId": cid,
+                        "expectedWorkspaceStorageId": expected_ws,
+                        **kv_probe,
+                    },
+                )
+        else:
+            warnings.append(
+                "Global state.vscdb failed integrity_check; skipped cursorDiskKV merge "
+                "to avoid worsening database corruption. Sidebar headers were still merged; "
+                "tool/MCP bubbles may be missing until global DB is repaired."
             )
 
         agent_kv = bundle.get("agentKvSnapshot")
@@ -532,4 +619,27 @@ def import_bundle(
             raise SystemExit(1)
         if sidebar_merged:
             print("Reload Cursor to refresh the chat sidebar.", file=sys.stderr)
+        global_db = global_state_db_path()
+        ent = (
+            read_composer_header_entry(global_db, cid) if global_db.is_file() else None
+        )
+        wi = ent.get("workspaceIdentifier") if isinstance(ent, dict) else None
+        wi_id = wi.get("id") if isinstance(wi, dict) else None
+        agent_debug_log(
+            "I",
+            "cursor_chat_io_import.py:post-import",
+            "python import finished",
+            {
+                "conversationId": cid,
+                "sidebarMerged": sidebar_merged,
+                "storeWritten": store_written,
+                "transcriptsWritten": transcripts_written,
+                "verifyAllOk": verify_checks_all_ok(verify_checks),
+                "globalHeaderFound": ent is not None,
+                "globalHeaderWorkspaceId": wi_id,
+                "expectedWorkspaceStorageId": ws_ctx.workspace_storage_id if ws_ctx else None,
+                "headerIsArchived": ent.get("isArchived") if isinstance(ent, dict) else None,
+                "warningCount": len(warnings),
+            },
+        )
 

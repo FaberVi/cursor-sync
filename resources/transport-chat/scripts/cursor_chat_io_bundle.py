@@ -115,7 +115,17 @@ def pin_composer_as_most_recent(headers: dict[str, Any], conversation_id: str) -
             row = dict(derived["allComposers"][0])
             row["lastUpdatedAt"] = pin_ms
             row["lastOpenedAt"] = pin_ms
-            updated.append(row)
+            updated.insert(0, row)
+        return {**headers, "allComposers": updated}
+    pinned_row: dict[str, Any] | None = None
+    rest: list[Any] = []
+    for entry in updated:
+        if isinstance(entry, dict) and entry.get("composerId") == conversation_id:
+            pinned_row = entry
+        else:
+            rest.append(entry)
+    if pinned_row is not None:
+        return {**headers, "allComposers": [pinned_row, *rest]}
     return {**headers, "allComposers": updated}
 
 
@@ -663,6 +673,8 @@ def remap_disk_kv_snapshot_for_destination(
     conversation_id: str,
     workspace_identifier: dict[str, Any] | None,
 ) -> dict[str, str]:
+    from cursor_chat_io_common import rebind_disk_kv_row_value
+
     rows_out: dict[str, str] = {}
     for row in snapshot.get("rows") or []:
         if not isinstance(row, dict):
@@ -673,13 +685,7 @@ def remap_disk_kv_snapshot_for_destination(
             continue
         if not is_disk_kv_key_in_conversation_scope(key, conversation_id):
             continue
-        if key == f"composerData:{conversation_id}" and workspace_identifier:
-            try:
-                obj = json.loads(value)
-                obj["workspaceIdentifier"] = workspace_identifier
-                value = json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
-            except json.JSONDecodeError:
-                pass
+        value = rebind_disk_kv_row_value(key, value, conversation_id, workspace_identifier)
         rows_out[key] = value
     return rows_out
 
@@ -1316,8 +1322,9 @@ def merge_cursor_disk_kv(
         return False, warnings
     if dry_run:
         return True, warnings
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     try:
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("BEGIN IMMEDIATE;")
         for key, value in rows.items():
             conn.execute(
@@ -1325,6 +1332,9 @@ def merge_cursor_disk_kv(
                 (key, value),
             )
         conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        raise
     finally:
         conn.close()
     return True, warnings
@@ -1421,6 +1431,12 @@ def merge_state_db(
                 merged_data = merge_data_additive(
                     json.dumps(merged_data, separators=(",", ":")), [extra]
                 )
+        if workspace_ctx is not None:
+            from cursor_chat_io_common import stamp_workspace_on_item_table_composer_data
+
+            merged_data = stamp_workspace_on_item_table_composer_data(
+                merged_data, cid, workspace_ctx.workspace_identifier
+            )
         escaped_d = escape_sql_literal(json.dumps(merged_data, separators=(",", ":")))
         scripts.append(
             f"UPDATE ItemTable SET value = '{escaped_d}' WHERE key = 'composer.composerData';"
@@ -1437,6 +1453,28 @@ def merge_state_db(
             return True, warnings
         cur.executescript("\n".join(scripts))
         conn.commit()
+        row = cur.execute(
+            "SELECT value FROM ItemTable WHERE key = 'composer.composerHeaders' LIMIT 1"
+        ).fetchone()
+        merged_headers = parse_headers_blob(
+            item_table_value_as_text(row[0]) if row else None
+        )
+        composers = merged_headers.get("allComposers")
+        in_list = isinstance(composers, list) and any(
+            isinstance(e, dict) and e.get("composerId") == cid for e in composers
+        )
+        agent_debug_log(
+            "H",
+            "cursor_chat_io_bundle.py:merge_state_db",
+            "sidebar headers merged",
+            {
+                "conversationId": cid,
+                "dbPath": str(db_path),
+                "allComposersCount": len(composers) if isinstance(composers, list) else 0,
+                "conversationInHeaders": in_list,
+                "hadHeadersPayload": bool(headers_payload),
+            },
+        )
         return True, warnings
     finally:
         conn.close()
