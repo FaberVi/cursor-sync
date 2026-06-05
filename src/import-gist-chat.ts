@@ -163,6 +163,12 @@ async function fetchAndParseGistBundle(
 
   let bundle: ChatBundle;
 
+  if (bundleRaw && collectionRaw) {
+    throw new Error(
+      "Gist contains both chat-bundle.json and chat-bundles.json. Remove one file so import knows which export to use."
+    );
+  }
+
   if (bundleRaw) {
     bundle = await resolveChatBundleFromGistContent(
       context,
