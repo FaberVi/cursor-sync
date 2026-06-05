@@ -640,6 +640,49 @@ describe("chat gist export and import", () => {
     expect(showErrorMessageMock).not.toHaveBeenCalled();
   });
 
+  it("rejects gist with both chat-bundle.json and chat-bundles.json", async () => {
+    const bundle = buildChatBundleFixture({
+      conversationId: "conv-ambiguous",
+      projectKey: "ambiguous-project",
+    });
+    const collection = {
+      schemaVersion: 1 as const,
+      type: "chat-bundles-collection" as const,
+      createdAt: "2026-05-20T12:00:00.000Z",
+      sourceWorkspaceKey: "ambiguous-wk",
+      bundles: [bundle],
+    };
+
+    getGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-ambiguous",
+        html_url: "https://gist.github.com/example/gist-ambiguous",
+        description: "ambiguous",
+        files: {
+          [CHAT_BUNDLE_GIST_FILE_NAME]: { content: JSON.stringify(bundle) },
+          [CHAT_BUNDLES_GIST_FILE_NAME]: { content: JSON.stringify(collection) },
+        },
+        created_at: "2026-05-20T12:00:00.000Z",
+        updated_at: "2026-05-20T12:00:00.000Z",
+      },
+    });
+
+    showInputBoxMock.mockResolvedValue("gist-ambiguous");
+
+    const chatMod = await import("../src/chat-persistence.js");
+    const restoreSpy = vi.spyOn(chatMod, "restoreChatBundle");
+
+    const { executeImportChatFromGist } = await import("../src/import-gist-chat.js");
+    await executeImportChatFromGist(extensionContext as never);
+
+    expect(restoreSpy).not.toHaveBeenCalled();
+    expect(showErrorMessageMock).toHaveBeenCalledWith(
+      "Gist chat import failed: Gist contains both chat-bundle.json and chat-bundles.json. Remove one file so import knows which export to use."
+    );
+    restoreSpy.mockRestore();
+  });
+
   it("rejects gist missing chat-bundle.json", async () => {
     getGistMock.mockResolvedValue({
       ok: true,
