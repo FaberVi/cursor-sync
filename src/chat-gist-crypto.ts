@@ -105,6 +105,16 @@ function parseEnvelope(raw: string): EnvelopeV1 {
   const iterations = kdfFields.iterations as number;
   const parallelism = kdfFields.parallelism as number;
   if (
+    !Number.isFinite(memoryKiB) ||
+    !Number.isInteger(memoryKiB) ||
+    !Number.isFinite(iterations) ||
+    !Number.isInteger(iterations) ||
+    !Number.isFinite(parallelism) ||
+    !Number.isInteger(parallelism)
+  ) {
+    throw new ChatGistCryptoError("KDF parameters must be finite integers.", "INVALID_ENVELOPE");
+  }
+  if (
     memoryKiB <= 0 ||
     memoryKiB > 1048576 ||
     iterations <= 0 ||
