@@ -89,10 +89,6 @@ vi.mock("../src/chat-import-activate.js", () => ({
   runComposerActivation: vi.fn(),
 }));
 
-vi.mock("../src/chat-import-disk-probe.js", () => ({
-  probeComposerSidebarDiskState: vi.fn().mockResolvedValue(undefined),
-}));
-
 vi.mock("../src/diagnostics.js", () => ({
   getLogger: () => ({
     appendLine: vi.fn(),
@@ -105,10 +101,6 @@ vi.mock("../src/paths.js", () => ({
   resolveSyncRoots: () => ({
     cursorUser: "/tmp/mock-cursor-user",
   }),
-}));
-
-vi.mock("../src/debug-session-log.js", () => ({
-  agentDebugLog: vi.fn(),
 }));
 
 describe("chat-import-sidebar-writeback", () => {
@@ -169,6 +161,28 @@ describe("chat-import-sidebar-writeback", () => {
     await expect(fs.access(bundlePath)).resolves.toBeUndefined();
   });
 
+  it("requires registered activation during flush (no open-only success)", async () => {
+    const { runComposerActivation } = await import("../src/chat-import-activate.js");
+    vi.mocked(runComposerActivation).mockResolvedValue({
+      ok: false,
+      exitCode: 2,
+      stagedOnly: true,
+    });
+
+    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx);
+
+    await flushPendingSidebarWriteback(context);
+
+    expect(runComposerActivation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ acceptOpenWithoutHandle: false })
+    );
+    const remaining = globalStateStore["cursorSync.pendingSidebarWriteback"] as {
+      entries: Array<{ conversationId: string }>;
+    };
+    expect(remaining.entries).toHaveLength(1);
+  });
+
   it("clears pending entries and deletes bundle file when activation succeeds", async () => {
     const { runComposerActivation } = await import("../src/chat-import-activate.js");
     vi.mocked(runComposerActivation).mockResolvedValue({
@@ -192,5 +206,16 @@ describe("chat-import-sidebar-writeback", () => {
     expect(applied).toBe(true);
     expect(globalStateStore["cursorSync.pendingSidebarWriteback"]).toBeUndefined();
     await expect(fs.access(bundlePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects unsafe conversationId when queueing writeback", async () => {
+    const unsafeBundle = {
+      ...headerOnlyBundle,
+      conversationId: "../../../etc/passwd",
+    };
+    await queueSidebarWriteback(context, unsafeBundle, workspaceCtx);
+    expect(globalStateStore["cursorSync.pendingSidebarWriteback"]).toBeUndefined();
+    const pendingDir = path.join(tempHome, ".cursor", "import-activation", "sidebar-pending");
+    await expect(fs.access(pendingDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

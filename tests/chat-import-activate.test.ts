@@ -217,6 +217,35 @@ describe("chat-import-activate", () => {
     );
   });
 
+  it("runComposerActivation falls back to createComposer when createNew fails", async () => {
+    const executeSpy = vi.fn(async (command: string) => {
+      if (command === CREATE_NEW_COMPOSER_COMMAND_ID) {
+        throw new Error("createNew rejected");
+      }
+      return { composerId: FIXTURE_CID };
+    });
+    __setRegisteredCommands([CREATE_NEW_COMPOSER_COMMAND_ID, CREATE_COMPOSER_COMMAND_ID]);
+    __setExecuteCommandImpl(executeSpy);
+
+    const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
+    const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+    (manifest.partialState as Record<string, unknown>).conversationMap = {
+      "bubble-1": { type: 1 },
+    };
+    (manifest.partialState as Record<string, unknown>).fullConversationHeadersOnly = [
+      { bubbleId: "bubble-1", type: 1 },
+    ];
+
+    const outcome = await runComposerActivation(manifest, { paths });
+
+    expect(outcome.ok).toBe(true);
+    expect(executeSpy).toHaveBeenCalledWith(
+      CREATE_COMPOSER_COMMAND_ID,
+      expect.anything(),
+      manifest.createComposerOptions
+    );
+  });
+
   it("runComposerActivation uses composer.createNew when partial state has conversation content", async () => {
     const executeSpy = vi.fn(async () => undefined);
     __setRegisteredCommands([CREATE_NEW_COMPOSER_COMMAND_ID]);
