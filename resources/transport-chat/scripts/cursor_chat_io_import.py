@@ -20,6 +20,58 @@ from cursor_chat_io_bundle import (
 
 SUPPORTED_BUNDLE_SCHEMA_VERSIONS = frozenset({1, 2})
 
+
+def persist_disk_kv_rows_to_db(
+    target_db: Path,
+    disk_kv_rows: dict[str, str],
+    cid: str,
+    ws_identifier: dict[str, Any] | None,
+    *,
+    dry_run: bool,
+    db_label: str,
+    skip_purge: bool = False,
+    skip_integrity_check: bool = False,
+) -> tuple[bool, list[str]]:
+    warnings: list[str] = []
+    if not skip_integrity_check and not sqlite_integrity_ok(target_db):
+        warnings.append(
+            f"{db_label} state.vscdb failed integrity_check. Skipped cursorDiskKV merge."
+        )
+        return False, warnings
+    if not skip_purge:
+        _, purge_warnings = purge_disk_kv_for_conversation(
+            target_db, cid, dry_run=dry_run
+        )
+        warnings.extend(purge_warnings)
+    ok_kv, kv_warnings = merge_cursor_disk_kv(
+        target_db, disk_kv_rows, dry_run=dry_run, conversation_id=cid
+    )
+    warnings.extend(kv_warnings)
+    if not (ok_kv and not dry_run):
+        return bool(ok_kv), warnings
+    print(
+        f"Wrote {len(disk_kv_rows)} cursorDiskKV rows into {target_db} "
+        f"[{db_label}] (composerData + {len(disk_kv_rows) - 1} bubbles)"
+    )
+    warnings.append(
+        f"Restored {len(disk_kv_rows)} cursorDiskKV rows into {db_label} database."
+    )
+    if not skip_purge:
+        rebind_count, rebind_warnings = rebind_existing_conversation_disk_kv_keys(
+            target_db,
+            cid,
+            ws_identifier,
+            dry_run=False,
+        )
+        warnings.extend(rebind_warnings)
+        if rebind_count:
+            print(
+                f"Rebound session bindings on {rebind_count} existing cursorDiskKV "
+                f"rows for {cid} in {db_label} database (no purge)"
+            )
+    return True, warnings
+
+
 def build_activation_manifest(
     bundle: dict[str, Any],
     conversation_id: str,
@@ -448,10 +500,6 @@ def import_bundle(
             disk_kv_rows = remap_disk_kv_snapshot_for_destination(
                 disk_kv, cid, ws_identifier
             )
-            warnings.append(
-                f"Restored {len(disk_kv_rows)} cursorDiskKV rows from bundle "
-                f"(toolBubbleCount={disk_kv.get('toolBubbleCount', 0)})."
-            )
         else:
             disk_kv_rows = build_cursor_disk_kv_rows_from_bundle(bundle, cid, ws_identifier)
         non_empty_request_ids = 0
@@ -472,70 +520,57 @@ def import_bundle(
                 "rowsWithNonEmptyRequestId": non_empty_request_ids,
             },
         )
+        disk_kv_written = False
         if sqlite_integrity_ok(global_db):
-            purged, purge_warnings = purge_disk_kv_for_conversation(
-                global_db, cid, dry_run=dry_run
-            )
-            warnings.extend(purge_warnings)
-            agent_debug_log(
-                "P",
-                "cursor_chat_io_import.py:disk-kv-purge",
-                "purged stale cursorDiskKV before merge",
-                {
-                    "conversationId": cid,
-                    "purgedKeyCount": purged,
-                },
-            )
-            ok_kv, kv_warnings = merge_cursor_disk_kv(
-                global_db, disk_kv_rows, dry_run=dry_run, conversation_id=cid
+            ok_kv, kv_warnings = persist_disk_kv_rows_to_db(
+                global_db,
+                disk_kv_rows,
+                cid,
+                ws_identifier,
+                dry_run=dry_run,
+                db_label="global",
             )
             warnings.extend(kv_warnings)
-            if ok_kv and not dry_run:
-                print(
-                    f"Wrote {len(disk_kv_rows)} cursorDiskKV rows into {global_db} "
-                    f"(composerData + {len(disk_kv_rows) - 1} bubbles)"
-                )
-                rebind_count, rebind_warnings = rebind_existing_conversation_disk_kv_keys(
-                    global_db, cid, ws_identifier, dry_run=False
-                )
-                warnings.extend(rebind_warnings)
-                if rebind_count:
-                    print(
-                        f"Rebound session bindings on {rebind_count} existing cursorDiskKV "
-                        f"rows for {cid} (no purge)"
-                    )
-                agent_debug_log(
-                    "O",
-                    "cursor_chat_io_import.py:disk-kv-rebind-existing",
-                    "rebound existing disk kv keys in place",
-                    {
-                        "conversationId": cid,
-                        "rebindCount": rebind_count,
-                        "warningCount": len(rebind_warnings),
-                    },
-                )
-                kv_probe = probe_disk_kv_session_bindings(global_db, cid)
-                expected_ws = (
-                    ws_identifier.get("id")
-                    if isinstance(ws_identifier, dict)
-                    else None
-                )
-                agent_debug_log(
-                    "R",
-                    "cursor_chat_io_import.py:disk-kv-post-merge",
-                    "diskKv session bindings after purge merge rebind",
-                    {
-                        "conversationId": cid,
-                        "expectedWorkspaceStorageId": expected_ws,
-                        **kv_probe,
-                    },
-                )
+            disk_kv_written = ok_kv
         else:
             warnings.append(
-                "Global state.vscdb failed integrity_check; skipped cursorDiskKV merge "
-                "to avoid worsening database corruption. Sidebar headers were still merged; "
-                "tool/MCP bubbles may be missing until global DB is repaired."
+                "Global state.vscdb failed integrity_check. "
+                "Merging cursorDiskKV by exact key only (no purge)."
             )
+            ok_kv, kv_warnings = persist_disk_kv_rows_to_db(
+                global_db,
+                disk_kv_rows,
+                cid,
+                ws_identifier,
+                dry_run=dry_run,
+                db_label="global-exact-key",
+                skip_purge=True,
+                skip_integrity_check=True,
+            )
+            warnings.extend(kv_warnings)
+            if ok_kv:
+                disk_kv_written = True
+            for db in merge_targets:
+                db_path = Path(db)
+                if db_path == global_db or "workspaceStorage" not in str(db_path):
+                    continue
+                ok_kv, kv_warnings = persist_disk_kv_rows_to_db(
+                    db_path,
+                    disk_kv_rows,
+                    cid,
+                    ws_identifier,
+                    dry_run=dry_run,
+                    db_label="workspace",
+                )
+                warnings.extend(kv_warnings)
+                if ok_kv:
+                    disk_kv_written = True
+                    break
+            if not disk_kv_written:
+                warnings.append(
+                    "Sidebar headers merged. Chat bubbles stay missing until global "
+                    "state.vscdb is repaired or the workspace cursorDiskKV write succeeds."
+                )
 
         agent_kv = bundle.get("agentKvSnapshot")
         source_cid = (

@@ -36,7 +36,7 @@ function normalizePinTimestamps(value: unknown): unknown {
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (k === "lastUpdatedAt" || k === "lastOpenedAt") {
+      if (k === "createdAt" || k === "lastUpdatedAt" || k === "lastOpenedAt") {
         const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
         out[k] = n >= EXPECTED_PIN_MS - 2 && n <= EXPECTED_PIN_MS + 2 ? EXPECTED_PIN_MS : v;
       } else {
@@ -183,5 +183,42 @@ describe("chat-import-merge", () => {
     const result = stampWorkspaceIdentifierOnHeaders(headers, cid, workspaceIdentifier);
     expect(result.allComposers[1]?.workspaceIdentifier).toEqual({ id: "keep" });
     expect(result.allComposers[0]?.workspaceIdentifier).toEqual(workspaceIdentifier);
+  });
+
+  it("headersPayloadForImport prefers snapshot header name over bundle.title", () => {
+    const snap = bundle.sidebarSnapshot as Record<string, unknown>;
+    const bundleWithConflictingTitle: ChatBundle = {
+      ...bundle,
+      title: "Transcript junk",
+      sidebarSnapshot: {
+        ...snap,
+        composerHeaders: {
+          allComposers: [
+            {
+              type: "head",
+              composerId: cid,
+              name: "Header Name",
+              lastUpdatedAt: 1710000000000,
+            },
+          ],
+        },
+      },
+    };
+    const result = headersPayloadForImport(bundleWithConflictingTitle);
+    expect(result.allComposers[0]?.name).toBe("Header Name");
+  });
+
+  it("headersPayloadForImport uses bundle.title when snapshot headers absent", () => {
+    const snap = bundle.sidebarSnapshot as Record<string, unknown>;
+    const bundleTitleOnly: ChatBundle = {
+      ...bundle,
+      title: "Transcript Title",
+      sidebarSnapshot: {
+        ...snap,
+        composerHeaders: { allComposers: [] },
+      },
+    };
+    const result = headersPayloadForImport(bundleTitleOnly);
+    expect(result.allComposers[0]?.name).toBe("Transcript Title");
   });
 });

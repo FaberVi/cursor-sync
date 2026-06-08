@@ -7,16 +7,19 @@ import type { WorkspaceContext } from "./chat-workspace-context.js";
 import { stateDbPathForWorkspaceStorageId } from "./chat-workspace-context.js";
 import {
   mergeSidebarIntoStateDb,
+  repairComposerDataAfterActivation,
   type WorkspaceIdentifier as MergeWorkspaceIdentifier,
 } from "./chat-import-merge.js";
 import {
   buildActivationManifest,
+  enrichManifestPartialStateFromDisk,
   normalizeActivationManifest,
   runComposerActivation,
 } from "./chat-import-activate.js";
 import { getLogger } from "./diagnostics.js";
 import { resolveSyncRoots } from "./paths.js";
 import { requireWorkspaceContext } from "./chat-workspace-context.js";
+import { probeComposerSidebarDiskState } from "./chat-import-disk-probe.js";
 import { agentDebugLog } from "./debug-session-log.js";
 
 const STORAGE_KEY = "cursorSync.pendingSidebarWriteback";
@@ -46,10 +49,6 @@ export async function applyImmediateSidebarWriteback(
 ): Promise<{ mergedWorkspace: boolean; mergedGlobal: boolean }> {
   const conversationId = bundle.conversationId?.trim();
   if (!conversationId || !bundle.sidebarSnapshot) {
-    agentDebugLog("B", "chat-import-sidebar-writeback.ts:immediate-skip", "immediate merge skipped", {
-      conversationId: conversationId ?? null,
-      hasSidebarSnapshot: !!bundle.sidebarSnapshot,
-    });
     return { mergedWorkspace: false, mergedGlobal: false };
   }
   const wi = wsCtx.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
@@ -60,7 +59,7 @@ export async function applyImmediateSidebarWriteback(
   let mergedWorkspace = false;
   let mergedGlobal = false;
   for (const { label, path: dbPath } of dbPaths) {
-    const { merged, warnings } = await mergeSidebarIntoStateDb(dbPath, bundle, wi, {
+    const { merged } = await mergeSidebarIntoStateDb(dbPath, bundle, wi, {
       pinRecent: true,
     });
     if (label === "workspace") {
@@ -68,12 +67,6 @@ export async function applyImmediateSidebarWriteback(
     } else {
       mergedGlobal = merged;
     }
-    agentDebugLog("D", "chat-import-sidebar-writeback.ts:immediate-merge", "immediate sidebar merge", {
-      conversationId,
-      dbLabel: label,
-      merged,
-      warningCount: warnings.length,
-    });
   }
   return { mergedWorkspace, mergedGlobal };
 }
@@ -85,10 +78,6 @@ export async function queueSidebarWriteback(
 ): Promise<void> {
   const conversationId = bundle.conversationId?.trim();
   if (!conversationId || !bundle.sidebarSnapshot) {
-    agentDebugLog("B", "chat-import-sidebar-writeback.ts:queue-skip", "writeback queue skipped", {
-      conversationId: conversationId ?? null,
-      hasSidebarSnapshot: !!bundle.sidebarSnapshot,
-    });
     return;
   }
   await fs.mkdir(PENDING_DIR, { recursive: true });
@@ -114,11 +103,6 @@ export async function queueSidebarWriteback(
       queuedAt: new Date().toISOString(),
     });
   }
-  agentDebugLog("B", "chat-import-sidebar-writeback.ts:queue-ok", "writeback queued", {
-    conversationId,
-    workspaceStorageId: wsCtx.workspaceStorageId,
-    pendingCount,
-  });
 }
 
 export async function flushPendingSidebarWriteback(
@@ -129,13 +113,17 @@ export async function flushPendingSidebarWriteback(
   }
   const pending = context.globalState.get<PendingSidebarWriteback>(STORAGE_KEY);
   if (!pending?.entries.length) {
-    agentDebugLog("D", "chat-import-sidebar-writeback.ts:flush-empty", "no pending writeback", {});
+    // #region agent log
+    agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-empty", "no pending writeback on activate", {});
+    // #endregion
     return false;
   }
-  agentDebugLog("D", "chat-import-sidebar-writeback.ts:flush-start", "flush pending writeback", {
+  // #region agent log
+  agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-start", "flush pending writeback on activate", {
     pendingCount: pending.entries.length,
     conversationIds: pending.entries.map((e) => e.conversationId),
   });
+  // #endregion
   const logger = getLogger();
   let applied = false;
 
@@ -187,21 +175,25 @@ export async function flushPendingSidebarWriteback(
           openInNewTab: true,
         }) as unknown as Record<string, unknown>
       );
+      await enrichManifestPartialStateFromDisk(manifest, entry.workspaceStorageId);
       const activation = await runComposerActivation(manifest, {
         stagePending: false,
+        acceptOpenWithoutHandle: true,
         log: (line) =>
           logger.appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`),
       });
-      agentDebugLog(
-        "N",
-        "chat-import-sidebar-writeback.ts:flush-activation",
-        "createComposer after write-back",
-        {
-          conversationId: entry.conversationId,
-          ok: activation.ok,
-          stagedOnly: activation.stagedOnly,
-        },
-        "post-fix"
+      if (activation.ok) {
+        const dbPath = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
+        await repairComposerDataAfterActivation(dbPath, entry.conversationId, manifest.partialState as Record<string, unknown>);
+        const { cursorUser } = resolveSyncRoots();
+        const globalDb = path.join(cursorUser, "globalStorage", "state.vscdb");
+        await repairComposerDataAfterActivation(globalDb, entry.conversationId, manifest.partialState as Record<string, unknown>);
+      }
+      await probeComposerSidebarDiskState(
+        entry.conversationId,
+        wsCtx,
+        "chat-import-sidebar-writeback.ts:post-flush-activation",
+        "H5"
       );
       if (activation.ok) {
         applied = true;
@@ -221,16 +213,12 @@ export async function flushPendingSidebarWriteback(
 
   await context.globalState.update(STORAGE_KEY, undefined);
 
-  agentDebugLog(
-    "L",
-    "chat-import-sidebar-writeback.ts:flush",
-    "sidebar write-back flush done",
-    {
-      applied,
-      conversationIds: pending.entries.map((e) => e.conversationId),
-    },
-    "post-fix"
-  );
+  // #region agent log
+  agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-done", "sidebar writeback flush complete", {
+    applied,
+    conversationIds: pending.entries.map((e) => e.conversationId),
+  });
+  // #endregion
 
   return applied;
 }

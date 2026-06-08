@@ -8,14 +8,15 @@ import {
   computeArtifactChecksum,
   encodeTranscriptArtifact,
   decodeTranscriptArtifact,
-  summarizeTranscriptForSidebar,
   type TranscriptBundleArtifactEncoding,
 } from "./transcript-bundle.js";
+import { resolveComposerConversationTitle } from "./composer-title.js";
 import { requireWorkspaceContext } from "./chat-workspace-context.js";
 import {
   filterComposerDataForConversation,
   filterComposerHeadersForConversation,
 } from "./chat-import-merge.js";
+import { deriveComposerHeadersPayloadFromSidebarSnapshot } from "./composer-merge.js";
 import {
   formatVerifyReport,
   runDiskAndActivationVerify,
@@ -280,6 +281,7 @@ async function executeImportChatBundleCore(
           }
         }
         await presentChatImportOutcomeForBatch(
+          context,
           bundles,
           batch,
           promptResult.restoreOptions,
@@ -590,15 +592,43 @@ export async function buildChatBundle(
     throw new Error(`No data found for conversation ${conversationId}. Check the ID and try again.`);
   }
 
-  // Derive title from transcript content or fallback to ID
-  let title = conversationId;
+  let transcriptContent: string | null = null;
   if (transcriptFiles.length > 0) {
-    const firstContent = decodeTranscriptArtifact(
+    transcriptContent = decodeTranscriptArtifact(
       transcriptFiles[0]!.content,
       transcriptFiles[0]!.encoding
     ).toString("utf-8");
-    const summary = summarizeTranscriptForSidebar(firstContent, conversationId);
-    title = summary.title;
+  }
+
+  const title = await resolveComposerConversationTitle({
+    conversationId,
+    chatsWorkspaceKey: options?.workspaceKey,
+    transcriptContent,
+    bundle: sidebarSnapshot
+      ? ({ conversationId, sidebarSnapshot } as ChatBundle)
+      : undefined,
+  });
+
+  if (sidebarSnapshot) {
+    const rawHeaders = sidebarSnapshot.composerHeaders;
+    if (rawHeaders && typeof rawHeaders === "object" && !Array.isArray(rawHeaders)) {
+      const filtered = filterComposerHeadersForConversation(
+        rawHeaders as Record<string, unknown>,
+        conversationId
+      );
+      if (filtered.allComposers.length === 0) {
+        const derived = deriveComposerHeadersPayloadFromSidebarSnapshot({
+          conversationId,
+          title,
+          subtitle: `${transcriptFiles.length} file${transcriptFiles.length === 1 ? "" : "s"}`,
+          lastUpdatedAt: new Date().toISOString(),
+        });
+        if (derived) {
+          const derivedList = Array.isArray(derived.allComposers) ? derived.allComposers : [];
+          sidebarSnapshot.composerHeaders = derived;
+        }
+      }
+    }
   }
 
   const bundle: ChatBundle = {

@@ -344,7 +344,10 @@ async function setupExportConversation(
 
 describe("chat gist export and import", () => {
   let tmpRoot: string;
-  let extensionContext: { globalStorageUri: { fsPath: string } };
+  let extensionContext: {
+    globalStorageUri: { fsPath: string };
+    globalState: { get: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+  };
 
   beforeEach(async () => {
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-chat-gist-"));
@@ -382,6 +385,10 @@ describe("chat gist export and import", () => {
     extensionContext = {
       globalStorageUri: {
         fsPath: path.join(tmpRoot, ".cursor-sync-global-storage"),
+      },
+      globalState: {
+        get: vi.fn().mockReturnValue(undefined),
+        update: vi.fn().mockResolvedValue(undefined),
       },
     };
     await fs.mkdir(extensionContext.globalStorageUri.fsPath, { recursive: true });

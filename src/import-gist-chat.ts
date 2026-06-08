@@ -88,6 +88,7 @@ export async function executeImportChatFromGist(
           );
         }
         await presentChatImportOutcomeForBatch(
+          context,
           bundles,
           batch,
           promptResult.restoreOptions,

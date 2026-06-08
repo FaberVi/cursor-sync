@@ -14,6 +14,8 @@ import {
   type RestoreChatBundleOptions,
 } from "./chat-persistence.js";
 import { agentDebugLog } from "./debug-session-log.js";
+import { requireWorkspaceContext } from "./chat-workspace-context.js";
+import { probeComposerSidebarDiskState } from "./chat-import-disk-probe.js";
 
 export interface ChatImportPromptResult {
   workspaceFolder: string;
@@ -250,33 +252,43 @@ export function buildChatImportResultMessage(
   return parts.join(" | ");
 }
 
-/** Cursor does not hot-reload composer.composerHeaders from state.vscdb; reload after disk merge. */
+const LAST_IMPORT_PROBE_KEY = "cursorSync.lastImportProbeConversationId";
+const LAST_IMPORT_PROBE_FOLDER_KEY = "cursorSync.lastImportProbeFolderFsPath";
+
+function isReloadCanceledError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /cancel/i.test(msg);
+}
+
+/** Cursor does not reload composer.composerHeaders from disk. Offer a window reload after sidebar merge. */
 export async function offerComposerSidebarReload(): Promise<void> {
   const config = vscode.workspace.getConfiguration("cursorSync");
   const autoReload = config.get<boolean>("transcripts.autoReloadAfterImport") ?? false;
-  agentDebugLog("F", "chat-import-ux.ts:offerComposerSidebarReload", "reload flow start", {
-    autoReload,
-  });
-  if (autoReload) {
-    await vscode.commands.executeCommand("workbench.action.reloadWindow");
-    agentDebugLog("F", "chat-import-ux.ts:offerComposerSidebarReload", "auto reload executed", {});
-    return;
-  }
-  const reloadAction = "Reload Window";
-  const selected = await vscode.window.showInformationMessage(
-    "Composer sidebar was updated on disk. Reload Cursor to see imported chats.",
-    reloadAction
-  );
-  agentDebugLog("F", "chat-import-ux.ts:offerComposerSidebarReload", "reload prompt result", {
-    selected: selected ?? null,
-    willReload: selected === reloadAction,
-  });
-  if (selected === reloadAction) {
-    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  try {
+    if (autoReload) {
+      await vscode.commands.executeCommand("workbench.action.reloadWindow");
+      return;
+    }
+    const reloadAction = "Reload Window";
+    const selected = await vscode.window.showInformationMessage(
+      "Composer sidebar was updated on disk. Reload Cursor to see imported chats.",
+      reloadAction
+    );
+    if (selected === reloadAction) {
+      await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    }
+  } catch (err) {
+    if (!isReloadCanceledError(err)) {
+      throw err;
+    }
+    vscode.window.showWarningMessage(
+      "Reload canceled. Run Developer: Reload Window if the imported chat does not appear in the sidebar."
+    );
   }
 }
 
 export async function presentChatImportOutcome(
+  context: vscode.ExtensionContext,
   result: LoadChatResult,
   restoreOptions: RestoreChatBundleOptions,
   logTag: "chat-load" | "gist-chat-import"
@@ -307,18 +319,35 @@ export async function presentChatImportOutcome(
     logger.appendLine(`[${new Date().toISOString()}] [${logTag}] ${w}`);
   }
 
-  agentDebugLog("G", "chat-import-ux.ts:presentChatImportOutcome", "import outcome UX", {
+  refreshSidebar();
+  const pending = context.globalState.get<{ entries?: unknown[] }>(
+    "cursorSync.pendingSidebarWriteback"
+  );
+  try {
+    const wsCtx = await requireWorkspaceContext();
+    await probeComposerSidebarDiskState(
+      result.conversationId,
+      wsCtx,
+      "chat-import-ux.ts:pre-reload",
+      "H5"
+    );
+    await context.globalState.update(LAST_IMPORT_PROBE_KEY, result.conversationId);
+    await context.globalState.update(LAST_IMPORT_PROBE_FOLDER_KEY, wsCtx.folderFsPath);
+  } catch {
+    /* workspace probe optional */
+  }
+  // #region agent log
+  agentDebugLog("H6", "chat-import-ux.ts:pre-reload", "keeping pending writeback for post-reload replay", {
     conversationId: result.conversationId,
     sidebarMerged: result.sidebarMerged,
-    storeWritten: result.storeWritten,
-    transcriptsWritten: result.transcriptsWritten,
-    willOfferReload: true,
+    pendingCount: pending?.entries?.length ?? 0,
   });
-  refreshSidebar();
+  // #endregion
   await offerComposerSidebarReload();
 }
 
 export async function presentBatchChatImportOutcome(
+  context: vscode.ExtensionContext,
   batch: BatchChatImportResult,
   restoreOptions: RestoreChatBundleOptions,
   logTag: "chat-load" | "gist-chat-import",
@@ -388,6 +417,7 @@ export async function presentBatchChatImportOutcome(
 }
 
 export async function presentChatImportOutcomeForBatch(
+  context: vscode.ExtensionContext,
   bundles: ChatBundle[],
   batch: BatchChatImportResult,
   restoreOptions: RestoreChatBundleOptions,
@@ -395,8 +425,14 @@ export async function presentChatImportOutcomeForBatch(
   pickerShown: boolean
 ): Promise<void> {
   if (!shouldUseBatchImportOutcome(bundles, batch, pickerShown) && batch.successes.length === 1) {
-    await presentChatImportOutcome(batch.successes[0]!, restoreOptions, logTag);
+    await presentChatImportOutcome(context, batch.successes[0]!, restoreOptions, logTag);
     return;
   }
-  await presentBatchChatImportOutcome(batch, restoreOptions, logTag, bundles.length);
+  await presentBatchChatImportOutcome(
+    context,
+    batch,
+    restoreOptions,
+    logTag,
+    bundles.length
+  );
 }

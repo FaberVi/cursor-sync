@@ -45,6 +45,8 @@ import {
   registerActivationWatcher,
 } from "./chat-import-activate-watcher.js";
 import { flushPendingSidebarWriteback } from "./chat-import-sidebar-writeback.js";
+import { probeComposerSidebarDiskState } from "./chat-import-disk-probe.js";
+import { requireWorkspaceContext } from "./chat-workspace-context.js";
 import { agentDebugLog } from "./debug-session-log.js";
 import { executeInstallSkillTransportChat } from "./install-skill-transport-chat.js";
 let configListener: vscode.Disposable | undefined;
@@ -259,14 +261,42 @@ export function activate(context: vscode.ExtensionContext): void {
 
   void notifyPendingStateBundleIfAny(context);
 
-  void flushPendingSidebarWriteback(context).then((applied) => {
-    agentDebugLog("D", "extension.ts:activate-flush", "extension activate flush writeback", {
-      applied,
-    });
+  void flushPendingSidebarWriteback(context).then(async (applied) => {
     if (applied) {
       logger.appendLine(
         `[${new Date().toISOString()}] Applied pending chat import sidebar write-back after reload`
       );
+    }
+    const lastImportId = context.globalState.get<string>(
+      "cursorSync.lastImportProbeConversationId"
+    );
+    // #region agent log
+    agentDebugLog("H6", "extension.ts:activate", "extension activate after reload", {
+      pendingWritebackApplied: applied,
+      lastImportProbeConversationId: lastImportId ?? null,
+    });
+    // #endregion
+    const lastImportFolder = context.globalState.get<string>(
+      "cursorSync.lastImportProbeFolderFsPath"
+    );
+    if (lastImportId && lastImportFolder) {
+      try {
+        const wsCtx = await requireWorkspaceContext({ workspaceFolder: lastImportFolder });
+        await probeComposerSidebarDiskState(
+          lastImportId,
+          wsCtx,
+          "extension.ts:post-reload-disk",
+          "H2",
+          "post-reload"
+        );
+      } catch (err) {
+        // #region agent log
+        agentDebugLog("H6", "extension.ts:post-reload-probe-failed", "post-reload probe failed", {
+          error: err instanceof Error ? err.message : String(err),
+          lastImportFolder,
+        });
+        // #endregion
+      }
     }
   });
 

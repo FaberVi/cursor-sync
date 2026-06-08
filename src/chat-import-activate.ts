@@ -4,10 +4,25 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ChatBundle } from "./chat-persistence.js";
-import { bundleToPartialState, type PartialState } from "./chat-partial-state.js";
+import {
+  applyRichComposerEntryToPartialState,
+  bundleToPartialState,
+  partialStateForCreateNewCommand,
+  partialStateHasConversationContent,
+  partialStateSafeForCreateNew,
+  type PartialState,
+} from "./chat-partial-state.js";
+import {
+  readRichComposerDataEntryFromStateDb,
+  repairComposerDataAfterActivation,
+} from "./chat-import-merge.js";
 import type { WorkspaceContext } from "./chat-workspace-context.js";
+import { stateDbPathForWorkspaceStorageId } from "./chat-workspace-context.js";
+import { resolveSyncRoots } from "./paths.js";
 import { resolveComposerBridgeScript } from "./chat-transport-scripts.js";
+import { agentDebugLog } from "./debug-session-log.js";
 
+export const CREATE_NEW_COMPOSER_COMMAND_ID = "composer.createNew";
 export const CREATE_COMPOSER_COMMAND_ID = "composer.createComposer";
 export const COMPOSER_GET_HANDLE_COMMAND_ID = "composer.getComposerHandleById";
 export const OPEN_COMPOSER_COMMAND_ID = "composer.openComposer";
@@ -331,6 +346,163 @@ export async function waitForComposerHandle(
   return undefined;
 }
 
+export async function enrichManifestPartialStateFromDisk(
+  manifest: ActivationManifest,
+  workspaceStorageId: string
+): Promise<boolean> {
+  const partial = manifest.partialState as Record<string, unknown>;
+  if (partialStateHasConversationContent(partial)) {
+    return false;
+  }
+  const { cursorUser } = resolveSyncRoots();
+  const dbPaths = [
+    stateDbPathForWorkspaceStorageId(workspaceStorageId),
+    path.join(cursorUser, "globalStorage", "state.vscdb"),
+  ];
+  for (const dbPath of dbPaths) {
+    const rich = await readRichComposerDataEntryFromStateDb(dbPath, manifest.composerId);
+    if (!rich) {
+      continue;
+    }
+    const targetWorkspaceIdentifier = partial.workspaceIdentifier;
+    const targetName = partial.name;
+    const nowMs = Date.now();
+    applyRichComposerEntryToPartialState(
+      partial as PartialState,
+      rich,
+      manifest.composerId
+    );
+    if (
+      targetWorkspaceIdentifier &&
+      typeof targetWorkspaceIdentifier === "object" &&
+      !Array.isArray(targetWorkspaceIdentifier)
+    ) {
+      partial.workspaceIdentifier = targetWorkspaceIdentifier;
+    }
+    if (typeof targetName === "string" && targetName.trim()) {
+      partial.name = targetName;
+    }
+    partial.createdAt = nowMs;
+    partial.lastUpdatedAt = nowMs;
+    partial.lastOpenedAt = nowMs;
+    partial.conversationCheckpointLastUpdatedAt = nowMs;
+    const headers = partial.fullConversationHeadersOnly;
+    if (Array.isArray(headers)) {
+      partial.fullConversationHeadersOnly = headers.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          return entry;
+        }
+        const rec = entry as Record<string, unknown>;
+        if (rec.composerId !== manifest.composerId) {
+          return entry;
+        }
+        return {
+          ...rec,
+          workspaceIdentifier: partial.workspaceIdentifier,
+          createdAt: nowMs,
+          lastUpdatedAt: nowMs,
+          lastOpenedAt: nowMs,
+          conversationCheckpointLastUpdatedAt: nowMs,
+        };
+      });
+    }
+    // #region agent log
+    agentDebugLog("H3", "chat-import-activate.ts:enrich-partial", "partial hydrated from disk", {
+      composerId: manifest.composerId,
+      dbPath,
+      targetWorkspaceId:
+        targetWorkspaceIdentifier &&
+        typeof targetWorkspaceIdentifier === "object" &&
+        !Array.isArray(targetWorkspaceIdentifier)
+          ? (targetWorkspaceIdentifier as Record<string, unknown>).id ?? null
+          : null,
+      finalWorkspaceId:
+        partial.workspaceIdentifier &&
+        typeof partial.workspaceIdentifier === "object" &&
+        !Array.isArray(partial.workspaceIdentifier)
+          ? (partial.workspaceIdentifier as Record<string, unknown>).id ?? null
+          : null,
+      name: typeof partial.name === "string" ? partial.name : null,
+      createdAt: partial.createdAt,
+      lastUpdatedAt: partial.lastUpdatedAt,
+    });
+    // #endregion
+    return true;
+  }
+  return false;
+}
+
+async function tryRegisterViaCreateNew(
+  manifest: ActivationManifest,
+  paths: ActivationPaths,
+  log: (message: string) => void
+): Promise<ComposerActivationOutcome | null> {
+  if (!(await composerCommandAvailable(CREATE_NEW_COMPOSER_COMMAND_ID))) {
+    return null;
+  }
+  const partial = manifest.partialState as Record<string, unknown>;
+  const safeForCreateNew = partialStateSafeForCreateNew(partial);
+  if (!safeForCreateNew) {
+    return null;
+  }
+  const createNewPartial = partialStateForCreateNewCommand(partial);
+  const options: Record<string, unknown> = {
+    composerId: manifest.composerId,
+    partialState: createNewPartial,
+    workspaceFolder: manifest.workspaceFolder,
+    ...manifest.createComposerOptions,
+  };
+  try {
+    const commandResult = await vscode.commands.executeCommand(
+      CREATE_NEW_COMPOSER_COMMAND_ID,
+      options
+    );
+    const composerId = parseComposerIdFromCommandResult(commandResult, manifest.composerId);
+    if (composerId !== manifest.composerId) {
+      throw new Error(
+        `composer.createNew returned composerId=${composerId}, expected ${manifest.composerId}`
+      );
+    }
+    await writeResultJson(composerId, true, paths);
+    log(`composer.createNew succeeded: composerId=${composerId}`);
+    // #region agent log
+    const wi = partial.workspaceIdentifier;
+    agentDebugLog("H4", "chat-import-activate.ts:createNew-ok", "composer.createNew registered", {
+      composerId,
+      workspaceId:
+        wi && typeof wi === "object" && !Array.isArray(wi)
+          ? (wi as Record<string, unknown>).id ?? null
+          : null,
+      name: typeof partial.name === "string" ? partial.name : null,
+      createdAt: partial.createdAt,
+      lastUpdatedAt: partial.lastUpdatedAt,
+      hasConversationMap:
+        !!partial.conversationMap &&
+        typeof partial.conversationMap === "object" &&
+        !Array.isArray(partial.conversationMap) &&
+        Object.keys(partial.conversationMap as object).length > 0,
+      fullHeadersLen: Array.isArray(partial.fullConversationHeadersOnly)
+        ? partial.fullConversationHeadersOnly.length
+        : 0,
+    });
+    // #endregion
+    return {
+      ok: true,
+      composerId,
+      exitCode: 0,
+      stagedOnly: false,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`composer.createNew failed: ${message}`);
+    return {
+      ok: false,
+      exitCode: 1,
+      stagedOnly: false,
+    };
+  }
+}
+
 async function tryOpenViaComposerCommands(
   manifest: ActivationManifest,
   log: (message: string) => void
@@ -340,6 +512,7 @@ async function tryOpenViaComposerCommands(
   const openOpts = {
     openInNewTab: manifest.openInNewTab,
     view: manifest.createComposerOptions.view ?? "editor",
+    openExistingOnly: true,
   };
 
   if (openAvailable) {
@@ -687,6 +860,7 @@ export async function runPostImportActivation(
   const manifest = normalizeActivationManifest(
     raw as unknown as Record<string, unknown>
   );
+  await enrichManifestPartialStateFromDisk(manifest, workspaceCtx.workspaceStorageId);
 
   log(`Activating composer ${conversationId}...`);
 
@@ -746,6 +920,24 @@ export async function runComposerActivation(
   }
 
   const createAvailable = await composerCommandAvailable(manifest.commandId);
+
+  const partial = manifest.partialState as Record<string, unknown>;
+  const createNewOutcome = partialStateSafeForCreateNew(partial)
+    ? await tryRegisterViaCreateNew(manifest, paths, log)
+    : null;
+  if (createNewOutcome && !createNewOutcome.ok) {
+    return createNewOutcome;
+  }
+  if (createNewOutcome?.ok) {
+    const openOutcome = await tryActivateViaComposerHandle(manifest, {
+      ...options,
+      acceptOpenWithoutHandle: options.acceptOpenWithoutHandle ?? true,
+    });
+    if (openOutcome?.ok) {
+      return openOutcome;
+    }
+    return createNewOutcome;
+  }
 
   if (createAvailable) {
     try {

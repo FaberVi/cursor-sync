@@ -143,6 +143,72 @@ function sidebarRichComposerBlob(
   return null;
 }
 
+export function partialStateHasConversationContent(
+  partial: Record<string, unknown>
+): boolean {
+  const cs = partial.conversationState;
+  if (typeof cs === "string") {
+    if (cs.length > 1 && cs.startsWith("~")) {
+      return true;
+    }
+    if (cs.startsWith("{") && cs.length > 2) {
+      return true;
+    }
+  } else if (cs && typeof cs === "object" && !Array.isArray(cs)) {
+    if (Object.keys(cs as Record<string, unknown>).length > 0) {
+      return true;
+    }
+  }
+  const map = partial.conversationMap;
+  if (map && typeof map === "object" && !Array.isArray(map) && Object.keys(map).length > 0) {
+    return true;
+  }
+  const headers = partial.fullConversationHeadersOnly;
+  if (Array.isArray(headers) && headers.length > 0) {
+    return true;
+  }
+  return false;
+}
+
+export function partialStateForCreateNewCommand(
+  partial: Record<string, unknown>
+): Record<string, unknown> {
+  const out = { ...partial };
+  const cs = out.conversationState;
+  if (typeof cs === "string" && (cs.startsWith("~") || cs.startsWith("{"))) {
+    delete out.conversationState;
+  }
+  return out;
+}
+
+export function partialStateSafeForCreateNew(partial: Record<string, unknown>): boolean {
+  const safe = partialStateForCreateNewCommand(partial);
+  const map = safe.conversationMap;
+  if (map && typeof map === "object" && !Array.isArray(map) && Object.keys(map).length > 0) {
+    return true;
+  }
+  const headers = safe.fullConversationHeadersOnly;
+  if (Array.isArray(headers) && headers.length > 0) {
+    return true;
+  }
+  const cs = safe.conversationState;
+  return !!cs && typeof cs === "object" && !Array.isArray(cs) && Object.keys(cs).length > 0;
+}
+
+export function applyRichComposerEntryToPartialState(
+  partial: PartialState,
+  rich: Record<string, unknown>,
+  conversationId: string
+): void {
+  mergeRichComposerIntoPartial(partial, rich, conversationId);
+  const cleared = clearSessionBindingInTree(partial);
+  if (cleared && typeof cleared === "object" && !Array.isArray(cleared)) {
+    Object.assign(partial, cleared as PartialState);
+  }
+  partial.requestId = "";
+  partial.workspaceUris = [];
+}
+
 function mergeRichComposerIntoPartial(
   partial: PartialState,
   rich: Record<string, unknown>,
@@ -155,6 +221,46 @@ function mergeRichComposerIntoPartial(
     partial[key] = value;
   }
   partial.composerId = conversationId;
+}
+
+function rebindPartialForImport(
+  partial: PartialState,
+  conversationId: string,
+  name: string,
+  workspaceIdentifier: WorkspaceIdentifier | Record<string, unknown> | null | undefined
+): void {
+  if (!workspaceIdentifier || typeof workspaceIdentifier !== "object" || Array.isArray(workspaceIdentifier)) {
+    return;
+  }
+  const nowMs = Date.now();
+  partial.composerId = conversationId;
+  partial.workspaceIdentifier = workspaceIdentifier;
+  partial.name = name;
+  partial.createdAt = nowMs;
+  partial.lastUpdatedAt = nowMs;
+  partial.lastOpenedAt = nowMs;
+  if ("conversationCheckpointLastUpdatedAt" in partial) {
+    partial.conversationCheckpointLastUpdatedAt = nowMs;
+  }
+  const headers = partial.fullConversationHeadersOnly;
+  if (Array.isArray(headers)) {
+    partial.fullConversationHeadersOnly = headers.map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return entry;
+      }
+      const rec = entry as Record<string, unknown>;
+      if (rec.composerId !== conversationId && !rec.workspaceIdentifier) {
+        return entry;
+      }
+      return {
+        ...rec,
+        workspaceIdentifier,
+        createdAt: nowMs,
+        lastUpdatedAt: nowMs,
+        lastOpenedAt: nowMs,
+      };
+    });
+  }
 }
 
 export function bundleToPartialState(
@@ -251,6 +357,7 @@ export function bundleToPartialState(
   if (cleared && typeof cleared === "object" && !Array.isArray(cleared)) {
     Object.assign(partial, cleared as PartialState);
   }
+  rebindPartialForImport(partial, cid, name, options.workspaceIdentifier);
   partial.requestId = "";
   if (rich) {
     partial.workspaceUris = [];

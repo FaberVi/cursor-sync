@@ -16,6 +16,7 @@ import type { WorkspaceContext } from "../src/chat-workspace-context.js";
 import {
   COMPOSER_GET_HANDLE_COMMAND_ID,
   COMPOSER_URI_SCHEME,
+  CREATE_NEW_COMPOSER_COMMAND_ID,
   CREATE_COMPOSER_COMMAND_ID,
   MANIFEST_VERSION,
   buildActivationManifest,
@@ -194,6 +195,57 @@ describe("chat-import-activate", () => {
     expect(result).toEqual({ ok: true, composerId: FIXTURE_CID });
   });
 
+  it("runComposerActivation skips composer.createNew when partial state has no conversation content", async () => {
+    const executeSpy = vi.fn(async () => undefined);
+    __setRegisteredCommands([CREATE_NEW_COMPOSER_COMMAND_ID, "composer.openComposer"]);
+    __setExecuteCommandImpl(executeSpy);
+
+    const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
+    const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+
+    await runComposerActivation(manifest, { paths, stagePending: false });
+
+    expect(executeSpy).not.toHaveBeenCalledWith(
+      CREATE_NEW_COMPOSER_COMMAND_ID,
+      expect.anything()
+    );
+  });
+
+  it("runComposerActivation uses composer.createNew when partial state has conversation content", async () => {
+    const executeSpy = vi.fn(async () => undefined);
+    __setRegisteredCommands([CREATE_NEW_COMPOSER_COMMAND_ID]);
+    __setExecuteCommandImpl(executeSpy);
+
+    const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
+    const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+    (manifest.partialState as Record<string, unknown>).conversationMap = {
+      "bubble-1": { type: 1 },
+    };
+    (manifest.partialState as Record<string, unknown>).fullConversationHeadersOnly = [
+      { bubbleId: "bubble-1", type: 1 },
+    ];
+    (manifest.partialState as Record<string, unknown>).conversationState = "~encodedPayload";
+
+    const outcome = await runComposerActivation(manifest, { paths });
+
+    expect(outcome.ok).toBe(true);
+    const createNewCall = executeSpy.mock.calls.find(
+      (call) => call[0] === CREATE_NEW_COMPOSER_COMMAND_ID
+    );
+    expect(createNewCall).toBeDefined();
+    const createNewPartial = (createNewCall![1] as Record<string, unknown>).partialState as Record<
+      string,
+      unknown
+    >;
+    expect(createNewPartial.conversationState).toBeUndefined();
+    expect(createNewPartial.fullConversationHeadersOnly).toHaveLength(1);
+    expect(executeSpy).not.toHaveBeenCalledWith(
+      CREATE_COMPOSER_COMMAND_ID,
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
   it("runComposerActivation passes partialState and createComposerOptions to executeCommand", async () => {
     const executeSpy = vi.fn(async () => undefined);
     __setRegisteredCommands([CREATE_COMPOSER_COMMAND_ID]);
@@ -239,7 +291,7 @@ describe("chat-import-activate", () => {
     expect(executeSpy).toHaveBeenCalledWith(
       OPEN_COMPOSER_COMMAND_ID,
       FIXTURE_CID,
-      expect.objectContaining({ openInNewTab: true })
+      expect.objectContaining({ openInNewTab: true, openExistingOnly: true })
     );
     const result = JSON.parse(readFileSync(paths.resultPath, "utf8")) as {
       ok: boolean;

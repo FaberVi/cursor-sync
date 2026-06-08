@@ -47,6 +47,17 @@ vi.mock("../src/diagnostics.js", () => ({
   }),
 }));
 
+vi.mock("../src/chat-import-sidebar-writeback.js", () => ({
+  flushPendingSidebarWriteback: vi.fn().mockResolvedValue(false),
+}));
+
+const mockExtensionContext = {
+  globalState: {
+    get: vi.fn(),
+    update: vi.fn(),
+  },
+} as unknown as import("vscode").ExtensionContext;
+
 import type { ChatBundle } from "../src/chat-persistence.js";
 
 const chatBundleFixture: ChatBundle = {
@@ -131,6 +142,7 @@ describe("chat-import-ux", () => {
     configurationValues["transcripts.autoReloadAfterImport"] = true;
     const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
     await presentChatImportOutcome(
+      mockExtensionContext,
       {
         conversationId: "c1",
         transcriptsWritten: 0,
@@ -148,6 +160,7 @@ describe("chat-import-ux", () => {
     configurationValues["transcripts.autoReloadAfterImport"] = true;
     const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
     await presentChatImportOutcome(
+      mockExtensionContext,
       {
         conversationId: "c1",
         transcriptsWritten: 1,
@@ -168,6 +181,7 @@ describe("chat-import-ux", () => {
       .mockResolvedValueOnce("Reload Window");
     const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
     await presentChatImportOutcome(
+      mockExtensionContext,
       {
         conversationId: "c1",
         transcriptsWritten: 1,
@@ -250,6 +264,7 @@ describe("chat-import-ux", () => {
   it("presentBatchChatImportOutcome shows X/Y summary", async () => {
     const { presentBatchChatImportOutcome } = await import("../src/chat-import-ux.js");
     await presentBatchChatImportOutcome(
+      mockExtensionContext,
       {
         successes: [
           {
@@ -280,6 +295,7 @@ describe("chat-import-ux", () => {
   it("presentBatchChatImportOutcome warns on partial failure", async () => {
     const { presentBatchChatImportOutcome } = await import("../src/chat-import-ux.js");
     await presentBatchChatImportOutcome(
+      mockExtensionContext,
       {
         successes: [
           {
