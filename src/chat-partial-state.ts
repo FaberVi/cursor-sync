@@ -249,7 +249,7 @@ function rebindPartialForImport(
         return entry;
       }
       const rec = entry as Record<string, unknown>;
-      if (rec.composerId !== conversationId && !rec.workspaceIdentifier) {
+      if (rec.composerId !== conversationId) {
         return entry;
       }
       return {
