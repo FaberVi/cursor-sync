@@ -345,7 +345,6 @@ export async function presentChatImportOutcome(
     pendingCount: pending?.entries?.length ?? 0,
   });
   // #endregion
-  await offerComposerSidebarReload();
 }
 
 export async function presentBatchChatImportOutcome(
@@ -414,7 +413,6 @@ export async function presentBatchChatImportOutcome(
 
   if (batch.successes.length > 0) {
     refreshSidebar();
-    await offerComposerSidebarReload();
   }
 }
 

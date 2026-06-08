@@ -138,7 +138,7 @@ describe("chat-import-ux", () => {
     ).toContain("1 OK");
   });
 
-  it("presentChatImportOutcome reloads after successful import even when sidebar flag is false", async () => {
+  it("presentChatImportOutcome does not reload after successful chat import", async () => {
     configurationValues["transcripts.autoReloadAfterImport"] = true;
     const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
     await presentChatImportOutcome(
@@ -153,10 +153,10 @@ describe("chat-import-ux", () => {
       { activate: false },
       "chat-load"
     );
-    expect(executeCommandMock).toHaveBeenCalledWith("workbench.action.reloadWindow");
+    expect(executeCommandMock).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
   });
 
-  it("presentChatImportOutcome auto-reloads when sidebar merged and setting enabled", async () => {
+  it("presentChatImportOutcome does not auto-reload when sidebar merged", async () => {
     configurationValues["transcripts.autoReloadAfterImport"] = true;
     const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
     await presentChatImportOutcome(
@@ -171,14 +171,11 @@ describe("chat-import-ux", () => {
       { activate: false },
       "chat-load"
     );
-    expect(executeCommandMock).toHaveBeenCalledWith("workbench.action.reloadWindow");
+    expect(executeCommandMock).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
   });
 
-  it("presentChatImportOutcome offers Reload Window when sidebar merged", async () => {
+  it("presentChatImportOutcome does not offer Reload Window for chat bundle import", async () => {
     configurationValues["transcripts.autoReloadAfterImport"] = false;
-    showInformationMessageMock
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce("Reload Window");
     const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
     await presentChatImportOutcome(
       mockExtensionContext,
@@ -192,11 +189,11 @@ describe("chat-import-ux", () => {
       { activate: false },
       "chat-load"
     );
-    expect(showInformationMessageMock).toHaveBeenCalledWith(
+    expect(showInformationMessageMock).not.toHaveBeenCalledWith(
       expect.stringContaining("Composer sidebar was updated"),
       "Reload Window"
     );
-    expect(executeCommandMock).toHaveBeenCalledWith("workbench.action.reloadWindow");
+    expect(executeCommandMock).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
   });
 
   it("buildChatImportResultMessage includes verify summary", async () => {

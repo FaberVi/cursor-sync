@@ -490,7 +490,9 @@ export async function restoreChatBundle(
         "chat-persistence-restore.ts:post-writeback-disk",
         "H2"
       );
-      await queueSidebarWriteback(context, remappedBundle, wsCtx);
+      await queueSidebarWriteback(context, remappedBundle, wsCtx, {
+        activate: options.activate === true,
+      });
     } else {
     }
 

@@ -951,7 +951,7 @@ export async function runComposerActivation(
     try {
       const commandResult = await vscode.commands.executeCommand(
         manifest.commandId,
-        manifest.partialState,
+        partialStateForCreateNewCommand(partial),
         manifest.createComposerOptions
       );
       const composerId = parseComposerIdFromCommandResult(
