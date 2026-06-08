@@ -561,15 +561,22 @@ export async function repairComposerDataAfterActivation(
     "SELECT value FROM ItemTable WHERE key = 'composer.composerData' LIMIT 1;",
     { retries: 2 }
   );
-  let existing: string;
-  if (typeof rows[0]?.value === "string") {
-    existing = rows[0].value;
-  } else {
-    existing = "{}";
+  const rowValue = rows[0]?.value;
+  let existingRaw: string | undefined;
+  if (rowValue !== undefined && rowValue !== null) {
+    existingRaw = typeof rowValue === "string" ? rowValue : JSON.stringify(rowValue);
   }
-  const extra: Record<string, unknown> = {};
-  extra[conversationId] = partial;
-  const merged = mergeComposerDataAdditive(existing, [extra]);
+  let merged: Record<string, unknown>;
+  try {
+    const parsed = existingRaw ? JSON.parse(existingRaw) : {};
+    merged =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+  } catch {
+    merged = {};
+  }
+  merged[conversationId] = partial;
   const mergedStr = JSON.stringify(merged);
   const valLit = escapeSqlLiteral(mergedStr);
   const script = [
