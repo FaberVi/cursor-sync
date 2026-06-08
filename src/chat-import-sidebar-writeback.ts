@@ -126,6 +126,7 @@ export async function flushPendingSidebarWriteback(
   // #endregion
   const logger = getLogger();
   let applied = false;
+  const remainingEntries: PendingSidebarWritebackEntry[] = [];
 
   for (const entry of pending.entries) {
     let bundle: ChatBundle;
@@ -136,6 +137,7 @@ export async function flushPendingSidebarWriteback(
       logger.appendLine(
         `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back skipped (bundle read): ${err instanceof Error ? err.message : String(err)}`
       );
+      remainingEntries.push(entry);
       continue;
     }
 
@@ -168,6 +170,7 @@ export async function flushPendingSidebarWriteback(
       }
     }
 
+    let activationOk = false;
     try {
       const wsCtx = await requireWorkspaceContext({ workspaceFolder: entry.folderFsPath });
       const manifest = normalizeActivationManifest(
@@ -182,6 +185,7 @@ export async function flushPendingSidebarWriteback(
         log: (line) =>
           logger.appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`),
       });
+      activationOk = activation.ok;
       if (activation.ok) {
         const dbPath = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
         await repairComposerDataAfterActivation(dbPath, entry.conversationId, manifest.partialState as Record<string, unknown>);
@@ -204,18 +208,30 @@ export async function flushPendingSidebarWriteback(
       );
     }
 
-    try {
-      await fs.unlink(entry.bundlePath);
-    } catch {
-      /* ignore */
+    if (activationOk) {
+      try {
+        await fs.unlink(entry.bundlePath);
+      } catch {
+        /* ignore */
+      }
+    } else {
+      remainingEntries.push(entry);
     }
   }
 
-  await context.globalState.update(STORAGE_KEY, undefined);
+  if (remainingEntries.length > 0) {
+    await context.globalState.update(STORAGE_KEY, {
+      entries: remainingEntries,
+      queuedAt: pending.queuedAt,
+    });
+  } else {
+    await context.globalState.update(STORAGE_KEY, undefined);
+  }
 
   // #region agent log
   agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-done", "sidebar writeback flush complete", {
     applied,
+    remainingCount: remainingEntries.length,
     conversationIds: pending.entries.map((e) => e.conversationId),
   });
   // #endregion

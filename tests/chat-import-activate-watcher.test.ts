@@ -141,6 +141,12 @@ describe("chat-import-activate-watcher", () => {
 
     const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
     const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+    (manifest.partialState as Record<string, unknown>).conversationMap = {
+      "bubble-1": { type: 1 },
+    };
+    (manifest.partialState as Record<string, unknown>).fullConversationHeadersOnly = [
+      { bubbleId: "bubble-1", type: 1 },
+    ];
     await stagePendingManifest(manifest, paths);
 
     await processPendingActivation({ paths, log: (m) => logs.push(m) });

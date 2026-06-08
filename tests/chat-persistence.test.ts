@@ -726,6 +726,12 @@ describe("restoreChatBundle in-process composer activation", () => {
     const wsCtx = await requireWorkspaceContext({ workspaceFolder: FIXTURE_REPO });
     const raw = buildActivationManifest(bundle, conversationId, wsCtx);
     const manifest = normalizeActivationManifest(raw as unknown as Record<string, unknown>);
+    (manifest.partialState as Record<string, unknown>).conversationMap = {
+      "bubble-1": { type: 1 },
+    };
+    (manifest.partialState as Record<string, unknown>).fullConversationHeadersOnly = [
+      { bubbleId: "bubble-1", type: 1 },
+    ];
 
     const outcome = await runComposerActivation(manifest);
     expect(outcome.ok).toBe(true);
