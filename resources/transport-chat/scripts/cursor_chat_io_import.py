@@ -529,6 +529,7 @@ def import_bundle(
                 ws_identifier,
                 dry_run=dry_run,
                 db_label="global",
+                skip_purge=True,
             )
             warnings.extend(kv_warnings)
             disk_kv_written = ok_kv
@@ -561,6 +562,7 @@ def import_bundle(
                     ws_identifier,
                     dry_run=dry_run,
                     db_label="workspace",
+                    skip_purge=True,
                 )
                 warnings.extend(kv_warnings)
                 if ok_kv:
