@@ -138,7 +138,25 @@ describe("chat-import-ux", () => {
     ).toContain("1 OK");
   });
 
-  it("presentChatImportOutcome does not reload window for chat bundle import", async () => {
+  it("presentChatImportOutcome does not reload after successful chat import", async () => {
+    configurationValues["transcripts.autoReloadAfterImport"] = true;
+    const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
+    await presentChatImportOutcome(
+      mockExtensionContext,
+      {
+        conversationId: "c1",
+        transcriptsWritten: 0,
+        storeWritten: false,
+        sidebarMerged: false,
+        warnings: [],
+      },
+      { activate: false },
+      "chat-load"
+    );
+    expect(executeCommandMock).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
+  });
+
+  it("presentChatImportOutcome does not auto-reload when sidebar merged", async () => {
     configurationValues["transcripts.autoReloadAfterImport"] = true;
     const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
     await presentChatImportOutcome(
@@ -157,6 +175,28 @@ describe("chat-import-ux", () => {
     expect(showInformationMessageMock).toHaveBeenCalledWith(
       expect.stringContaining('Chat "c1" loaded.')
     );
+  });
+
+  it("presentChatImportOutcome does not offer Reload Window for chat bundle import", async () => {
+    configurationValues["transcripts.autoReloadAfterImport"] = false;
+    const { presentChatImportOutcome } = await import("../src/chat-import-ux.js");
+    await presentChatImportOutcome(
+      mockExtensionContext,
+      {
+        conversationId: "c1",
+        transcriptsWritten: 1,
+        storeWritten: true,
+        sidebarMerged: true,
+        warnings: [],
+      },
+      { activate: false },
+      "chat-load"
+    );
+    expect(showInformationMessageMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("Composer sidebar was updated"),
+      "Reload Window"
+    );
+    expect(executeCommandMock).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
   });
 
   it("buildChatImportResultMessage includes verify summary", async () => {

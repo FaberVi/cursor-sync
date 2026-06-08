@@ -44,6 +44,7 @@ interface PendingSidebarWritebackEntry {
   folderFsPath: string;
   workspaceStorageId: string;
   workspaceIdentifier: WorkspaceContext["workspaceIdentifier"];
+  activate?: boolean;
 }
 
 interface PendingSidebarWriteback {
@@ -87,7 +88,8 @@ export async function applyImmediateSidebarWriteback(
 export async function queueSidebarWriteback(
   context: vscode.ExtensionContext,
   bundle: ChatBundle,
-  wsCtx: WorkspaceContext
+  wsCtx: WorkspaceContext,
+  options?: { activate?: boolean }
 ): Promise<void> {
   const conversationId = bundle.conversationId?.trim();
   if (!conversationId || !isSafeComposerId(conversationId) || !bundle.sidebarSnapshot) {
@@ -103,6 +105,7 @@ export async function queueSidebarWriteback(
     folderFsPath: wsCtx.folderFsPath,
     workspaceStorageId: wsCtx.workspaceStorageId,
     workspaceIdentifier: wsCtx.workspaceIdentifier,
+    activate: options?.activate === true,
   };
 
   let pendingCount = 1;
@@ -158,6 +161,7 @@ export async function flushPendingSidebarWriteback(
       globalStateDbPath(),
     ];
 
+    let mergeSucceeded = false;
     for (const dbPath of dbPaths) {
       try {
         const wi = entry.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
@@ -165,6 +169,7 @@ export async function flushPendingSidebarWriteback(
           pinRecent: true,
         });
         if (merged) {
+          mergeSucceeded = true;
           applied = true;
           logger.appendLine(
             `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back merged db=${dbPath} conversationId=${entry.conversationId}`
@@ -182,44 +187,52 @@ export async function flushPendingSidebarWriteback(
       }
     }
 
-    let activationOk = false;
-    try {
-      const wsCtx = await requireWorkspaceContext({ workspaceFolder: entry.folderFsPath });
-      const manifest = normalizeActivationManifest(
-        buildActivationManifest(bundle, entry.conversationId, wsCtx, {
-          openInNewTab: true,
-        }) as unknown as Record<string, unknown>
-      );
-      await enrichManifestPartialStateFromDisk(manifest, entry.workspaceStorageId);
-      const activation = await runComposerActivation(manifest, {
-        stagePending: false,
-        acceptOpenWithoutHandle: false,
-        log: (line) =>
-          logger.appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`),
-      });
-      activationOk = activation.ok;
-      if (activation.ok) {
-        const dbPath = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
-        await repairComposerDataAfterActivation(dbPath, entry.conversationId, manifest.partialState as Record<string, unknown>);
-        const { cursorUser } = resolveSyncRoots();
-        const globalDb = path.join(cursorUser, "globalStorage", "state.vscdb");
-        await repairComposerDataAfterActivation(globalDb, entry.conversationId, manifest.partialState as Record<string, unknown>);
-        applied = true;
-      }
-    } catch (err) {
-      logger.appendLine(
-        `[${new Date().toISOString()}] [chat-restore-debug] sidebar activation failed conversationId=${entry.conversationId}: ${err instanceof Error ? err.message : String(err)}`
-      );
+    if (!mergeSucceeded) {
+      remainingEntries.push(entry);
+      continue;
     }
 
-    if (activationOk) {
+    const shouldActivate = entry.activate === true;
+    if (shouldActivate) {
+      let activationOk = false;
       try {
-        await fs.unlink(safeBundlePath);
-      } catch {
-        /* ignore */
+        const wsCtx = await requireWorkspaceContext({ workspaceFolder: entry.folderFsPath });
+        const manifest = normalizeActivationManifest(
+          buildActivationManifest(bundle, entry.conversationId, wsCtx, {
+            openInNewTab: true,
+          }) as unknown as Record<string, unknown>
+        );
+        await enrichManifestPartialStateFromDisk(manifest, entry.workspaceStorageId);
+        const activation = await runComposerActivation(manifest, {
+          stagePending: false,
+          acceptOpenWithoutHandle: false,
+          log: (line) =>
+            logger.appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`),
+        });
+        activationOk = activation.ok;
+        if (activation.ok) {
+          const dbPath = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
+          await repairComposerDataAfterActivation(dbPath, entry.conversationId, manifest.partialState as Record<string, unknown>);
+          const { cursorUser } = resolveSyncRoots();
+          const globalDb = path.join(cursorUser, "globalStorage", "state.vscdb");
+          await repairComposerDataAfterActivation(globalDb, entry.conversationId, manifest.partialState as Record<string, unknown>);
+          applied = true;
+        }
+      } catch (err) {
+        logger.appendLine(
+          `[${new Date().toISOString()}] [chat-restore-debug] sidebar activation failed conversationId=${entry.conversationId}: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
-    } else {
-      remainingEntries.push(entry);
+      if (!activationOk) {
+        remainingEntries.push(entry);
+        continue;
+      }
+    }
+
+    try {
+      await fs.unlink(safeBundlePath);
+    } catch {
+      /* ignore */
     }
   }
 
@@ -231,6 +244,5 @@ export async function flushPendingSidebarWriteback(
   } else {
     await context.globalState.update(STORAGE_KEY, undefined);
   }
-
   return applied;
 }

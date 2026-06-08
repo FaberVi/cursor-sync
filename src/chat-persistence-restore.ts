@@ -474,7 +474,9 @@ export async function restoreChatBundle(
 
     if (sidebarMerged && remappedBundle.sidebarSnapshot) {
       await applyImmediateSidebarWriteback(remappedBundle, wsCtx);
-      await queueSidebarWriteback(context, remappedBundle, wsCtx);
+      await queueSidebarWriteback(context, remappedBundle, wsCtx, {
+        activate: options.activate === true,
+      });
     }
 
     if (options.activate) {

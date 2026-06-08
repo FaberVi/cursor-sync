@@ -146,7 +146,7 @@ describe("chat-import-sidebar-writeback", () => {
       stagedOnly: false,
     });
 
-    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx);
+    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx, { activate: true });
     const pendingDir = path.join(tempHome, ".cursor", "import-activation", "sidebar-pending");
     const bundlePath = path.join(pendingDir, `${FIXTURE_CID}.json`);
     await expect(fs.access(bundlePath)).resolves.toBeUndefined();
@@ -169,7 +169,7 @@ describe("chat-import-sidebar-writeback", () => {
       stagedOnly: true,
     });
 
-    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx);
+    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx, { activate: true });
 
     await flushPendingSidebarWriteback(context);
 
@@ -192,7 +192,7 @@ describe("chat-import-sidebar-writeback", () => {
       stagedOnly: false,
     });
 
-    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx);
+    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx, { activate: true });
     const bundlePath = path.join(
       tempHome,
       ".cursor",

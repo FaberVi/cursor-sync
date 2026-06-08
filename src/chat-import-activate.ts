@@ -828,6 +828,12 @@ export async function runPostImportActivation(
   });
 
   if (activationOutcome.ok) {
+    const partial = manifest.partialState as Record<string, unknown>;
+    const dbPath = stateDbPathForWorkspaceStorageId(workspaceCtx.workspaceStorageId);
+    await repairComposerDataAfterActivation(dbPath, conversationId, partial);
+    const { cursorUser } = resolveSyncRoots();
+    const globalDb = path.join(cursorUser, "globalStorage", "state.vscdb");
+    await repairComposerDataAfterActivation(globalDb, conversationId, partial);
     return activationOutcome;
   }
 
@@ -882,7 +888,12 @@ export async function runComposerActivation(
   const createNewOutcome = partialStateSafeForCreateNew(partial)
     ? await tryRegisterViaCreateNew(manifest, paths, log)
     : null;
-  if (createNewOutcome?.ok) {
+  if (createNewOutcome && !createNewOutcome.ok) {
+    log(
+      `composer.createNew failed (exit ${createNewOutcome.exitCode}); ` +
+        `falling back to ${manifest.commandId}`
+    );
+  } else if (createNewOutcome?.ok) {
     const openOutcome = await tryActivateViaComposerHandle(manifest, {
       ...options,
       acceptOpenWithoutHandle: options.acceptOpenWithoutHandle ?? true,
