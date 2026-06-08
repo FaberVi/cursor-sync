@@ -10,7 +10,6 @@ import {
   mergeComposerHeadersChain,
 } from "./composer-merge.js";
 import { clearSessionBindingInTree } from "./chat-partial-state.js";
-import { agentDebugLog } from "./debug-session-log.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
 const { querySqliteRows, runSqliteScript, listGlobalStateVscdbPaths, resolveStateDbCandidates } =
@@ -634,29 +633,6 @@ export async function mergeSidebarIntoStateDb(
     cid,
     workspaceIdentifier
   );
-  const mergedBlob = mergedData[cid];
-  if (mergedBlob && typeof mergedBlob === "object" && !Array.isArray(mergedBlob)) {
-    const blobRec = mergedBlob as Record<string, unknown>;
-    const headerRow = mergedHeaders.allComposers.find((e) => e.composerId === cid);
-    // #region agent log
-    agentDebugLog("H3", "chat-import-merge.ts:mergeSidebar", "merged sidebar payload for state db", {
-      dbPath,
-      conversationId: cid,
-      headerWorkspaceId: workspaceIdentifier.id,
-      blobWorkspaceId:
-        blobRec.workspaceIdentifier &&
-        typeof blobRec.workspaceIdentifier === "object" &&
-        !Array.isArray(blobRec.workspaceIdentifier)
-          ? (blobRec.workspaceIdentifier as Record<string, unknown>).id ?? null
-          : null,
-      headerName: headerRow?.name ?? null,
-      blobName: blobRec.name ?? null,
-      headerCreatedAt: headerRow?.createdAt ?? null,
-      blobCreatedAt: blobRec.createdAt ?? null,
-    });
-    // #endregion
-  }
-
   const scriptParts: string[] = ["BEGIN IMMEDIATE;"];
 
   if (mergedHeaders.allComposers.length > 0) {

@@ -13,9 +13,6 @@ import {
   type LoadChatResult,
   type RestoreChatBundleOptions,
 } from "./chat-persistence.js";
-import { agentDebugLog } from "./debug-session-log.js";
-import { requireWorkspaceContext } from "./chat-workspace-context.js";
-import { probeComposerSidebarDiskState } from "./chat-import-disk-probe.js";
 
 export interface ChatImportPromptResult {
   workspaceFolder: string;
@@ -252,9 +249,6 @@ export function buildChatImportResultMessage(
   return parts.join(" | ");
 }
 
-const LAST_IMPORT_PROBE_KEY = "cursorSync.lastImportProbeConversationId";
-const LAST_IMPORT_PROBE_FOLDER_KEY = "cursorSync.lastImportProbeFolderFsPath";
-
 function isReloadCanceledError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return /cancel/i.test(msg);
@@ -320,31 +314,6 @@ export async function presentChatImportOutcome(
   }
 
   refreshSidebar();
-  const pending = context.globalState.get<{ entries?: unknown[] }>(
-    "cursorSync.pendingSidebarWriteback"
-  );
-  try {
-    const wsCtx = await requireWorkspaceContext({
-      workspaceFolder: restoreOptions.workspaceFolder,
-    });
-    await probeComposerSidebarDiskState(
-      result.conversationId,
-      wsCtx,
-      "chat-import-ux.ts:pre-reload",
-      "H5"
-    );
-    await context.globalState.update(LAST_IMPORT_PROBE_KEY, result.conversationId);
-    await context.globalState.update(LAST_IMPORT_PROBE_FOLDER_KEY, wsCtx.folderFsPath);
-  } catch {
-    /* workspace probe optional */
-  }
-  // #region agent log
-  agentDebugLog("H6", "chat-import-ux.ts:pre-reload", "keeping pending writeback for post-reload replay", {
-    conversationId: result.conversationId,
-    sidebarMerged: result.sidebarMerged,
-    pendingCount: pending?.entries?.length ?? 0,
-  });
-  // #endregion
   await offerComposerSidebarReload();
 }
 

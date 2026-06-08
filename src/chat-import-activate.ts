@@ -20,7 +20,6 @@ import type { WorkspaceContext } from "./chat-workspace-context.js";
 import { stateDbPathForWorkspaceStorageId } from "./chat-workspace-context.js";
 import { resolveSyncRoots } from "./paths.js";
 import { resolveComposerBridgeScript } from "./chat-transport-scripts.js";
-import { agentDebugLog } from "./debug-session-log.js";
 
 export const CREATE_NEW_COMPOSER_COMMAND_ID = "composer.createNew";
 export const CREATE_COMPOSER_COMMAND_ID = "composer.createComposer";
@@ -406,27 +405,6 @@ export async function enrichManifestPartialStateFromDisk(
         };
       });
     }
-    // #region agent log
-    agentDebugLog("H3", "chat-import-activate.ts:enrich-partial", "partial hydrated from disk", {
-      composerId: manifest.composerId,
-      dbPath,
-      targetWorkspaceId:
-        targetWorkspaceIdentifier &&
-        typeof targetWorkspaceIdentifier === "object" &&
-        !Array.isArray(targetWorkspaceIdentifier)
-          ? (targetWorkspaceIdentifier as Record<string, unknown>).id ?? null
-          : null,
-      finalWorkspaceId:
-        partial.workspaceIdentifier &&
-        typeof partial.workspaceIdentifier === "object" &&
-        !Array.isArray(partial.workspaceIdentifier)
-          ? (partial.workspaceIdentifier as Record<string, unknown>).id ?? null
-          : null,
-      name: typeof partial.name === "string" ? partial.name : null,
-      createdAt: partial.createdAt,
-      lastUpdatedAt: partial.lastUpdatedAt,
-    });
-    // #endregion
     return true;
   }
   return false;
@@ -465,27 +443,6 @@ async function tryRegisterViaCreateNew(
     }
     await writeResultJson(composerId, true, paths);
     log(`composer.createNew succeeded: composerId=${composerId}`);
-    // #region agent log
-    const wi = partial.workspaceIdentifier;
-    agentDebugLog("H4", "chat-import-activate.ts:createNew-ok", "composer.createNew registered", {
-      composerId,
-      workspaceId:
-        wi && typeof wi === "object" && !Array.isArray(wi)
-          ? (wi as Record<string, unknown>).id ?? null
-          : null,
-      name: typeof partial.name === "string" ? partial.name : null,
-      createdAt: partial.createdAt,
-      lastUpdatedAt: partial.lastUpdatedAt,
-      hasConversationMap:
-        !!partial.conversationMap &&
-        typeof partial.conversationMap === "object" &&
-        !Array.isArray(partial.conversationMap) &&
-        Object.keys(partial.conversationMap as object).length > 0,
-      fullHeadersLen: Array.isArray(partial.fullConversationHeadersOnly)
-        ? partial.fullConversationHeadersOnly.length
-        : 0,
-    });
-    // #endregion
     return {
       ok: true,
       composerId,

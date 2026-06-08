@@ -19,8 +19,6 @@ import {
 import { getLogger } from "./diagnostics.js";
 import { resolveSyncRoots } from "./paths.js";
 import { requireWorkspaceContext } from "./chat-workspace-context.js";
-import { probeComposerSidebarDiskState } from "./chat-import-disk-probe.js";
-import { agentDebugLog } from "./debug-session-log.js";
 
 const STORAGE_KEY = "cursorSync.pendingSidebarWriteback";
 const PENDING_DIR = path.join(os.homedir(), ".cursor", "import-activation", "sidebar-pending");
@@ -113,17 +111,8 @@ export async function flushPendingSidebarWriteback(
   }
   const pending = context.globalState.get<PendingSidebarWriteback>(STORAGE_KEY);
   if (!pending?.entries.length) {
-    // #region agent log
-    agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-empty", "no pending writeback on activate", {});
-    // #endregion
     return false;
   }
-  // #region agent log
-  agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-start", "flush pending writeback on activate", {
-    pendingCount: pending.entries.length,
-    conversationIds: pending.entries.map((e) => e.conversationId),
-  });
-  // #endregion
   const logger = getLogger();
   let applied = false;
 
@@ -189,12 +178,6 @@ export async function flushPendingSidebarWriteback(
         const globalDb = path.join(cursorUser, "globalStorage", "state.vscdb");
         await repairComposerDataAfterActivation(globalDb, entry.conversationId, manifest.partialState as Record<string, unknown>);
       }
-      await probeComposerSidebarDiskState(
-        entry.conversationId,
-        wsCtx,
-        "chat-import-sidebar-writeback.ts:post-flush-activation",
-        "H5"
-      );
       if (activation.ok) {
         applied = true;
       }
@@ -212,13 +195,6 @@ export async function flushPendingSidebarWriteback(
   }
 
   await context.globalState.update(STORAGE_KEY, undefined);
-
-  // #region agent log
-  agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-done", "sidebar writeback flush complete", {
-    applied,
-    conversationIds: pending.entries.map((e) => e.conversationId),
-  });
-  // #endregion
 
   return applied;
 }
