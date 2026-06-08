@@ -179,6 +179,12 @@ async function fetchAndResolveGistBundles(
 
   let resolved: { bundles: ChatBundle[]; pickerShown: boolean };
 
+  if (bundleFile && collectionFile) {
+    throw new Error(
+      "Gist contains both chat-bundle.json and chat-bundles.json. Remove one file so import knows which export to use."
+    );
+  }
+
   if (bundleFile) {
     const bundleRaw = await fetchGistFileContent(bundleFile, token);
     resolved = await resolveChatBundlesFromGistContent(

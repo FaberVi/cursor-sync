@@ -87,6 +87,20 @@ describe("chat-gist-crypto", () => {
     ).rejects.toMatchObject({ code: "DECRYPT_FAILED" });
   });
 
+  it("rejects non-integer KDF parameters such as NaN", async () => {
+    const { encryptChatGistPayload, decryptChatGistPayload } = await import(
+      "../src/chat-gist-crypto.js"
+    );
+    const envelopeJson = await encryptChatGistPayload(plainSingle, "pw", "chat-bundle");
+    const envelope = JSON.parse(envelopeJson) as {
+      cursorSyncEncrypted: { kdf: { memoryKiB: number } };
+    };
+    envelope.cursorSyncEncrypted.kdf.memoryKiB = Number.NaN;
+    await expect(decryptChatGistPayload(JSON.stringify(envelope), "pw")).rejects.toMatchObject({
+      code: "INVALID_ENVELOPE",
+    });
+  });
+
   it("rejects invalid envelope schema before decrypt", async () => {
     const { decryptChatGistPayload } = await import("../src/chat-gist-crypto.js");
     await expect(
