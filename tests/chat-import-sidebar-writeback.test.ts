@@ -89,10 +89,6 @@ vi.mock("../src/chat-import-activate.js", () => ({
   runComposerActivation: vi.fn(),
 }));
 
-vi.mock("../src/chat-import-disk-probe.js", () => ({
-  probeComposerSidebarDiskState: vi.fn().mockResolvedValue(undefined),
-}));
-
 vi.mock("../src/diagnostics.js", () => ({
   getLogger: () => ({
     appendLine: vi.fn(),
@@ -105,10 +101,6 @@ vi.mock("../src/paths.js", () => ({
   resolveSyncRoots: () => ({
     cursorUser: "/tmp/mock-cursor-user",
   }),
-}));
-
-vi.mock("../src/debug-session-log.js", () => ({
-  agentDebugLog: vi.fn(),
 }));
 
 describe("chat-import-sidebar-writeback", () => {
