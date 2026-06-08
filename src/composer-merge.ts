@@ -228,6 +228,37 @@ export function extractComposerDataPayload(
   return undefined;
 }
 
+export function mergeComposerDataRepair(
+  existingRaw: string | undefined,
+  conversationId: string,
+  partial: Record<string, unknown>
+): Record<string, unknown> {
+  let merged: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(existingRaw || "{}") as unknown;
+    merged =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+  } catch {
+    merged = {};
+  }
+  const existingEntry = merged[conversationId];
+  if (
+    existingEntry &&
+    typeof existingEntry === "object" &&
+    !Array.isArray(existingEntry)
+  ) {
+    merged[conversationId] = {
+      ...(existingEntry as Record<string, unknown>),
+      ...partial,
+    };
+  } else {
+    merged[conversationId] = partial;
+  }
+  return merged;
+}
+
 export function mergeComposerDataAdditive(
   existingRaw: string | undefined,
   importedPayloads: Array<Record<string, unknown>>

@@ -7,6 +7,7 @@ import {
   escapeSqlLiteral,
   getComposerId,
   mergeComposerDataAdditive,
+  mergeComposerDataRepair,
   mergeComposerHeadersChain,
 } from "./composer-merge.js";
 import { clearSessionBindingInTree } from "./chat-partial-state.js";
@@ -548,9 +549,6 @@ export async function mergeTargetsForImport(
   return targets;
 }
 
-/**
- * @deprecated No longer called from restoreChatBundle; Python handles sidebar writes. Retained for tests only.
- */
 export async function repairComposerDataAfterActivation(
   dbPath: string,
   conversationId: string,
@@ -567,9 +565,7 @@ export async function repairComposerDataAfterActivation(
   } else {
     existing = "{}";
   }
-  const extra: Record<string, unknown> = {};
-  extra[conversationId] = partial;
-  const merged = mergeComposerDataAdditive(existing, [extra]);
+  const merged = mergeComposerDataRepair(existing, conversationId, partial);
   const mergedStr = JSON.stringify(merged);
   const valLit = escapeSqlLiteral(mergedStr);
   const script = [

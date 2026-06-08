@@ -167,6 +167,34 @@ describe("transcripts", () => {
       });
     });
 
+    it("mergeComposerDataRepair overlays partial onto existing composer entry", async () => {
+      const { mergeComposerDataRepair } = await import("../src/composer-merge.js");
+      const merged = mergeComposerDataRepair(
+        JSON.stringify({
+          "conversation-123": {
+            composerId: "conversation-123",
+            conversationMap: {},
+            status: "loading",
+          },
+          stableMeta: { version: 1 },
+        }),
+        "conversation-123",
+        {
+          composerId: "conversation-123",
+          conversationMap: { "bubble-1": { type: 1 } },
+          status: "completed",
+        }
+      );
+      expect(merged).toEqual({
+        "conversation-123": {
+          composerId: "conversation-123",
+          conversationMap: { "bubble-1": { type: 1 } },
+          status: "completed",
+        },
+        stableMeta: { version: 1 },
+      });
+    });
+
     it("merges composerData additively by composer key", async () => {
       const { __transcriptsTestUtils } = await import("../src/transcripts.js");
       const merged = __transcriptsTestUtils.mergeComposerDataAdditive(

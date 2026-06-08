@@ -185,13 +185,13 @@ export async function flushPendingSidebarWriteback(
         log: (line) =>
           logger.appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`),
       });
-      activationOk = activation.ok;
       if (activation.ok) {
         const dbPath = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
         await repairComposerDataAfterActivation(dbPath, entry.conversationId, manifest.partialState as Record<string, unknown>);
         const { cursorUser } = resolveSyncRoots();
         const globalDb = path.join(cursorUser, "globalStorage", "state.vscdb");
         await repairComposerDataAfterActivation(globalDb, entry.conversationId, manifest.partialState as Record<string, unknown>);
+        activationOk = true;
       }
       await probeComposerSidebarDiskState(
         entry.conversationId,

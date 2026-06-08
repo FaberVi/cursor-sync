@@ -61,9 +61,13 @@ const headerOnlyBundle: ChatBundle = {
   transcriptFiles: [],
 };
 
+const { repairComposerDataAfterActivation } = vi.hoisted(() => ({
+  repairComposerDataAfterActivation: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../src/chat-import-merge.js", () => ({
   mergeSidebarIntoStateDb: vi.fn().mockResolvedValue({ merged: true, warnings: [] }),
-  repairComposerDataAfterActivation: vi.fn().mockResolvedValue(undefined),
+  repairComposerDataAfterActivation,
 }));
 
 vi.mock("../src/chat-workspace-context.js", async (importOriginal) => {
@@ -158,6 +162,35 @@ describe("chat-import-sidebar-writeback", () => {
     const pendingDir = path.join(tempHome, ".cursor", "import-activation", "sidebar-pending");
     const bundlePath = path.join(pendingDir, `${FIXTURE_CID}.json`);
     await expect(fs.access(bundlePath)).resolves.toBeUndefined();
+
+    await flushPendingSidebarWriteback(context);
+
+    const remaining = globalStateStore["cursorSync.pendingSidebarWriteback"] as {
+      entries: Array<{ conversationId: string }>;
+    };
+    expect(remaining.entries).toHaveLength(1);
+    expect(remaining.entries[0]!.conversationId).toBe(FIXTURE_CID);
+    await expect(fs.access(bundlePath)).resolves.toBeUndefined();
+  });
+
+  it("retains pending entries when repair fails after activation succeeds", async () => {
+    const { runComposerActivation } = await import("../src/chat-import-activate.js");
+    vi.mocked(runComposerActivation).mockResolvedValue({
+      ok: true,
+      composerId: FIXTURE_CID,
+      exitCode: 0,
+      stagedOnly: false,
+    });
+    repairComposerDataAfterActivation.mockRejectedValueOnce(new Error("sqlite locked"));
+
+    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx);
+    const bundlePath = path.join(
+      tempHome,
+      ".cursor",
+      "import-activation",
+      "sidebar-pending",
+      `${FIXTURE_CID}.json`
+    );
 
     await flushPendingSidebarWriteback(context);
 
