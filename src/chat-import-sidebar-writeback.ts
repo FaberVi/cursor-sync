@@ -25,10 +25,6 @@ const PENDING_DIR = path.join(os.homedir(), ".cursor", "import-activation", "sid
 const COMPOSER_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function isSafeComposerId(conversationId: string): boolean {
-  return COMPOSER_ID_RE.test(conversationId);
-}
-
 function resolvePendingBundlePath(bundlePath: string): string | null {
   const resolved = path.resolve(bundlePath);
   const pendingRoot = path.resolve(PENDING_DIR);
@@ -92,7 +88,7 @@ export async function queueSidebarWriteback(
   options?: { activate?: boolean }
 ): Promise<void> {
   const conversationId = bundle.conversationId?.trim();
-  if (!conversationId || !isSafeComposerId(conversationId) || !bundle.sidebarSnapshot) {
+  if (!conversationId || !COMPOSER_ID_RE.test(conversationId) || !bundle.sidebarSnapshot) {
     return;
   }
   await fs.mkdir(PENDING_DIR, { recursive: true });
@@ -108,12 +104,10 @@ export async function queueSidebarWriteback(
     activate: options?.activate === true,
   };
 
-  let pendingCount = 1;
   if (context.globalState) {
     const existing = context.globalState.get<PendingSidebarWriteback>(STORAGE_KEY);
     const entries = (existing?.entries ?? []).filter((e) => e.conversationId !== conversationId);
     entries.push(entry);
-    pendingCount = entries.length;
     await context.globalState.update(STORAGE_KEY, {
       entries,
       queuedAt: new Date().toISOString(),
@@ -137,7 +131,7 @@ export async function flushPendingSidebarWriteback(
 
   for (const entry of pending.entries) {
     const safeBundlePath = resolvePendingBundlePath(entry.bundlePath);
-    if (!safeBundlePath || !isSafeComposerId(entry.conversationId)) {
+    if (!safeBundlePath || !COMPOSER_ID_RE.test(entry.conversationId)) {
       logger.appendLine(
         `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back skipped (invalid pending entry): conversationId=${entry.conversationId}`
       );
@@ -231,9 +225,7 @@ export async function flushPendingSidebarWriteback(
 
     try {
       await fs.unlink(safeBundlePath);
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
 
   if (remainingEntries.length > 0) {

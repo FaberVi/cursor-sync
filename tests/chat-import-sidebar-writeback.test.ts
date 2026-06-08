@@ -7,7 +7,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ChatBundle } from "../src/chat-persistence.js";
 
-const FIXTURE_REPO = "/tmp/cursor-sync-fixture-repo";
 const FIXTURE_CID = "43aae2fb-71fc-4e9c-9add-3e995caaaa80";
 
 const { workspaceCtx, fixtureCid } = vi.hoisted(() => {
