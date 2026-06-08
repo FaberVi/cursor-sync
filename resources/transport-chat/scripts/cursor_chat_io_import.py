@@ -536,21 +536,8 @@ def import_bundle(
         else:
             warnings.append(
                 "Global state.vscdb failed integrity_check. "
-                "Merging cursorDiskKV by exact key only (no purge)."
+                "Writing cursorDiskKV to workspace state.vscdb instead."
             )
-            ok_kv, kv_warnings = persist_disk_kv_rows_to_db(
-                global_db,
-                disk_kv_rows,
-                cid,
-                ws_identifier,
-                dry_run=dry_run,
-                db_label="global-exact-key",
-                skip_purge=True,
-                skip_integrity_check=True,
-            )
-            warnings.extend(kv_warnings)
-            if ok_kv:
-                disk_kv_written = True
             for db in merge_targets:
                 db_path = Path(db)
                 if db_path == global_db or "workspaceStorage" not in str(db_path):
@@ -570,8 +557,8 @@ def import_bundle(
                     break
             if not disk_kv_written:
                 warnings.append(
-                    "Sidebar headers merged. Chat bubbles stay missing until global "
-                    "state.vscdb is repaired or the workspace cursorDiskKV write succeeds."
+                    "Sidebar headers merged. Chat bubbles stay missing until "
+                    "workspace cursorDiskKV write succeeds or global state.vscdb is repaired."
                 )
 
         agent_kv = bundle.get("agentKvSnapshot")
