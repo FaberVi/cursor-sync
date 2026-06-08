@@ -324,7 +324,9 @@ export async function presentChatImportOutcome(
     "cursorSync.pendingSidebarWriteback"
   );
   try {
-    const wsCtx = await requireWorkspaceContext();
+    const wsCtx = await requireWorkspaceContext({
+      workspaceFolder: restoreOptions.workspaceFolder,
+    });
     await probeComposerSidebarDiskState(
       result.conversationId,
       wsCtx,
