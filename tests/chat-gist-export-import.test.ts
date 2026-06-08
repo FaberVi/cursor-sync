@@ -145,12 +145,16 @@ vi.mock("vscode", () => ({
   },
 }));
 
-vi.mock("../src/gist.js", () => ({
-  GistClient: class {
-    createGist = createGistMock;
-    getGist = getGistMock;
-  },
-}));
+vi.mock("../src/gist.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/gist.js")>();
+  return {
+    ...actual,
+    GistClient: class {
+      createGist = createGistMock;
+      getGist = getGistMock;
+    },
+  };
+});
 
 vi.mock("../src/auth.js", () => ({
   requireToken: requireTokenMock,
@@ -340,7 +344,10 @@ async function setupExportConversation(
 
 describe("chat gist export and import", () => {
   let tmpRoot: string;
-  let extensionContext: { globalStorageUri: { fsPath: string } };
+  let extensionContext: {
+    globalStorageUri: { fsPath: string };
+    globalState: { get: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+  };
 
   beforeEach(async () => {
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-chat-gist-"));
@@ -378,6 +385,10 @@ describe("chat gist export and import", () => {
     extensionContext = {
       globalStorageUri: {
         fsPath: path.join(tmpRoot, ".cursor-sync-global-storage"),
+      },
+      globalState: {
+        get: vi.fn().mockReturnValue(undefined),
+        update: vi.fn().mockResolvedValue(undefined),
       },
     };
     await fs.mkdir(extensionContext.globalStorageUri.fsPath, { recursive: true });
@@ -606,10 +617,13 @@ describe("chat gist export and import", () => {
 
     showInputBoxMock.mockResolvedValueOnce("https://gist.github.com/user/gist-roundtrip");
     showQuickPickMock.mockImplementation(
-      async (items: Array<{ description?: string; activate?: boolean }>) => {
-        const pickedBundle = items.find((item) => item.description === conversationId1);
-        if (pickedBundle) {
-          return pickedBundle;
+      async (
+        items: Array<{ description?: string; activate?: boolean }>,
+        options?: { canPickMany?: boolean }
+      ) => {
+        if (options?.canPickMany) {
+          const pickedBundle = items.find((item) => item.description === conversationId1);
+          return pickedBundle ? [pickedBundle] : [];
         }
         const activateItem = items.find((item) => item.activate === false);
         if (activateItem) {
@@ -772,19 +786,25 @@ describe("chat gist export and import", () => {
 
     showInputBoxMock.mockResolvedValue("gist-multi-import");
     showQuickPickMock.mockImplementation(
-      async (items: Array<{ description?: string; activate?: boolean }>) => {
-        const pickedBundle = items.find((item) => item.description === conv2);
-        if (pickedBundle) {
-          return pickedBundle;
+      async (
+        items: Array<{ description?: string; activate?: boolean; picked?: boolean }>,
+        options?: { canPickMany?: boolean }
+      ) => {
+        if (options?.canPickMany) {
+          return items.filter((item) =>
+            item.description === conv1 || item.description === conv2
+          );
         }
         const activateItem = items.find((item) => item.activate === false);
-        if (activateItem) {
-          return activateItem;
-        }
+        if (activateItem) return activateItem;
         return items.find((item) => item.description === targetProjectKey);
       }
     );
     showInformationMessageMock.mockResolvedValue(undefined);
+
+    const executeCommandMock = vi.mocked(
+      (await import("vscode")).commands.executeCommand
+    );
 
     const chatMod = await import("../src/chat-persistence.js");
     const restoreSpy = vi.spyOn(chatMod, "restoreChatBundle");
@@ -792,18 +812,95 @@ describe("chat gist export and import", () => {
     const { executeImportChatFromGist } = await import("../src/import-gist-chat.js");
     await executeImportChatFromGist(extensionContext as never);
 
-    expect(restoreSpy).toHaveBeenCalledTimes(1);
-    const [, restoredBundle] = restoreSpy.mock.calls[0]!;
-    expect(restoredBundle.conversationId).toBe(conv2);
+    expect(restoreSpy).toHaveBeenCalledTimes(2);
+    expect(restoreSpy.mock.calls.map((c) => c[1].conversationId).sort()).toEqual(
+      [conv1, conv2].sort()
+    );
+    expect(executeCommandMock).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
+    expect(showErrorMessageMock).not.toHaveBeenCalled();
 
-    const importedPath = path.join(
+    restoreSpy.mockRestore();
+  });
+
+  it("continues batch when second restore fails", async () => {
+    const sourceProjectKey = "source-partial-project";
+    const targetProjectKey = folderToProjectKey(mockWorkspaceFolder);
+    const conv1 = "conv-partial-001";
+    const conv2 = "conv-partial-002";
+    const conv3 = "conv-partial-003";
+    const targetProjectDir = path.join(tmpRoot, ".cursor", "projects", targetProjectKey);
+
+    const collection = {
+      schemaVersion: 1 as const,
+      type: "chat-bundles-collection" as const,
+      createdAt: "2026-05-20T12:00:00.000Z",
+      sourceWorkspaceKey: "partial-wk",
+      bundles: [
+        buildChatBundleFixture({ conversationId: conv1, projectKey: sourceProjectKey }),
+        buildChatBundleFixture({ conversationId: conv2, projectKey: sourceProjectKey }),
+        buildChatBundleFixture({ conversationId: conv3, projectKey: sourceProjectKey }),
+      ],
+    };
+
+    getGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-partial-import",
+        html_url: "https://gist.github.com/example/gist-partial-import",
+        description: "Cursor Sync - Chat Export",
+        files: {
+          [CHAT_BUNDLES_GIST_FILE_NAME]: {
+            content: JSON.stringify(collection, null, 2),
+          },
+        },
+        created_at: "2026-05-20T12:00:00.000Z",
+        updated_at: "2026-05-20T12:00:00.000Z",
+      },
+    });
+
+    showInputBoxMock.mockResolvedValue("gist-partial-import");
+    showQuickPickMock.mockImplementation(
+      async (
+        items: Array<{ description?: string; activate?: boolean }>,
+        options?: { canPickMany?: boolean }
+      ) => {
+        if (options?.canPickMany) {
+          return items.filter((item) =>
+            [conv1, conv2, conv3].includes(item.description ?? "")
+          );
+        }
+        const activateItem = items.find((item) => item.activate === false);
+        if (activateItem) return activateItem;
+        return items.find((item) => item.description === targetProjectKey);
+      }
+    );
+    showInformationMessageMock.mockResolvedValue(undefined);
+
+    const chatMod = await import("../src/chat-persistence.js");
+    const restoreChatBundle = chatMod.restoreChatBundle;
+    const restoreSpy = vi.spyOn(chatMod, "restoreChatBundle");
+    restoreSpy.mockImplementation(async (context, bundle, progress, options) => {
+      if (bundle.conversationId === conv2) {
+        throw new Error("restore failed");
+      }
+      return restoreChatBundle.call(chatMod, context, bundle, progress, options);
+    });
+
+    const { executeImportChatFromGist } = await import("../src/import-gist-chat.js");
+    await executeImportChatFromGist(extensionContext as never);
+
+    expect(restoreSpy).toHaveBeenCalledTimes(3);
+    expect(
+      showWarningMessageMock.mock.calls.some((c) => /Imported 2\/3/i.test(String(c[0])))
+    ).toBe(true);
+
+    const conv1TranscriptPath = path.join(
       targetProjectDir,
       "agent-transcripts",
-      conv2,
-      `${conv2}.jsonl`
+      conv1,
+      `${conv1}.jsonl`
     );
-    expect(await fs.readFile(importedPath, "utf-8")).toBe(transcriptFixture);
-    expect(showErrorMessageMock).not.toHaveBeenCalled();
+    expect(await fs.readFile(conv1TranscriptPath, "utf-8")).toBe(transcriptFixture);
 
     restoreSpy.mockRestore();
   });
@@ -919,6 +1016,70 @@ describe("chat gist export and import", () => {
     const uploaded = createGistMock.mock.calls[0]![0] as Record<string, { content: string }>;
     const bundle = JSON.parse(uploaded[CHAT_BUNDLE_GIST_FILE_NAME]!.content);
     expect(bundle.type).toBe("chat-persistence");
+  });
+
+  it("downloads full gist file when API marks content truncated", async () => {
+    const bundle = buildChatBundleFixture({
+      conversationId: "conv-truncated-import",
+      projectKey: folderToProjectKey(mockWorkspaceFolder),
+    });
+    const plainJson = JSON.stringify(bundle);
+    const originalFetch = globalThis.fetch;
+
+    getGistMock.mockResolvedValue({
+      ok: true,
+      data: {
+        id: "gist-truncated",
+        html_url: "https://gist.github.com/example/gist-truncated",
+        description: "Cursor Sync - Chat Export",
+        files: {
+          [CHAT_BUNDLE_GIST_FILE_NAME]: {
+            content: plainJson.slice(0, 120),
+            truncated: true,
+            raw_url: "https://gist.githubusercontent.com/example/raw/chat-bundle.json",
+          },
+        },
+        created_at: "2026-05-20T12:00:00.000Z",
+        updated_at: "2026-05-20T12:00:00.000Z",
+      },
+    });
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => plainJson,
+    });
+
+    isEncryptedChatGistPayloadMock.mockReturnValue(false);
+    showInputBoxMock.mockResolvedValue("gist-truncated");
+    showQuickPickMock.mockImplementation(
+      async (items: Array<{ description?: string; activate?: boolean }>) =>
+        items.find((item) => item.activate === false) ??
+        items.find((item) => item.description === folderToProjectKey(mockWorkspaceFolder))
+    );
+    showInformationMessageMock.mockResolvedValue(undefined);
+
+    const chatMod = await import("../src/chat-persistence.js");
+    const restoreSpy = vi.spyOn(chatMod, "restoreChatBundle");
+
+    try {
+      const { executeImportChatFromGist } = await import("../src/import-gist-chat.js");
+      await executeImportChatFromGist(extensionContext as never);
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "https://gist.githubusercontent.com/example/raw/chat-bundle.json",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: expect.stringContaining("token"),
+          }),
+        })
+      );
+      expect(restoreSpy).toHaveBeenCalledTimes(1);
+      expect(showErrorMessageMock).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreSpy.mockRestore();
+    }
   });
 
   it("decrypts encrypted gist on import", async () => {

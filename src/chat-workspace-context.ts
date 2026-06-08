@@ -112,6 +112,14 @@ export async function buildChatsKeyToFolderMap(
   return map;
 }
 
+export async function scanWorkspaceStorageForFolder(
+  folderFsPath: string
+): Promise<string | undefined> {
+  const { cursorUser } = resolveSyncRoots();
+  const wsRoot = path.join(cursorUser, "workspaceStorage");
+  return scanWorkspaceStorageForId(wsRoot, path.resolve(folderFsPath));
+}
+
 async function scanWorkspaceStorageForId(
   wsRoot: string,
   folderFsPath: string

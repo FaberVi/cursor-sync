@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## v0.8.0
+
+### Added
+- **Inline chat activation** via `composer.createNew` with disk-hydrated `partialState` when the manifest is empty (`enrichManifestPartialStateFromDisk`, `partialStateForCreateNewCommand`).
+- **`repairComposerDataAfterActivation`** re-persists hydrated `conversationMap`, headers, `conversationState`, encryption keys, and `status: completed` when the IDE clobbers `composerData` after activation.
+- **`chat-import-disk-probe.ts`**: shared post-import and post-reload Composer sidebar disk probes (global and workspace `state.vscdb`).
+- **Composer export titles** from `composer.composerHeaders` / `allComposers[].name` via `resolveComposerConversationTitle` (snapshot header name wins over transcript snippet).
+- **`clearSessionBindingInTree`**: strips `requestId`, `workspaceUris`, and session-only fields from imported composer records and partial state.
+- **`readRichComposerDataEntryFromStateDb`** and **`applyRichComposerEntryToPartialState`** for protobuf-backed conversation hydration before `createNew`.
+- Tests: `chat-bundle-title.test.ts`; expanded activation, merge, partial-state, and gist-import coverage.
+
+### Changed
+- Import rebind stamps destination `workspaceIdentifier` and fresh timestamps on sidebar headers and `composerData` blobs (`rebindComposerRecord`).
+- `headersPayloadForImport` preserves snapshot `name` when non-empty instead of overwriting with `bundle.title`.
+- Activation partial state keeps destination `workspaceIdentifier`, header `name`, and timestamps after rich disk hydration.
+- Post-import UX records last-import probe ids in `globalState` and probes disk state before optional reload; extension activate replays probe after pending sidebar writeback flush.
+- Python disk import: `persist_disk_kv_rows_to_db` with integrity-check skip path; optional purge gate for `cursorDiskKV` rows.
+- `chat-persistence-restore.ts` delegates sidebar disk probing to the shared probe module.
+
+### Fixed
+- Empty `partialState` passed to `composer.createNew` no longer wipes disk-restored chats.
+- Imported Composer chats no longer retain source `requestId` or `workspaceUris` bindings.
+- Gist import tests mock `extensionContext.globalState` for post-import history and probe paths.
+- Chat-import-merge golden fixtures align with timestamp stamping on header and composer-data rebind.
+
+## v0.7.6
+
+### Added
+- **Export into Bundle (GIST)** on the Composer editor tab (`cursorSync.exportCurrentChatBundleToGist`) for single-conversation private Gist upload.
+- **Batch chat bundle import** from local `chat-bundles.json` and Gist collections (multi-select picker, continue-on-failure summary via `restoreChatBundlesBatch`).
+- **Composer conversation titles** from `composer.composerHeaders` / `allComposers[].name` in export and import pickers (`composer-title.ts`).
+- **Sidebar writeback queue** after disk import: immediate `state.vscdb` merge plus deferred flush on extension activate (`chat-import-sidebar-writeback.ts`).
+- **`fetchGistFileContent`** downloads full gist payloads when the GitHub API marks files truncated.
+
+### Changed
+- Import rebind clears session bindings (`requestId`, `workspaceUris`) on sidebar ItemTable and Layer 4 composer rows (TypeScript + bundled Python).
+- Chat bundle and Gist import outcomes use batch summaries for multi-chat imports; README notes window reload is optional when the UI is stale.
+- Python transport: destination workspace rebind on `cursorDiskKV`, pin imported composer in `allComposers`, ItemTable `composerData` workspace stamp, SQLite busy timeouts; optional debug logging when `CURSOR_SYNC_DEBUG_LOG` is set.
+
+### Fixed
+- Gist collection import restores all selected conversations without aborting on the first failure.
+- `restoreChatBundle` tolerates extension contexts without `globalState` (integration tests).
+
 ## v0.7.5
 
 ### Added

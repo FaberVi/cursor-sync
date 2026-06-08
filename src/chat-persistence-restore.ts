@@ -44,19 +44,45 @@ import {
 } from "./chat-import-verify.js";
 import { pickImportWorkspaceFolder } from "./chat-import-ux.js";
 import { humanWorkspaceLabel, projectQuickPickLabel } from "./chat-workspace-label.js";
-import {
-  parseChatBundleOrCollection,
-  pickBundleFromCollection,
-} from "./chat-bundle-format.js";
+import { parseChatBundleOrCollection } from "./chat-bundle-format.js";
 import {
   fidelityFieldsForImportHistory,
   publishImportFidelitySummary,
 } from "./sidebar/chats-tab.js";
 import { recordImport as recordImportEntry } from "./sidebar/import-history.js";
 import type { ChatBundle, LoadChatResult, RestoreChatBundleOptions } from "./chat-persistence.js";
+import type { WorkspaceContext } from "./chat-workspace-context.js";
 import { enrichBundleWithLiveDiskKv } from "./chat-disk-kv-export.js";
-
+import {
+  applyImmediateSidebarWriteback,
+  queueSidebarWriteback,
+} from "./chat-import-sidebar-writeback.js";
+import { probeComposerSidebarDiskState } from "./chat-import-disk-probe.js";
+import { agentDebugLog } from "./debug-session-log.js";
 const { resolveChatsRoot } = __chatPersistenceInternals;
+
+function parseSidebarMergedFromPythonOutput(pyText: string): boolean {
+  const match = pyText.match(/sidebar_merged=(true|false)/i);
+  if (match?.[1]?.toLowerCase() === "true") {
+    return true;
+  }
+  if (/Merged composer state into/i.test(pyText)) {
+    return true;
+  }
+  if (/No sidebarSnapshot|sidebar merge skipped/i.test(pyText)) {
+    return false;
+  }
+  return false;
+}
+
+function sidebarVisibleOnDiskFromVerify(checks: VerifyCheck[]): boolean {
+  const globalHeaders = checks.find((c) => c.name === "global.composerHeaders");
+  if (globalHeaders?.status === "OK") {
+    return true;
+  }
+  const wsHeaders = checks.find((c) => c.name.startsWith("workspace.composerHeaders"));
+  return wsHeaders?.status === "OK";
+}
 
 let pythonInterpreterMemo: string | null | undefined;
 
@@ -255,7 +281,7 @@ export async function restoreChatBundle(
 
   const warnings: string[] = [];
   const verifyChecks: VerifyCheck[] = [];
-  const conversationId = bundle.conversationId;
+  let conversationId = bundle.conversationId;
   let transcriptsWritten = 0;
   let storeWritten = false;
   let sidebarMerged = false;
@@ -391,7 +417,9 @@ export async function restoreChatBundle(
     }
     transcriptsWritten = remappedBundle.transcriptFiles.length;
     storeWritten = !!remappedBundle.storeSnapshot;
-    sidebarMerged = true;
+    const pyText = `${diskOutcome.stdout}\n${diskOutcome.stderr}`;
+    const sidebarMergedMatch = pyText.match(/sidebar_merged=(true|false)/i);
+    sidebarMerged = parseSidebarMergedFromPythonOutput(pyText);
     if (!storeWritten && !dryRun) {
       const golden = await ensureGoldenStoreDb(
         context,
@@ -435,6 +463,39 @@ export async function restoreChatBundle(
       );
     }
 
+    const sidebarOnDisk = sidebarVisibleOnDiskFromVerify(diskChecks);
+    const hadPythonSidebarFlag = sidebarMerged;
+    if (
+      !sidebarMerged &&
+      sidebarOnDisk &&
+      remappedBundle.sidebarSnapshot != null &&
+      typeof remappedBundle.sidebarSnapshot === "object"
+    ) {
+      sidebarMerged = true;
+    }
+
+    if (sidebarMerged && remappedBundle.sidebarSnapshot) {
+      const writeback = await applyImmediateSidebarWriteback(remappedBundle, wsCtx);
+      // #region agent log
+      agentDebugLog("H1", "chat-persistence-restore.ts:post-writeback", "immediate sidebar writeback", {
+        conversationId,
+        mergedWorkspace: writeback.mergedWorkspace,
+        mergedGlobal: writeback.mergedGlobal,
+        workspaceStorageId: wsCtx.workspaceStorageId,
+      });
+      // #endregion
+      await probeComposerSidebarDiskState(
+        conversationId,
+        wsCtx,
+        "chat-persistence-restore.ts:post-writeback-disk",
+        "H2"
+      );
+      await queueSidebarWriteback(context, remappedBundle, wsCtx, {
+        activate: options.activate === true,
+      });
+    } else {
+    }
+
     if (options.activate) {
       if (!storeWritten) {
         warnings.push(
@@ -466,6 +527,12 @@ export async function restoreChatBundle(
         ok: activationOutcome.ok,
         detail: activationOutcome.stagedOnly ? "staged-only" : undefined,
       });
+      await probeComposerSidebarDiskState(
+        conversationId,
+        wsCtx,
+        "chat-persistence-restore.ts:post-activation-disk",
+        "H4"
+      );
       if (
         options.activateStrict &&
         activationOutcome.stagedOnly &&
@@ -556,26 +623,12 @@ export async function restoreChatBundle(
   return result;
 }
 
-export async function loadChat(
+export async function enrichImportResultWithBundleInspect(
   context: vscode.ExtensionContext,
   bundlePath: string,
-  progress: vscode.Progress<{ message?: string; increment?: number }>,
-  restoreOptions: RestoreChatBundleOptions
+  bundle: ChatBundle,
+  result: LoadChatResult
 ): Promise<LoadChatResult> {
-  progress.report({ message: "Reading bundle..." });
-  const raw = await fs.readFile(bundlePath, "utf-8");
-  const parsed = parseChatBundleOrCollection(raw);
-  let bundle: ChatBundle;
-  if (parsed.kind === "single") {
-    bundle = parsed.bundle;
-  } else {
-    const picked = await pickBundleFromCollection(parsed.collection);
-    if (!picked) {
-      throw new Error("Chat import cancelled.");
-    }
-    bundle = picked;
-  }
-  const result = await restoreChatBundle(context, bundle, progress, restoreOptions);
   const extensionPath = context.extensionPath;
   try {
     const inspectOutcome = await runPythonBundleInspect({
@@ -605,6 +658,26 @@ export async function loadChat(
     );
   }
   return result;
+}
+
+export async function loadChat(
+  context: vscode.ExtensionContext,
+  bundlePath: string,
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  restoreOptions: RestoreChatBundleOptions
+): Promise<LoadChatResult> {
+  progress.report({ message: "Reading bundle..." });
+  const raw = await fs.readFile(bundlePath, "utf-8");
+  const parsed = parseChatBundleOrCollection(raw);
+  if (parsed.kind === "collection" && parsed.collection.bundles.length > 1) {
+    throw new Error(
+      "This file contains multiple conversations. Use Cursor Sync: Import Chat Bundle to import them."
+    );
+  }
+  const bundle =
+    parsed.kind === "single" ? parsed.bundle : parsed.collection.bundles[0]!;
+  const result = await restoreChatBundle(context, bundle, progress, restoreOptions);
+  return enrichImportResultWithBundleInspect(context, bundlePath, bundle, result);
 }
 
 export function resolveProjectsRoot(): string {

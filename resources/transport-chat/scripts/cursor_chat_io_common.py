@@ -39,6 +39,83 @@ def cursor_disk_kv_value_as_text(value: Any) -> str | None:
     return None
 
 
+def purge_disk_kv_for_conversation(
+    db_path: Path,
+    conversation_id: str,
+    *,
+    dry_run: bool = False,
+) -> tuple[int, list[str]]:
+    """Remove all cursorDiskKV rows for one composer before import merge (avoids stale bubbles)."""
+    warnings: list[str] = []
+    if not db_path.is_file():
+        return 0, warnings
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        keys = list_disk_kv_keys_for_conversation(conn, conversation_id)
+        if not keys:
+            return 0, warnings
+        if dry_run:
+            return len(keys), warnings
+        conn.execute("BEGIN IMMEDIATE;")
+        for key in keys:
+            conn.execute("DELETE FROM cursorDiskKV WHERE key = ?;", (key,))
+        conn.commit()
+        return len(keys), warnings
+    except sqlite3.Error as exc:
+        conn.rollback()
+        warnings.append(f"purge disk kv failed: {exc}")
+        return 0, warnings
+    finally:
+        conn.close()
+
+
+def probe_disk_kv_session_bindings(
+    db_path: Path, conversation_id: str
+) -> dict[str, Any]:
+    """Post-import probe: workspace on composerData and non-empty bubble requestIds."""
+    out: dict[str, Any] = {
+        "keyCount": 0,
+        "nonEmptyRequestIdCount": 0,
+        "composerWorkspaceId": None,
+        "sampleBubbleRequestId": None,
+    }
+    if not db_path.is_file():
+        return out
+    conn = sqlite3.connect(db_path, timeout=20)
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        keys = list_disk_kv_keys_for_conversation(conn, conversation_id)
+        out["keyCount"] = len(keys)
+        for key in keys:
+            try:
+                value = read_disk_kv_value(conn, key)
+            except sqlite3.DatabaseError:
+                continue
+            text = cursor_disk_kv_value_as_text(value)
+            if not text:
+                continue
+            try:
+                obj = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            if key == f"composerData:{conversation_id}":
+                wi = obj.get("workspaceIdentifier")
+                if isinstance(wi, dict):
+                    out["composerWorkspaceId"] = wi.get("id")
+            elif key.startswith(f"bubbleId:{conversation_id}:"):
+                rid = obj.get("requestId")
+                if rid:
+                    out["nonEmptyRequestIdCount"] += 1
+                    if out["sampleBubbleRequestId"] is None:
+                        out["sampleBubbleRequestId"] = rid
+    finally:
+        conn.close()
+    return out
+
+
 def list_disk_kv_keys_for_conversation(
     conn: sqlite3.Connection, conversation_id: str
 ) -> list[str]:
@@ -244,6 +321,55 @@ def resolve_chats_workspace_key(
     return "imported", warnings
 
 
+PARTIAL_STATE_STRIPPED = frozenset(
+    {"capabilities", "conversationActionManager", "agentSessionId"}
+)
+
+def agent_debug_log(
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict[str, Any],
+    run_id: str = "repro",
+) -> None:
+    log_path = os.environ.get("CURSOR_SYNC_DEBUG_LOG")
+    if not log_path:
+        return
+    try:
+        payload = {
+            "sessionId": os.environ.get("CURSOR_SYNC_DEBUG_SESSION", "debug"),
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+        with Path(log_path).open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except OSError:
+        pass
+
+
+def clear_session_binding_in_tree(value: Any) -> Any:
+    """Remove cloud/session bindings from composer payloads (any nesting depth)."""
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if k == "requestId":
+                out[k] = ""
+            elif k == "workspaceUris":
+                out[k] = []
+            elif k in PARTIAL_STATE_STRIPPED:
+                continue
+            else:
+                out[k] = clear_session_binding_in_tree(v)
+        return out
+    if isinstance(value, list):
+        return [clear_session_binding_in_tree(item) for item in value]
+    return value
+
+
 def stamp_workspace_identifier_on_headers(
     headers: dict[str, Any], conversation_id: str, workspace_identifier: dict[str, Any]
 ) -> dict[str, Any]:
@@ -258,10 +384,113 @@ def stamp_workspace_identifier_on_headers(
         if entry.get("composerId") != conversation_id:
             updated.append(entry)
             continue
-        row = dict(entry)
-        row["workspaceIdentifier"] = workspace_identifier
+        row = rebind_composer_record(entry, workspace_identifier)
         updated.append(row)
     return {**headers, "allComposers": updated}
+
+
+def rebind_composer_record(
+    record: dict[str, Any], workspace_identifier: dict[str, Any]
+) -> dict[str, Any]:
+    """Re-attach a composer row/blob to the destination workspace; drop source-session fields."""
+    cleared = clear_session_binding_in_tree(record)
+    if not isinstance(cleared, dict):
+        cleared = {}
+    row = dict(cleared)
+    row["workspaceIdentifier"] = workspace_identifier
+    return row
+
+
+def rebind_existing_conversation_disk_kv_keys(
+    db_path: Path,
+    conversation_id: str,
+    workspace_identifier: dict[str, Any] | None,
+    *,
+    dry_run: bool = False,
+) -> tuple[int, list[str]]:
+    """Rebind every cursorDiskKV row for this conversation in place (no DELETE)."""
+    warnings: list[str] = []
+    if not db_path.is_file():
+        return 0, warnings
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        keys = list_disk_kv_keys_for_conversation(conn, conversation_id)
+        if not keys:
+            return 0, warnings
+        if dry_run:
+            return len(keys), warnings
+        conn.execute("BEGIN IMMEDIATE;")
+        updated = 0
+        for key in keys:
+            try:
+                value = read_disk_kv_value(conn, key)
+            except sqlite3.DatabaseError as exc:
+                warnings.append(f"skip disk kv rebind {key}: {exc}")
+                continue
+            text = cursor_disk_kv_value_as_text(value)
+            if text is None:
+                continue
+            new_text = rebind_disk_kv_row_value(
+                key, text, conversation_id, workspace_identifier
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO cursorDiskKV(key, value) VALUES (?, ?);",
+                (key, new_text),
+            )
+            updated += 1
+        conn.commit()
+        return updated, warnings
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def rebind_disk_kv_row_value(
+    key: str,
+    value: str,
+    conversation_id: str,
+    workspace_identifier: dict[str, Any] | None,
+) -> str:
+    try:
+        obj = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    if not isinstance(obj, dict):
+        return value
+    if key != f"composerData:{conversation_id}" and not key.startswith(
+        f"bubbleId:{conversation_id}:"
+    ):
+        return value
+    obj = clear_session_binding_in_tree(obj)
+    if not isinstance(obj, dict):
+        return value
+    if key == f"composerData:{conversation_id}" and workspace_identifier:
+        obj = rebind_composer_record(obj, workspace_identifier)
+    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+
+
+def stamp_workspace_on_item_table_composer_data(
+    data: dict[str, Any],
+    conversation_id: str,
+    workspace_identifier: dict[str, Any],
+) -> dict[str, Any]:
+    """Rebind ItemTable composer.composerData payloads for the imported conversation."""
+    out = dict(data)
+    blob = out.get(conversation_id)
+    if isinstance(blob, dict):
+        out[conversation_id] = rebind_composer_record(blob, workspace_identifier)
+    composers = out.get("allComposers")
+    if isinstance(composers, list):
+        out["allComposers"] = [
+            rebind_composer_record(entry, workspace_identifier)
+            if isinstance(entry, dict) and entry.get("composerId") == conversation_id
+            else entry
+            for entry in composers
+        ]
+    return out
 
 
 def composer_data_for_focus(conversation_id: str, existing_raw: str | None) -> dict[str, Any]:
@@ -283,6 +512,19 @@ def composer_data_for_focus(conversation_id: str, existing_raw: str | None) -> d
 
 def global_state_db_path() -> Path:
     return cursor_config_root() / "globalStorage" / "state.vscdb"
+
+
+def sqlite_integrity_ok(db_path: Path) -> bool:
+    if not db_path.is_file():
+        return False
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.execute("PRAGMA busy_timeout=3000")
+        row = conn.execute("PRAGMA integrity_check").fetchone()
+        conn.close()
+        return bool(row and row[0] == "ok")
+    except sqlite3.Error:
+        return False
 
 
 def list_state_db_candidates() -> list[Path]:
@@ -411,11 +653,6 @@ def count_store_db_blobs(store_path: Path) -> int | None:
         return None
     finally:
         conn.close()
-
-PARTIAL_STATE_STRIPPED = frozenset(
-    {"capabilities", "conversationActionManager", "agentSessionId"}
-)
-
 
 def decode_store_db_index(store_bytes: bytes) -> dict[str, Any]:
     """Read meta key/value rows and blob count from store.db bytes (index only, no blob decode)."""
@@ -600,6 +837,14 @@ def bundle_to_partial_state(
     if rich:
         _merge_rich_composer_into_partial(partial, rich, cid)
 
+    wi_final = partial.get("workspaceIdentifier")
+    if not isinstance(wi_final, dict):
+        wi_final = workspace_identifier
+    cleared = clear_session_binding_in_tree(partial)
+    if isinstance(cleared, dict):
+        partial = cleared
+    if isinstance(wi_final, dict):
+        partial = rebind_composer_record(partial, wi_final)
     return partial
 
 def sidebar_snapshot_has_composer_data(bundle: dict[str, Any], conversation_id: str) -> bool:

@@ -1,4 +1,9 @@
 import * as vscode from "vscode";
+import {
+  loadComposerNameIndexForChatsWorkspaceKey,
+  loadGlobalComposerNameIndex,
+  resolveComposerConversationTitle,
+} from "./composer-title.js";
 import type { ChatBundle, ChatBundleDiskKvSnapshot } from "./chat-persistence.js";
 
 export function isDiskKvKeyInConversationScope(
@@ -208,19 +213,54 @@ export function defaultGlobalStorageFilename(timestamp: string, multi: boolean):
 
 export async function pickBundleFromCollection(
   collection: ChatBundlesCollection
-): Promise<ChatBundle | null> {
-  const pick = await vscode.window.showQuickPick(
-    collection.bundles.map((b) => ({
-      label: b.title,
-      description: b.conversationId,
-      detail: b.subtitle,
-    })),
-    {
-      title: "Select chat to import",
-      placeHolder: "This export contains multiple conversations",
-      ignoreFocusOut: true,
-    }
+): Promise<ChatBundle[] | null> {
+  const n = collection.bundles.length;
+  const workspaceIndex = await loadComposerNameIndexForChatsWorkspaceKey(
+    collection.sourceWorkspaceKey
   );
-  if (!pick?.description) return null;
-  return collection.bundles.find((b) => b.conversationId === pick.description) ?? null;
+  const globalIndex = await loadGlobalComposerNameIndex();
+  const items = await Promise.all(
+    collection.bundles.map(async (b) => {
+      const label = await resolveComposerConversationTitle({
+        conversationId: b.conversationId,
+        chatsWorkspaceKey: collection.sourceWorkspaceKey,
+        bundle: b,
+        workspaceIndex,
+        globalIndex,
+      });
+      return {
+        label,
+        description: b.conversationId,
+        detail: b.subtitle,
+        picked: true,
+      };
+    })
+  );
+  const picks = await vscode.window.showQuickPick(items, {
+    title: `Select conversations to import (${n} found)`,
+    placeHolder: "This export contains multiple conversations",
+    canPickMany: true,
+    ignoreFocusOut: true,
+  });
+  if (!picks?.length) return null;
+  const byId = new Map(collection.bundles.map((b) => [b.conversationId, b]));
+  const result: ChatBundle[] = [];
+  for (const pick of picks) {
+    if (!pick.description) continue;
+    const bundle = byId.get(pick.description);
+    if (bundle) result.push(bundle);
+  }
+  return result.length > 0 ? result : null;
+}
+
+export async function resolveBundlesFromParsedExport(
+  parsed: ParsedChatExport
+): Promise<ChatBundle[] | null> {
+  if (parsed.kind === "single") {
+    return [parsed.bundle];
+  }
+  if (parsed.collection.bundles.length === 1) {
+    return [parsed.collection.bundles[0]!];
+  }
+  return pickBundleFromCollection(parsed.collection);
 }

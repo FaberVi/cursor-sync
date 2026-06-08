@@ -119,6 +119,8 @@ class TestPartialState(unittest.TestCase):
             "modelConfig": {"modelName": "default"},
             "agentSessionId": "must-strip",
             "capabilities": {"x": 1},
+            "requestId": "source-session-request-must-clear",
+            "workspaceUris": ["/old/workspace"],
         }
         bundle = {
             "schemaVersion": 1,
@@ -165,6 +167,12 @@ class TestPartialState(unittest.TestCase):
         self.assertEqual(partial["status"], "completed")
         self.assertNotIn("agentSessionId", partial)
         self.assertNotIn("capabilities", partial)
+        self.assertEqual(partial.get("requestId"), "")
+        self.assertEqual(partial.get("workspaceUris"), [])
+        self.assertEqual(
+            partial.get("workspaceIdentifier", {}).get("id"),
+            WORKSPACE_IDENTIFIER["id"],
+        )
 
         index = decode_store_db_index(store_raw)
         self.assertEqual(index["blobCount"], 2)

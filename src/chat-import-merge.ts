@@ -9,6 +9,8 @@ import {
   mergeComposerDataAdditive,
   mergeComposerHeadersChain,
 } from "./composer-merge.js";
+import { clearSessionBindingInTree } from "./chat-partial-state.js";
+import { agentDebugLog } from "./debug-session-log.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
 const { querySqliteRows, runSqliteScript, listGlobalStateVscdbPaths, resolveStateDbCandidates } =
@@ -130,6 +132,7 @@ export function headersPayloadForImport(bundle: ChatBundle): { allComposers: Arr
   }
 
   const payloads: Array<Record<string, unknown>> = [];
+  let snapshotHasName = false;
   const snap = bundle.sidebarSnapshot;
   if (snap && typeof snap === "object" && !Array.isArray(snap)) {
     const rawHeaders = snap.composerHeaders;
@@ -137,10 +140,26 @@ export function headersPayloadForImport(bundle: ChatBundle): { allComposers: Arr
       const filtered = filterComposerHeadersForConversation(rawHeaders as Record<string, unknown>, cid);
       if (filtered.allComposers.length > 0) {
         payloads.push(filtered);
+        const row = filtered.allComposers[0]!;
+        const name = row.name;
+        snapshotHasName = typeof name === "string" && name.trim().length > 0;
       }
     }
   }
-  payloads.push(deriveHeadersFromBundle(bundle));
+  const derived = deriveHeadersFromBundle(bundle);
+  if (snapshotHasName) {
+    payloads.push({
+      allComposers: derived.allComposers.map((row) => {
+        if (row.composerId !== cid) {
+          return row;
+        }
+        const { name: _name, ...rest } = row;
+        return rest;
+      }),
+    });
+  } else {
+    payloads.push(derived);
+  }
   return mergeComposerHeadersChain(undefined, payloads);
 }
 
@@ -194,6 +213,45 @@ export function pinComposerAsMostRecent(
   return { allComposers: updated };
 }
 
+export function rebindComposerRecord(
+  record: Record<string, unknown>,
+  workspaceIdentifier: WorkspaceIdentifier,
+  nowMs: number = Date.now()
+): Record<string, unknown> {
+  const cleared = clearSessionBindingInTree(record);
+  const row =
+    cleared && typeof cleared === "object" && !Array.isArray(cleared)
+      ? (cleared as Record<string, unknown>)
+      : {};
+  const out: Record<string, unknown> = {
+    ...row,
+    workspaceIdentifier,
+    createdAt: nowMs,
+    lastUpdatedAt: nowMs,
+    lastOpenedAt: nowMs,
+  };
+  if ("conversationCheckpointLastUpdatedAt" in out) {
+    out.conversationCheckpointLastUpdatedAt = nowMs;
+  }
+  const headers = out.fullConversationHeadersOnly;
+  if (Array.isArray(headers)) {
+    out.fullConversationHeadersOnly = headers.map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return entry;
+      }
+      return {
+        ...entry,
+        workspaceIdentifier,
+        createdAt: nowMs,
+        lastUpdatedAt: nowMs,
+        lastOpenedAt: nowMs,
+        conversationCheckpointLastUpdatedAt: nowMs,
+      };
+    });
+  }
+  return out;
+}
+
 export function stampWorkspaceIdentifierOnHeaders(
   headers: { allComposers: Array<Record<string, unknown>> },
   conversationId: string,
@@ -210,7 +268,8 @@ export function stampWorkspaceIdentifierOnHeaders(
     if (entry.composerId !== conversationId) {
       return entry;
     }
-    return { ...entry, workspaceIdentifier };
+    const ts = typeof entry.lastUpdatedAt === "number" ? entry.lastUpdatedAt : Date.now();
+    return rebindComposerRecord(entry, workspaceIdentifier, ts);
   });
   return { allComposers: updated };
 }
@@ -242,6 +301,84 @@ export function composerDataForFocus(
 
 function randomB64Key(numBytes = 32): string {
   return randomBytes(numBytes).toString("base64");
+}
+
+export function composerDataEntryIsRich(entry: Record<string, unknown>): boolean {
+  const headers = entry.fullConversationHeadersOnly;
+  if (Array.isArray(headers) && headers.length > 0) {
+    return true;
+  }
+  const map = entry.conversationMap;
+  return !!map && typeof map === "object" && !Array.isArray(map) && Object.keys(map).length > 0;
+}
+
+export function composerDataEntryHasConversationSignals(
+  entry: Record<string, unknown>
+): boolean {
+  if (composerDataEntryIsRich(entry)) {
+    return true;
+  }
+  const cs = entry.conversationState;
+  return typeof cs === "string" && cs.startsWith("~") && cs.length > 1;
+}
+
+function parseComposerDataEntryValue(raw: unknown): Record<string, unknown> | null {
+  const asStr =
+    typeof raw === "string" ? raw : raw != null ? JSON.stringify(raw) : undefined;
+  if (!asStr?.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(asStr) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function readComposerDataEntryFromDiskKv(
+  dbPath: string,
+  conversationId: string
+): Promise<Record<string, unknown> | null> {
+  const keyLit = escapeSqlLiteral(`composerData:${conversationId}`);
+  const rows = await querySqliteRows(
+    dbPath,
+    `SELECT value FROM cursorDiskKV WHERE key = '${keyLit}' LIMIT 1;`,
+    { retries: 2 }
+  );
+  return parseComposerDataEntryValue(rows[0]?.value);
+}
+
+export async function readRichComposerDataEntryFromStateDb(
+  dbPath: string,
+  conversationId: string
+): Promise<Record<string, unknown> | null> {
+  const fromDiskKv = await readComposerDataEntryFromDiskKv(dbPath, conversationId);
+  if (fromDiskKv && composerDataEntryHasConversationSignals(fromDiskKv)) {
+    return fromDiskKv;
+  }
+
+  const rows = await querySqliteRows(
+    dbPath,
+    "SELECT value FROM ItemTable WHERE key = 'composer.composerData' LIMIT 1;",
+    { retries: 2 }
+  );
+  const parsed = parseComposerDataEntryValue(rows[0]?.value);
+  if (!parsed) {
+    return fromDiskKv;
+  }
+  const filtered = filterComposerDataForConversation(parsed, conversationId);
+  const entry = filtered[conversationId];
+  if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+    const rec = entry as Record<string, unknown>;
+    if (composerDataEntryHasConversationSignals(rec)) {
+      return rec;
+    }
+  }
+  return fromDiskKv;
 }
 
 export function buildMinimalComposerDataForOpen(
@@ -327,7 +464,8 @@ export function prepareHeadersForImport(
 export function prepareComposerDataForImport(
   existingDataRaw: string | undefined,
   bundle: ChatBundle,
-  conversationId: string
+  conversationId: string,
+  workspaceIdentifier: WorkspaceIdentifier
 ): Record<string, unknown> {
   let merged = composerDataForFocus(conversationId, existingDataRaw);
   const snap = bundle.sidebarSnapshot;
@@ -339,6 +477,19 @@ export function prepareComposerDataForImport(
         merged = mergeComposerDataAdditive(JSON.stringify(merged), [extra]);
       }
     }
+  }
+  const blob = merged[conversationId];
+  if (!blob || typeof blob !== "object" || Array.isArray(blob)) {
+    merged[conversationId] = buildMinimalComposerDataForOpen(
+      conversationId,
+      bundle.title ?? conversationId,
+      workspaceIdentifier
+    );
+  } else {
+    merged[conversationId] = rebindComposerRecord(
+      blob as Record<string, unknown>,
+      workspaceIdentifier
+    );
   }
   return merged;
 }
@@ -400,6 +551,42 @@ export async function mergeTargetsForImport(
 /**
  * @deprecated No longer called from restoreChatBundle; Python handles sidebar writes. Retained for tests only.
  */
+export async function repairComposerDataAfterActivation(
+  dbPath: string,
+  conversationId: string,
+  partial: Record<string, unknown>
+): Promise<void> {
+  const rows = await querySqliteRows(
+    dbPath,
+    "SELECT value FROM ItemTable WHERE key = 'composer.composerData' LIMIT 1;",
+    { retries: 2 }
+  );
+  const rowValue = rows[0]?.value;
+  let existingRaw: string | undefined;
+  if (rowValue !== undefined && rowValue !== null) {
+    existingRaw = typeof rowValue === "string" ? rowValue : JSON.stringify(rowValue);
+  }
+  let merged: Record<string, unknown>;
+  try {
+    const parsed = existingRaw ? JSON.parse(existingRaw) : {};
+    merged =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+  } catch {
+    merged = {};
+  }
+  merged[conversationId] = partial;
+  const mergedStr = JSON.stringify(merged);
+  const valLit = escapeSqlLiteral(mergedStr);
+  const script = [
+    "BEGIN IMMEDIATE;",
+    `INSERT INTO ItemTable (key, value) VALUES ('composer.composerData', '${valLit}') ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
+    "COMMIT;"
+  ].join("\n");
+  await runSqliteScript(dbPath, script);
+}
+
 export async function mergeSidebarIntoStateDb(
   dbPath: string,
   bundle: ChatBundle,
@@ -440,7 +627,6 @@ export async function mergeSidebarIntoStateDb(
       existingDataRaw = typeof value === "string" ? value : JSON.stringify(value);
     }
   }
-
   const mergedHeaders = prepareHeadersForImport(
     existingHeadersRaw,
     bundle,
@@ -449,7 +635,34 @@ export async function mergeSidebarIntoStateDb(
     { pinRecent }
   );
 
-  const mergedData = prepareComposerDataForImport(existingDataRaw, bundle, cid);
+  const mergedData = prepareComposerDataForImport(
+    existingDataRaw,
+    bundle,
+    cid,
+    workspaceIdentifier
+  );
+  const mergedBlob = mergedData[cid];
+  if (mergedBlob && typeof mergedBlob === "object" && !Array.isArray(mergedBlob)) {
+    const blobRec = mergedBlob as Record<string, unknown>;
+    const headerRow = mergedHeaders.allComposers.find((e) => e.composerId === cid);
+    // #region agent log
+    agentDebugLog("H3", "chat-import-merge.ts:mergeSidebar", "merged sidebar payload for state db", {
+      dbPath,
+      conversationId: cid,
+      headerWorkspaceId: workspaceIdentifier.id,
+      blobWorkspaceId:
+        blobRec.workspaceIdentifier &&
+        typeof blobRec.workspaceIdentifier === "object" &&
+        !Array.isArray(blobRec.workspaceIdentifier)
+          ? (blobRec.workspaceIdentifier as Record<string, unknown>).id ?? null
+          : null,
+      headerName: headerRow?.name ?? null,
+      blobName: blobRec.name ?? null,
+      headerCreatedAt: headerRow?.createdAt ?? null,
+      blobCreatedAt: blobRec.createdAt ?? null,
+    });
+    // #endregion
+  }
 
   const scriptParts: string[] = ["BEGIN IMMEDIATE;"];
 
