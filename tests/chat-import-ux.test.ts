@@ -172,6 +172,9 @@ describe("chat-import-ux", () => {
       "chat-load"
     );
     expect(executeCommandMock).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
+    expect(showInformationMessageMock).toHaveBeenCalledWith(
+      expect.stringContaining('Chat "c1" loaded.')
+    );
   });
 
   it("presentChatImportOutcome does not offer Reload Window for chat bundle import", async () => {

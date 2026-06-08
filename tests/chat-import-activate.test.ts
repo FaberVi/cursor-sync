@@ -179,6 +179,12 @@ describe("chat-import-activate", () => {
 
     const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
     const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+    (manifest.partialState as Record<string, unknown>).conversationMap = {
+      "bubble-1": { type: 1 },
+    };
+    (manifest.partialState as Record<string, unknown>).fullConversationHeadersOnly = [
+      { bubbleId: "bubble-1", type: 1 },
+    ];
 
     const outcome = await runComposerActivation(manifest, { paths });
 
@@ -208,6 +214,35 @@ describe("chat-import-activate", () => {
     expect(executeSpy).not.toHaveBeenCalledWith(
       CREATE_NEW_COMPOSER_COMMAND_ID,
       expect.anything()
+    );
+  });
+
+  it("runComposerActivation falls back to createComposer when createNew fails", async () => {
+    const executeSpy = vi.fn(async (command: string) => {
+      if (command === CREATE_NEW_COMPOSER_COMMAND_ID) {
+        throw new Error("createNew rejected");
+      }
+      return { composerId: FIXTURE_CID };
+    });
+    __setRegisteredCommands([CREATE_NEW_COMPOSER_COMMAND_ID, CREATE_COMPOSER_COMMAND_ID]);
+    __setExecuteCommandImpl(executeSpy);
+
+    const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
+    const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+    (manifest.partialState as Record<string, unknown>).conversationMap = {
+      "bubble-1": { type: 1 },
+    };
+    (manifest.partialState as Record<string, unknown>).fullConversationHeadersOnly = [
+      { bubbleId: "bubble-1", type: 1 },
+    ];
+
+    const outcome = await runComposerActivation(manifest, { paths });
+
+    expect(outcome.ok).toBe(true);
+    expect(executeSpy).toHaveBeenCalledWith(
+      CREATE_COMPOSER_COMMAND_ID,
+      expect.anything(),
+      manifest.createComposerOptions
     );
   });
 
@@ -253,13 +288,39 @@ describe("chat-import-activate", () => {
 
     const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
     const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+    (manifest.partialState as Record<string, unknown>).conversationMap = {
+      "bubble-1": { type: 1 },
+    };
+    (manifest.partialState as Record<string, unknown>).fullConversationHeadersOnly = [
+      { bubbleId: "bubble-1", type: 1 },
+    ];
 
     await runComposerActivation(manifest, { paths });
 
     expect(executeSpy).toHaveBeenCalledWith(
       CREATE_COMPOSER_COMMAND_ID,
-      manifest.partialState,
+      expect.objectContaining({
+        conversationMap: { "bubble-1": { type: 1 } },
+        fullConversationHeadersOnly: [{ bubbleId: "bubble-1", type: 1 }],
+      }),
       manifest.createComposerOptions
+    );
+  });
+
+  it("runComposerActivation skips composer.createComposer when partial state has no conversation content", async () => {
+    const executeSpy = vi.fn(async () => undefined);
+    __setRegisteredCommands([CREATE_COMPOSER_COMMAND_ID, "composer.openComposer"]);
+    __setExecuteCommandImpl(executeSpy);
+
+    const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
+    const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+
+    await runComposerActivation(manifest, { paths, stagePending: false });
+
+    expect(executeSpy).not.toHaveBeenCalledWith(
+      CREATE_COMPOSER_COMMAND_ID,
+      expect.anything(),
+      expect.anything()
     );
   });
 
@@ -313,6 +374,12 @@ describe("chat-import-activate", () => {
 
     const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx);
     const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+    (manifest.partialState as Record<string, unknown>).conversationMap = {
+      "bubble-1": { type: 1 },
+    };
+    (manifest.partialState as Record<string, unknown>).fullConversationHeadersOnly = [
+      { bubbleId: "bubble-1", type: 1 },
+    ];
 
     const outcome = await runComposerActivation(manifest, { paths });
 

@@ -19,11 +19,20 @@ import {
 import { getLogger } from "./diagnostics.js";
 import { resolveSyncRoots } from "./paths.js";
 import { requireWorkspaceContext } from "./chat-workspace-context.js";
-import { probeComposerSidebarDiskState } from "./chat-import-disk-probe.js";
-import { agentDebugLog } from "./debug-session-log.js";
 
 const STORAGE_KEY = "cursorSync.pendingSidebarWriteback";
 const PENDING_DIR = path.join(os.homedir(), ".cursor", "import-activation", "sidebar-pending");
+const COMPOSER_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function resolvePendingBundlePath(bundlePath: string): string | null {
+  const resolved = path.resolve(bundlePath);
+  const pendingRoot = path.resolve(PENDING_DIR);
+  if (resolved === pendingRoot || !resolved.startsWith(`${pendingRoot}${path.sep}`)) {
+    return null;
+  }
+  return resolved;
+}
 
 interface PendingSidebarWritebackEntry {
   conversationId: string;
@@ -79,7 +88,7 @@ export async function queueSidebarWriteback(
   options?: { activate?: boolean }
 ): Promise<void> {
   const conversationId = bundle.conversationId?.trim();
-  if (!conversationId || !bundle.sidebarSnapshot) {
+  if (!conversationId || !COMPOSER_ID_RE.test(conversationId) || !bundle.sidebarSnapshot) {
     return;
   }
   await fs.mkdir(PENDING_DIR, { recursive: true });
@@ -95,12 +104,10 @@ export async function queueSidebarWriteback(
     activate: options?.activate === true,
   };
 
-  let pendingCount = 1;
   if (context.globalState) {
     const existing = context.globalState.get<PendingSidebarWriteback>(STORAGE_KEY);
     const entries = (existing?.entries ?? []).filter((e) => e.conversationId !== conversationId);
     entries.push(entry);
-    pendingCount = entries.length;
     await context.globalState.update(STORAGE_KEY, {
       entries,
       queuedAt: new Date().toISOString(),
@@ -116,25 +123,24 @@ export async function flushPendingSidebarWriteback(
   }
   const pending = context.globalState.get<PendingSidebarWriteback>(STORAGE_KEY);
   if (!pending?.entries.length) {
-    // #region agent log
-    agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-empty", "no pending writeback on activate", {});
-    // #endregion
     return false;
   }
-  // #region agent log
-  agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-start", "flush pending writeback on activate", {
-    pendingCount: pending.entries.length,
-    conversationIds: pending.entries.map((e) => e.conversationId),
-  });
-  // #endregion
   const logger = getLogger();
   let applied = false;
   const remainingEntries: PendingSidebarWritebackEntry[] = [];
 
   for (const entry of pending.entries) {
+    const safeBundlePath = resolvePendingBundlePath(entry.bundlePath);
+    if (!safeBundlePath || !COMPOSER_ID_RE.test(entry.conversationId)) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back skipped (invalid pending entry): conversationId=${entry.conversationId}`
+      );
+      continue;
+    }
+
     let bundle: ChatBundle;
     try {
-      const raw = await fs.readFile(entry.bundlePath, "utf8");
+      const raw = await fs.readFile(safeBundlePath, "utf8");
       bundle = JSON.parse(raw) as ChatBundle;
     } catch (err) {
       logger.appendLine(
@@ -193,12 +199,12 @@ export async function flushPendingSidebarWriteback(
         await enrichManifestPartialStateFromDisk(manifest, entry.workspaceStorageId);
         const activation = await runComposerActivation(manifest, {
           stagePending: false,
-          acceptOpenWithoutHandle: true,
+          acceptOpenWithoutHandle: false,
           log: (line) =>
             logger.appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`),
         });
+        activationOk = activation.ok;
         if (activation.ok) {
-          activationOk = true;
           const dbPath = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
           await repairComposerDataAfterActivation(dbPath, entry.conversationId, manifest.partialState as Record<string, unknown>);
           const { cursorUser } = resolveSyncRoots();
@@ -206,12 +212,6 @@ export async function flushPendingSidebarWriteback(
           await repairComposerDataAfterActivation(globalDb, entry.conversationId, manifest.partialState as Record<string, unknown>);
           applied = true;
         }
-        await probeComposerSidebarDiskState(
-          entry.conversationId,
-          wsCtx,
-          "chat-import-sidebar-writeback.ts:post-flush-activation",
-          "H5"
-        );
       } catch (err) {
         logger.appendLine(
           `[${new Date().toISOString()}] [chat-restore-debug] sidebar activation failed conversationId=${entry.conversationId}: ${err instanceof Error ? err.message : String(err)}`
@@ -224,10 +224,8 @@ export async function flushPendingSidebarWriteback(
     }
 
     try {
-      await fs.unlink(entry.bundlePath);
-    } catch {
-      /* ignore */
-    }
+      await fs.unlink(safeBundlePath);
+    } catch {}
   }
 
   if (remainingEntries.length > 0) {
@@ -238,13 +236,5 @@ export async function flushPendingSidebarWriteback(
   } else {
     await context.globalState.update(STORAGE_KEY, undefined);
   }
-
-  // #region agent log
-  agentDebugLog("H5", "chat-import-sidebar-writeback.ts:flush-done", "sidebar writeback flush complete", {
-    applied,
-    conversationIds: pending.entries.map((e) => e.conversationId),
-  });
-  // #endregion
-
   return applied;
 }
