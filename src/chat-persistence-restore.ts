@@ -57,8 +57,6 @@ import {
   applyImmediateSidebarWriteback,
   queueSidebarWriteback,
 } from "./chat-import-sidebar-writeback.js";
-import { probeComposerSidebarDiskState } from "./chat-import-disk-probe.js";
-import { agentDebugLog } from "./debug-session-log.js";
 const { resolveChatsRoot } = __chatPersistenceInternals;
 
 function parseSidebarMergedFromPythonOutput(pyText: string): boolean {
@@ -475,21 +473,7 @@ export async function restoreChatBundle(
     }
 
     if (sidebarMerged && remappedBundle.sidebarSnapshot) {
-      const writeback = await applyImmediateSidebarWriteback(remappedBundle, wsCtx);
-      // #region agent log
-      agentDebugLog("H1", "chat-persistence-restore.ts:post-writeback", "immediate sidebar writeback", {
-        conversationId,
-        mergedWorkspace: writeback.mergedWorkspace,
-        mergedGlobal: writeback.mergedGlobal,
-        workspaceStorageId: wsCtx.workspaceStorageId,
-      });
-      // #endregion
-      await probeComposerSidebarDiskState(
-        conversationId,
-        wsCtx,
-        "chat-persistence-restore.ts:post-writeback-disk",
-        "H2"
-      );
+      await applyImmediateSidebarWriteback(remappedBundle, wsCtx);
       await queueSidebarWriteback(context, remappedBundle, wsCtx, {
         activate: options.activate === true,
       });
@@ -527,12 +511,6 @@ export async function restoreChatBundle(
         ok: activationOutcome.ok,
         detail: activationOutcome.stagedOnly ? "staged-only" : undefined,
       });
-      await probeComposerSidebarDiskState(
-        conversationId,
-        wsCtx,
-        "chat-persistence-restore.ts:post-activation-disk",
-        "H4"
-      );
       if (
         options.activateStrict &&
         activationOutcome.stagedOnly &&
