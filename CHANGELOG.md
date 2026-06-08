@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## v0.8.0
+
+### Added
+- **Inline chat activation** via `composer.createNew` with disk-hydrated `partialState` when the manifest is empty (`enrichManifestPartialStateFromDisk`, `partialStateForCreateNewCommand`).
+- **`repairComposerDataAfterActivation`** re-persists hydrated `conversationMap`, headers, `conversationState`, encryption keys, and `status: completed` when the IDE clobbers `composerData` after activation.
+- **`chat-import-disk-probe.ts`**: shared post-import and post-reload Composer sidebar disk probes (global and workspace `state.vscdb`).
+- **Composer export titles** from `composer.composerHeaders` / `allComposers[].name` via `resolveComposerConversationTitle` (snapshot header name wins over transcript snippet).
+- **`clearSessionBindingInTree`**: strips `requestId`, `workspaceUris`, and session-only fields from imported composer records and partial state.
+- **`readRichComposerDataEntryFromStateDb`** and **`applyRichComposerEntryToPartialState`** for protobuf-backed conversation hydration before `createNew`.
+- Tests: `chat-bundle-title.test.ts`; expanded activation, merge, partial-state, and gist-import coverage.
+
+### Changed
+- Import rebind stamps destination `workspaceIdentifier` and fresh timestamps on sidebar headers and `composerData` blobs (`rebindComposerRecord`).
+- `headersPayloadForImport` preserves snapshot `name` when non-empty instead of overwriting with `bundle.title`.
+- Activation partial state keeps destination `workspaceIdentifier`, header `name`, and timestamps after rich disk hydration.
+- Post-import UX records last-import probe ids in `globalState` and probes disk state before optional reload; extension activate replays probe after pending sidebar writeback flush.
+- Python disk import: `persist_disk_kv_rows_to_db` with integrity-check skip path; optional purge gate for `cursorDiskKV` rows.
+- `chat-persistence-restore.ts` delegates sidebar disk probing to the shared probe module.
+
+### Fixed
+- Empty `partialState` passed to `composer.createNew` no longer wipes disk-restored chats.
+- Imported Composer chats no longer retain source `requestId` or `workspaceUris` bindings.
+- Gist import tests mock `extensionContext.globalState` for post-import history and probe paths.
+- Chat-import-merge golden fixtures align with timestamp stamping on header and composer-data rebind.
+
 ## v0.7.6
 
 ### Added
