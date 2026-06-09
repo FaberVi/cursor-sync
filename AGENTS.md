@@ -27,3 +27,36 @@
 - Keep `package-lock.json` version aligned with `package.json` on releases; `.worktrees` belongs in `.gitignore`.
 - Sidebar UX is webview-based with Sync, Chats, and Settings tabs (`src/sidebar/`). `refreshSidebar()` updates that webview only, not Cursor's native Composer history list. Native Composer history reads global `composer.composerHeaders` → `allComposers[]` filtered by `workspaceIdentifier.id` (workspace-only merge leaves imports invisible). Post-import `queueSidebarWriteback` stages pending entries (`~/.cursor/import-activation/sidebar-pending/`); `flushPendingSidebarWriteback` replays on `extension.activate`. Do not flush pending writeback before autoreload—it clears the queue and breaks post-reload native sidebar replay. Gist/local chat paths use native JSON (`cursor-chat.json`, `cursorSync.exportChatBundle` / `restoreNativeChatsBatch`). Composer titles come from `allComposers[].name`; `buildChatBundle` sets `bundle.title` via `resolveComposerConversationTitle` (snapshot header name wins over transcript), and `headersPayloadForImport` preserves snapshot `name` when non-empty instead of letting `bundle.title` overwrite it. See `.cursor/plans/detective-composer-chat-title.plan.md`, `.cursor/plans/detective-chat-import-sidebar.plan.md`, and `.cursor/plans/detective-cross-workspace-chat-import.plan.md`.
 - v0.7.5+ optional client-side encryption for chat Gist files (`cursorSync.chatGist.encrypt`, `cursorSync.setChatEncryptionPassword`, Argon2id + AES-256-GCM via `hash-wasm`); plaintext kinds `cursor-chat` / `cursor-chat-collection` in v0.8.0+.
+
+## Cursor Cloud specific instructions
+
+This repo is a **VS Code/Cursor extension** (not a standalone web app). Cloud agents can fully verify the dev toolchain with npm; running the Extension Development Host (F5) requires a local Cursor/VS Code GUI.
+
+### Toolchain
+
+- **Node.js 20+** and **npm** (`package-lock.json`; use `npm ci`).
+- **Python 3** on PATH for repo `tests/` (`python3 -m unittest discover -s tests`) and bundled `resources/transport-chat/scripts/` (stdlib only).
+- **pytest** is optional — only needed for `resources/transport-chat/tests/` (not run in CI).
+
+### Standard commands
+
+| Action | Command |
+|--------|---------|
+| Install | `npm ci` |
+| Lint | `npm run lint` (`tsc --noEmit`) |
+| Test | `npm test` (Vitest, 369 tests) |
+| Python tests | `python3 -m unittest discover -s tests -p 'test_*.py' -v` |
+| Build | `npm run build` → `dist/extension.js` |
+| Watch | `npm run watch` (esbuild; pair with F5 locally) |
+| Package | `npm run package` → `cursor-sync-<version>.vsix` |
+
+### Running the extension
+
+- **Local IDE:** `.vscode/launch.json` — **Run Extension** (preLaunchTask `watch-extension`) or **Run Extension (build once)**.
+- **Cloud VM:** No headless extension host; use `npm test` + `npm run build`/`package` as the automated verification path. GitHub Gist sync E2E needs a PAT via **Cursor Sync: Configure GitHub** in a running IDE.
+
+### Gotchas
+
+- `npm run package` warns about missing `LICENSE` file; harmless for dev builds.
+- Some Vitest cases spawn `python3` for SQLite/chat disk helpers; ensure Python 3 is installed.
+- Do not add `npm run watch`, `npm run dev`, or test commands to the VM update script — only dependency refresh (`npm ci`).
