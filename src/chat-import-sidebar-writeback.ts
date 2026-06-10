@@ -62,23 +62,15 @@ export async function applyImmediateSidebarWriteback(
     return { mergedWorkspace: false, mergedGlobal: false };
   }
   const wi = wsCtx.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
-  const dbPaths = [
-    { label: "workspace", path: stateDbPathForWorkspaceStorageId(wsCtx.workspaceStorageId) },
-    { label: "global", path: globalStateDbPath() },
-  ];
-  let mergedWorkspace = false;
-  let mergedGlobal = false;
-  for (const { label, path: dbPath } of dbPaths) {
-    const { merged } = await mergeSidebarIntoStateDb(dbPath, bundle, wi, {
-      pinRecent: true,
-    });
-    if (label === "workspace") {
-      mergedWorkspace = merged;
-    } else {
-      mergedGlobal = merged;
-    }
-  }
-  return { mergedWorkspace, mergedGlobal };
+  const workspaceDb = stateDbPathForWorkspaceStorageId(wsCtx.workspaceStorageId);
+  const globalDb = globalStateDbPath();
+  const workspaceResult = await mergeSidebarIntoStateDb(workspaceDb, bundle, wi, {
+    pinRecent: true,
+  });
+  const globalResult = await mergeSidebarIntoStateDb(globalDb, bundle, wi, {
+    pinRecent: true,
+  });
+  return { mergedWorkspace: workspaceResult.merged, mergedGlobal: globalResult.merged };
 }
 
 export async function queueSidebarWriteback(
@@ -150,25 +142,20 @@ export async function flushPendingSidebarWriteback(
       continue;
     }
 
-    const dbTargets = [
-      { label: "workspace" as const, path: stateDbPathForWorkspaceStorageId(entry.workspaceStorageId) },
-      { label: "global" as const, path: globalStateDbPath() },
+    const wi = entry.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
+    const mergeOpts = { pinRecent: true as const };
+    const dbPaths = [
+      stateDbPathForWorkspaceStorageId(entry.workspaceStorageId),
+      globalStateDbPath(),
     ];
+    const mergeOk = [false, false];
 
-    let workspaceMergeOk = false;
-    let globalMergeOk = false;
-    for (const { label, path: dbPath } of dbTargets) {
+    for (let i = 0; i < dbPaths.length; i++) {
+      const dbPath = dbPaths[i];
       try {
-        const wi = entry.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
-        const { merged, warnings } = await mergeSidebarIntoStateDb(dbPath, bundle, wi, {
-          pinRecent: true,
-        });
+        const { merged, warnings } = await mergeSidebarIntoStateDb(dbPath, bundle, wi, mergeOpts);
         if (merged) {
-          if (label === "workspace") {
-            workspaceMergeOk = true;
-          } else {
-            globalMergeOk = true;
-          }
+          mergeOk[i] = true;
           applied = true;
           logger.appendLine(
             `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back merged db=${dbPath} conversationId=${entry.conversationId}`
@@ -186,7 +173,7 @@ export async function flushPendingSidebarWriteback(
       }
     }
 
-    if (!workspaceMergeOk || !globalMergeOk) {
+    if (!mergeOk[0] || !mergeOk[1]) {
       remainingEntries.push(entry);
       continue;
     }

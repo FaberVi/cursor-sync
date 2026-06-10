@@ -323,8 +323,9 @@ export function composerDataEntryHasConversationSignals(
 }
 
 function parseComposerDataEntryValue(raw: unknown): Record<string, unknown> | null {
-  const decoded = cursorDiskKvValueAsText(raw);
-  const asStr = decoded ?? (raw != null && typeof raw !== "string" ? JSON.stringify(raw) : undefined);
+  const asStr =
+    cursorDiskKvValueAsText(raw) ??
+    (raw != null && typeof raw !== "string" ? JSON.stringify(raw) : undefined);
   if (!asStr?.trim()) {
     return null;
   }
