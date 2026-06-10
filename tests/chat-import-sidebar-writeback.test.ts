@@ -130,6 +130,8 @@ describe("chat-import-sidebar-writeback", () => {
       },
     } as import("vscode").ExtensionContext;
     vi.clearAllMocks();
+    const { mergeSidebarIntoStateDb } = await import("../src/chat-import-merge.js");
+    vi.mocked(mergeSidebarIntoStateDb).mockResolvedValue({ merged: true, warnings: [] });
   });
 
   afterEach(async () => {
@@ -180,6 +182,33 @@ describe("chat-import-sidebar-writeback", () => {
       entries: Array<{ conversationId: string }>;
     };
     expect(remaining.entries).toHaveLength(1);
+  });
+
+  it("retains pending entries when workspace merge succeeds but global merge fails", async () => {
+    const { mergeSidebarIntoStateDb } = await import("../src/chat-import-merge.js");
+    vi.mocked(mergeSidebarIntoStateDb).mockImplementation(async (dbPath: string) => {
+      if (dbPath.includes("globalStorage")) {
+        return { merged: false, warnings: ["global db locked"] };
+      }
+      return { merged: true, warnings: [] };
+    });
+
+    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx);
+    const bundlePath = path.join(
+      tempHome,
+      ".cursor",
+      "import-activation",
+      "sidebar-pending",
+      `${FIXTURE_CID}.json`
+    );
+
+    await flushPendingSidebarWriteback(context);
+
+    const remaining = globalStateStore["cursorSync.pendingSidebarWriteback"] as {
+      entries: Array<{ conversationId: string }>;
+    };
+    expect(remaining.entries).toHaveLength(1);
+    await expect(fs.access(bundlePath)).resolves.toBeUndefined();
   });
 
   it("clears pending entries and deletes bundle file when activation succeeds", async () => {

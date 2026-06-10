@@ -155,7 +155,10 @@ export async function flushPendingSidebarWriteback(
       globalStateDbPath(),
     ];
 
-    let mergeSucceeded = false;
+    let workspaceMergeOk = false;
+    let globalMergeOk = false;
+    const globalDb = globalStateDbPath();
+    const workspaceDb = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
     for (const dbPath of dbPaths) {
       try {
         const wi = entry.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
@@ -163,7 +166,11 @@ export async function flushPendingSidebarWriteback(
           pinRecent: true,
         });
         if (merged) {
-          mergeSucceeded = true;
+          if (dbPath === globalDb) {
+            globalMergeOk = true;
+          } else if (dbPath === workspaceDb) {
+            workspaceMergeOk = true;
+          }
           applied = true;
           logger.appendLine(
             `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back merged db=${dbPath} conversationId=${entry.conversationId}`
@@ -181,7 +188,7 @@ export async function flushPendingSidebarWriteback(
       }
     }
 
-    if (!mergeSucceeded) {
+    if (!workspaceMergeOk || !globalMergeOk) {
       remainingEntries.push(entry);
       continue;
     }
