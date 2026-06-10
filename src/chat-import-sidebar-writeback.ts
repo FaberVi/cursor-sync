@@ -150,26 +150,24 @@ export async function flushPendingSidebarWriteback(
       continue;
     }
 
-    const dbPaths = [
-      stateDbPathForWorkspaceStorageId(entry.workspaceStorageId),
-      globalStateDbPath(),
+    const dbTargets = [
+      { label: "workspace" as const, path: stateDbPathForWorkspaceStorageId(entry.workspaceStorageId) },
+      { label: "global" as const, path: globalStateDbPath() },
     ];
 
     let workspaceMergeOk = false;
     let globalMergeOk = false;
-    const globalDb = globalStateDbPath();
-    const workspaceDb = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
-    for (const dbPath of dbPaths) {
+    for (const { label, path: dbPath } of dbTargets) {
       try {
         const wi = entry.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
         const { merged, warnings } = await mergeSidebarIntoStateDb(dbPath, bundle, wi, {
           pinRecent: true,
         });
         if (merged) {
-          if (dbPath === globalDb) {
-            globalMergeOk = true;
-          } else if (dbPath === workspaceDb) {
+          if (label === "workspace") {
             workspaceMergeOk = true;
+          } else {
+            globalMergeOk = true;
           }
           applied = true;
           logger.appendLine(

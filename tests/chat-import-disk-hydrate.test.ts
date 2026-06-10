@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 const querySqliteRowsMock = vi.hoisted(() => vi.fn());
+const runSqliteScriptMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/transcripts.js", () => ({
   __chatPersistenceInternals: {
     querySqliteRows: (...args: unknown[]) => querySqliteRowsMock(...args),
-    runSqliteScript: vi.fn(),
+    runSqliteScript: (...args: unknown[]) => runSqliteScriptMock(...args),
     listGlobalStateVscdbPaths: vi.fn(),
     resolveStateDbCandidates: vi.fn(),
   },
@@ -13,7 +14,10 @@ vi.mock("../src/transcripts.js", () => ({
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
-import { readRichComposerDataEntryFromStateDb } from "../src/chat-import-merge.js";
+import {
+  readRichComposerDataEntryFromStateDb,
+  repairComposerDataAfterActivation,
+} from "../src/chat-import-merge.js";
 
 describe("readRichComposerDataEntryFromStateDb", () => {
   it("decodes hex-encoded cursorDiskKV BLOB values", async () => {
@@ -34,5 +38,15 @@ describe("readRichComposerDataEntryFromStateDb", () => {
 
     const rich = await readRichComposerDataEntryFromStateDb("/tmp/state.vscdb", conversationId);
     expect(rich).toEqual(entry);
+  });
+});
+
+describe("repairComposerDataAfterActivation", () => {
+  it("skips write when partial has no conversation signals", async () => {
+    await repairComposerDataAfterActivation("/tmp/state.vscdb", "cid", {
+      composerId: "cid",
+      name: "empty",
+    });
+    expect(runSqliteScriptMock).not.toHaveBeenCalled();
   });
 });
