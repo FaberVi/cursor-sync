@@ -144,36 +144,52 @@ export async function flushPendingSidebarWriteback(
 
     const wi = entry.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
     const mergeOpts = { pinRecent: true as const };
-    const dbPaths = [
-      stateDbPathForWorkspaceStorageId(entry.workspaceStorageId),
-      globalStateDbPath(),
-    ];
-    const mergeOk = [false, false];
+    const workspaceDb = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
+    const globalDb = globalStateDbPath();
+    let workspaceMerged = false;
+    let globalMerged = false;
 
-    for (let i = 0; i < dbPaths.length; i++) {
-      const dbPath = dbPaths[i];
-      try {
-        const { merged, warnings } = await mergeSidebarIntoStateDb(dbPath, bundle, wi, mergeOpts);
-        if (merged) {
-          mergeOk[i] = true;
-          applied = true;
-          logger.appendLine(
-            `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back merged db=${dbPath} conversationId=${entry.conversationId}`
-          );
-        }
-        for (const w of warnings) {
-          logger.appendLine(
-            `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back warn db=${dbPath}: ${w}`
-          );
-        }
-      } catch (err) {
+    try {
+      const { merged, warnings } = await mergeSidebarIntoStateDb(workspaceDb, bundle, wi, mergeOpts);
+      if (merged) {
+        workspaceMerged = true;
+        applied = true;
         logger.appendLine(
-          `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back failed db=${dbPath}: ${err instanceof Error ? err.message : String(err)}`
+          `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back merged db=${workspaceDb} conversationId=${entry.conversationId}`
         );
       }
+      for (const w of warnings) {
+        logger.appendLine(
+          `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back warn db=${workspaceDb}: ${w}`
+        );
+      }
+    } catch (err) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back failed db=${workspaceDb}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
 
-    if (!mergeOk[0] || !mergeOk[1]) {
+    try {
+      const { merged, warnings } = await mergeSidebarIntoStateDb(globalDb, bundle, wi, mergeOpts);
+      if (merged) {
+        globalMerged = true;
+        applied = true;
+        logger.appendLine(
+          `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back merged db=${globalDb} conversationId=${entry.conversationId}`
+        );
+      }
+      for (const w of warnings) {
+        logger.appendLine(
+          `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back warn db=${globalDb}: ${w}`
+        );
+      }
+    } catch (err) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back failed db=${globalDb}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    if (!workspaceMerged || !globalMerged) {
       remainingEntries.push(entry);
       continue;
     }
@@ -197,11 +213,9 @@ export async function flushPendingSidebarWriteback(
         });
         activationOk = activation.ok;
         if (activation.ok) {
-          const dbPath = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
-          await repairComposerDataAfterActivation(dbPath, entry.conversationId, manifest.partialState as Record<string, unknown>);
-          const { cursorUser } = resolveSyncRoots();
-          const globalDb = path.join(cursorUser, "globalStorage", "state.vscdb");
-          await repairComposerDataAfterActivation(globalDb, entry.conversationId, manifest.partialState as Record<string, unknown>);
+          const partial = manifest.partialState as Record<string, unknown>;
+          await repairComposerDataAfterActivation(workspaceDb, entry.conversationId, partial);
+          await repairComposerDataAfterActivation(globalDb, entry.conversationId, partial);
           applied = true;
         }
       } catch (err) {
