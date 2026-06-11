@@ -552,9 +552,6 @@ export async function mergeTargetsForImport(
   return targets;
 }
 
-/**
- * @deprecated No longer called from restoreChatBundle; Python handles sidebar writes. Retained for tests only.
- */
 export async function repairComposerDataAfterActivation(
   dbPath: string,
   conversationId: string,

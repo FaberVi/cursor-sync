@@ -53,12 +53,14 @@ function globalStateDbPath(): string {
   return path.join(cursorUser, "globalStorage", "state.vscdb");
 }
 
+type SidebarLogger = ReturnType<typeof getLogger>;
+
 async function tryMergeSidebarIntoDb(
   dbPath: string,
   bundle: ChatBundle,
   wi: MergeWorkspaceIdentifier,
   conversationId: string,
-  logger: ReturnType<typeof getLogger>
+  logger: SidebarLogger
 ): Promise<boolean> {
   try {
     const { merged, warnings } = await mergeSidebarIntoStateDb(dbPath, bundle, wi, {
@@ -78,6 +80,41 @@ async function tryMergeSidebarIntoDb(
   } catch (err) {
     logger.appendLine(
       `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back failed db=${dbPath}: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return false;
+  }
+}
+
+async function activateAndRepairSidebarEntry(
+  entry: PendingSidebarWritebackEntry,
+  bundle: ChatBundle,
+  workspaceDb: string,
+  globalDb: string,
+  logger: SidebarLogger
+): Promise<boolean> {
+  try {
+    const wsCtx = await requireWorkspaceContext({ workspaceFolder: entry.folderFsPath });
+    const manifest = normalizeActivationManifest(
+      buildActivationManifest(bundle, entry.conversationId, wsCtx, {
+        openInNewTab: true,
+      }) as unknown as Record<string, unknown>
+    );
+    await enrichManifestPartialStateFromDisk(manifest, entry.workspaceStorageId);
+    const activation = await runComposerActivation(manifest, {
+      stagePending: false,
+      acceptOpenWithoutHandle: false,
+      log: (line) => logger.appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`),
+    });
+    if (!activation.ok) {
+      return false;
+    }
+    const partial = manifest.partialState as Record<string, unknown>;
+    await repairComposerDataAfterActivation(workspaceDb, entry.conversationId, partial);
+    await repairComposerDataAfterActivation(globalDb, entry.conversationId, partial);
+    return true;
+  } catch (err) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] [chat-restore-debug] sidebar activation failed conversationId=${entry.conversationId}: ${err instanceof Error ? err.message : String(err)}`
     );
     return false;
   }
@@ -198,46 +235,19 @@ export async function flushPendingSidebarWriteback(
       continue;
     }
 
-    const shouldActivate = entry.activate === true;
-    if (shouldActivate) {
-      let activationOk = false;
-      try {
-        const wsCtx = await requireWorkspaceContext({ workspaceFolder: entry.folderFsPath });
-        const manifest = normalizeActivationManifest(
-          buildActivationManifest(bundle, entry.conversationId, wsCtx, {
-            openInNewTab: true,
-          }) as unknown as Record<string, unknown>
-        );
-        await enrichManifestPartialStateFromDisk(manifest, entry.workspaceStorageId);
-        const activation = await runComposerActivation(manifest, {
-          stagePending: false,
-          acceptOpenWithoutHandle: false,
-          log: (line) =>
-            logger.appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`),
-        });
-        activationOk = activation.ok;
-        if (activation.ok) {
-          const partial = manifest.partialState as Record<string, unknown>;
-          try {
-            await repairComposerDataAfterActivation(workspaceDb, entry.conversationId, partial);
-            await repairComposerDataAfterActivation(globalDb, entry.conversationId, partial);
-            applied = true;
-          } catch (repairErr) {
-            activationOk = false;
-            logger.appendLine(
-              `[${new Date().toISOString()}] [chat-restore-debug] sidebar repair failed conversationId=${entry.conversationId}: ${repairErr instanceof Error ? repairErr.message : String(repairErr)}`
-            );
-          }
-        }
-      } catch (err) {
-        logger.appendLine(
-          `[${new Date().toISOString()}] [chat-restore-debug] sidebar activation failed conversationId=${entry.conversationId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
+    if (entry.activate === true) {
+      const activationOk = await activateAndRepairSidebarEntry(
+        entry,
+        bundle,
+        workspaceDb,
+        globalDb,
+        logger
+      );
       if (!activationOk) {
         remainingEntries.push(entry);
         continue;
       }
+      applied = true;
     }
 
     try {
