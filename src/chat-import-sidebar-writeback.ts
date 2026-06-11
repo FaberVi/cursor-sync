@@ -53,6 +53,36 @@ function globalStateDbPath(): string {
   return path.join(cursorUser, "globalStorage", "state.vscdb");
 }
 
+async function tryMergeSidebarIntoDb(
+  dbPath: string,
+  bundle: ChatBundle,
+  wi: MergeWorkspaceIdentifier,
+  conversationId: string,
+  logger: ReturnType<typeof getLogger>
+): Promise<boolean> {
+  try {
+    const { merged, warnings } = await mergeSidebarIntoStateDb(dbPath, bundle, wi, {
+      pinRecent: true,
+    });
+    if (merged) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back merged db=${dbPath} conversationId=${conversationId}`
+      );
+    }
+    for (const w of warnings) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back warn db=${dbPath}: ${w}`
+      );
+    }
+    return merged;
+  } catch (err) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back failed db=${dbPath}: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return false;
+  }
+}
+
 export async function applyImmediateSidebarWriteback(
   bundle: ChatBundle,
   wsCtx: WorkspaceContext
@@ -143,50 +173,24 @@ export async function flushPendingSidebarWriteback(
     }
 
     const wi = entry.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
-    const mergeOpts = { pinRecent: true as const };
     const workspaceDb = stateDbPathForWorkspaceStorageId(entry.workspaceStorageId);
     const globalDb = globalStateDbPath();
-    let workspaceMerged = false;
-    let globalMerged = false;
-
-    try {
-      const { merged, warnings } = await mergeSidebarIntoStateDb(workspaceDb, bundle, wi, mergeOpts);
-      if (merged) {
-        workspaceMerged = true;
-        applied = true;
-        logger.appendLine(
-          `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back merged db=${workspaceDb} conversationId=${entry.conversationId}`
-        );
-      }
-      for (const w of warnings) {
-        logger.appendLine(
-          `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back warn db=${workspaceDb}: ${w}`
-        );
-      }
-    } catch (err) {
-      logger.appendLine(
-        `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back failed db=${workspaceDb}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    try {
-      const { merged, warnings } = await mergeSidebarIntoStateDb(globalDb, bundle, wi, mergeOpts);
-      if (merged) {
-        globalMerged = true;
-        applied = true;
-        logger.appendLine(
-          `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back merged db=${globalDb} conversationId=${entry.conversationId}`
-        );
-      }
-      for (const w of warnings) {
-        logger.appendLine(
-          `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back warn db=${globalDb}: ${w}`
-        );
-      }
-    } catch (err) {
-      logger.appendLine(
-        `[${new Date().toISOString()}] [chat-restore-debug] sidebar write-back failed db=${globalDb}: ${err instanceof Error ? err.message : String(err)}`
-      );
+    const workspaceMerged = await tryMergeSidebarIntoDb(
+      workspaceDb,
+      bundle,
+      wi,
+      entry.conversationId,
+      logger
+    );
+    const globalMerged = await tryMergeSidebarIntoDb(
+      globalDb,
+      bundle,
+      wi,
+      entry.conversationId,
+      logger
+    );
+    if (workspaceMerged || globalMerged) {
+      applied = true;
     }
 
     if (!workspaceMerged || !globalMerged) {
