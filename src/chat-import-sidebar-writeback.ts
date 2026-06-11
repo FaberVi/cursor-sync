@@ -214,9 +214,16 @@ export async function flushPendingSidebarWriteback(
         activationOk = activation.ok;
         if (activation.ok) {
           const partial = manifest.partialState as Record<string, unknown>;
-          await repairComposerDataAfterActivation(workspaceDb, entry.conversationId, partial);
-          await repairComposerDataAfterActivation(globalDb, entry.conversationId, partial);
-          applied = true;
+          try {
+            await repairComposerDataAfterActivation(workspaceDb, entry.conversationId, partial);
+            await repairComposerDataAfterActivation(globalDb, entry.conversationId, partial);
+            applied = true;
+          } catch (repairErr) {
+            activationOk = false;
+            logger.appendLine(
+              `[${new Date().toISOString()}] [chat-restore-debug] sidebar repair failed conversationId=${entry.conversationId}: ${repairErr instanceof Error ? repairErr.message : String(repairErr)}`
+            );
+          }
         }
       } catch (err) {
         logger.appendLine(

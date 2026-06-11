@@ -261,11 +261,21 @@ describe("readRichComposerDataEntryFromStateDb", () => {
 });
 
 describe("repairComposerDataAfterActivation", () => {
-  it("skips write when partial has no conversation signals", async () => {
+  it("skips write when partial has no conversation content", async () => {
     await repairComposerDataAfterActivation("/tmp/state.vscdb", "cid", {
       composerId: "cid",
       name: "empty",
     });
     expect(runSqliteScriptMock).not.toHaveBeenCalled();
+  });
+
+  it("repairs when partial has inline object conversationState", async () => {
+    querySqliteRowsMock.mockResolvedValue([]);
+    await repairComposerDataAfterActivation("/tmp/state.vscdb", "cid", {
+      composerId: "cid",
+      name: "blob-backed",
+      conversationState: { turns: [{ role: "user", text: "hi" }] },
+    });
+    expect(runSqliteScriptMock).toHaveBeenCalled();
   });
 });

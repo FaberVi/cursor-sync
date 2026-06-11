@@ -130,8 +130,11 @@ describe("chat-import-sidebar-writeback", () => {
       },
     } as import("vscode").ExtensionContext;
     vi.clearAllMocks();
-    const { mergeSidebarIntoStateDb } = await import("../src/chat-import-merge.js");
+    const { mergeSidebarIntoStateDb, repairComposerDataAfterActivation } = await import(
+      "../src/chat-import-merge.js"
+    );
     vi.mocked(mergeSidebarIntoStateDb).mockResolvedValue({ merged: true, warnings: [] });
+    vi.mocked(repairComposerDataAfterActivation).mockResolvedValue(undefined);
   });
 
   afterEach(async () => {
@@ -194,6 +197,35 @@ describe("chat-import-sidebar-writeback", () => {
     });
 
     await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx);
+    const bundlePath = path.join(
+      tempHome,
+      ".cursor",
+      "import-activation",
+      "sidebar-pending",
+      `${FIXTURE_CID}.json`
+    );
+
+    await flushPendingSidebarWriteback(context);
+
+    const remaining = globalStateStore["cursorSync.pendingSidebarWriteback"] as {
+      entries: Array<{ conversationId: string }>;
+    };
+    expect(remaining.entries).toHaveLength(1);
+    await expect(fs.access(bundlePath)).resolves.toBeUndefined();
+  });
+
+  it("retains pending entries when activation succeeds but repair fails", async () => {
+    const { runComposerActivation } = await import("../src/chat-import-activate.js");
+    const { repairComposerDataAfterActivation } = await import("../src/chat-import-merge.js");
+    vi.mocked(runComposerActivation).mockResolvedValue({
+      ok: true,
+      composerId: FIXTURE_CID,
+      exitCode: 0,
+      stagedOnly: false,
+    });
+    vi.mocked(repairComposerDataAfterActivation).mockRejectedValue(new Error("db locked"));
+
+    await queueSidebarWriteback(context, headerOnlyBundle, workspaceCtx, { activate: true });
     const bundlePath = path.join(
       tempHome,
       ".cursor",
