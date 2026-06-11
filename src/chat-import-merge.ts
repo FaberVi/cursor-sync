@@ -9,7 +9,11 @@ import {
   mergeComposerDataAdditive,
   mergeComposerHeadersChain,
 } from "./composer-merge.js";
-import { clearSessionBindingInTree } from "./chat-partial-state.js";
+import { cursorDiskKvValueAsText } from "./chat-disk-kv-export.js";
+import {
+  clearSessionBindingInTree,
+  partialStateHasConversationContent,
+} from "./chat-partial-state.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
 const { querySqliteRows, runSqliteScript, listGlobalStateVscdbPaths, resolveStateDbCandidates } =
@@ -323,7 +327,8 @@ export function composerDataEntryHasConversationSignals(
 
 function parseComposerDataEntryValue(raw: unknown): Record<string, unknown> | null {
   const asStr =
-    typeof raw === "string" ? raw : raw != null ? JSON.stringify(raw) : undefined;
+    cursorDiskKvValueAsText(raw) ??
+    (raw != null && typeof raw !== "string" ? JSON.stringify(raw) : undefined);
   if (!asStr?.trim()) {
     return null;
   }
@@ -555,6 +560,9 @@ export async function repairComposerDataAfterActivation(
   conversationId: string,
   partial: Record<string, unknown>
 ): Promise<void> {
+  if (!partialStateHasConversationContent(partial)) {
+    return;
+  }
   const rows = await querySqliteRows(
     dbPath,
     "SELECT value FROM ItemTable WHERE key = 'composer.composerData' LIMIT 1;",

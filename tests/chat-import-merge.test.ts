@@ -4,6 +4,21 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatBundle } from "../src/chat-persistence.js";
 import { mergeComposerDataAdditive } from "../src/composer-merge.js";
+
+const querySqliteRowsMock = vi.hoisted(() => vi.fn());
+const runSqliteScriptMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../src/transcripts.js", () => ({
+  __chatPersistenceInternals: {
+    querySqliteRows: (...args: unknown[]) => querySqliteRowsMock(...args),
+    runSqliteScript: (...args: unknown[]) => runSqliteScriptMock(...args),
+    listGlobalStateVscdbPaths: vi.fn(),
+    resolveStateDbCandidates: vi.fn(),
+  },
+}));
+
+vi.mock("vscode", () => import("./__mocks__/vscode.js"));
+
 import {
   composerDataForFocus,
   filterComposerDataForConversation,
@@ -12,12 +27,12 @@ import {
   pinComposerAsMostRecent,
   prepareComposerDataForImport,
   prepareHeadersForImport,
+  readRichComposerDataEntryFromStateDb,
+  repairComposerDataAfterActivation,
   stampWorkspaceIdentifierOnHeaders,
   rebindComposerRecord,
   type WorkspaceIdentifier,
 } from "../src/chat-import-merge.js";
-
-vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
 const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.join(testsDir, "fixtures", "chat-import-merge");
@@ -220,5 +235,47 @@ describe("chat-import-merge", () => {
     };
     const result = headersPayloadForImport(bundleTitleOnly);
     expect(result.allComposers[0]?.name).toBe("Transcript Title");
+  });
+});
+
+describe("readRichComposerDataEntryFromStateDb", () => {
+  it("decodes hex-encoded cursorDiskKV BLOB values", async () => {
+    const conversationId = "43aae2fb-71fc-4e9c-9add-3e995caaaa80";
+    const entry = {
+      composerId: conversationId,
+      conversationMap: { bubble1: { type: 1 } },
+      fullConversationHeadersOnly: [{ bubbleId: "bubble1", type: 1 }],
+    };
+    const hex = Buffer.from(JSON.stringify(entry), "utf-8").toString("hex");
+
+    querySqliteRowsMock.mockImplementation(async (_dbPath: string, sql: string) => {
+      if (sql.includes("cursorDiskKV")) {
+        return [{ value: hex }];
+      }
+      return [];
+    });
+
+    const rich = await readRichComposerDataEntryFromStateDb("/tmp/state.vscdb", conversationId);
+    expect(rich).toEqual(entry);
+  });
+});
+
+describe("repairComposerDataAfterActivation", () => {
+  it("skips write when partial has no conversation content", async () => {
+    await repairComposerDataAfterActivation("/tmp/state.vscdb", "cid", {
+      composerId: "cid",
+      name: "empty",
+    });
+    expect(runSqliteScriptMock).not.toHaveBeenCalled();
+  });
+
+  it("repairs when partial has inline object conversationState", async () => {
+    querySqliteRowsMock.mockResolvedValue([]);
+    await repairComposerDataAfterActivation("/tmp/state.vscdb", "cid", {
+      composerId: "cid",
+      name: "blob-backed",
+      conversationState: { turns: [{ role: "user", text: "hi" }] },
+    });
+    expect(runSqliteScriptMock).toHaveBeenCalled();
   });
 });
