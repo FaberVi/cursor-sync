@@ -7,6 +7,9 @@ export interface SyncTabState {
   fileCount: number;
   gistId: string | undefined;
   history: SyncHistoryEntry[];
+  chatsSyncEnabled: boolean;
+  localChatCount: number;
+  remoteChatCount: number | undefined;
 }
 
 export function relativeTime(isoString: string): string {
@@ -105,6 +108,12 @@ export function renderSyncPane(state: SyncTabState): string {
     ? state.history.map(renderHistoryEntry).join("")
     : `<div class="empty-state">No sync history yet</div>`;
 
+  const chatStatusLine = state.chatsSyncEnabled
+    ? state.remoteChatCount !== undefined
+      ? `Chats in backup: ${state.remoteChatCount} remote · ${state.localChatCount} local`
+      : `Chats: ${state.localChatCount} local (not yet in backup)`
+    : `<span class="chat-sync-disabled">Chats: not included in sync</span>`;
+
   return `<div id="sync-pane" class="tab-pane">
   <div class="status-card ${state.status}">
     <div class="status-icon-wrapper">
@@ -119,6 +128,8 @@ export function renderSyncPane(state: SyncTabState): string {
       ${state.fileCount > 0 ? `<div class="file-count">${state.fileCount} file${state.fileCount !== 1 ? "s" : ""} tracked</div>` : ""}
     </div>
   </div>
+
+  <div class="file-count chat-sync-status">${chatStatusLine}</div>
 
   <button class="sync-now-btn" data-command="syncNow">
     <span class="codicon codicon-sync"></span>

@@ -1,18 +1,26 @@
 import * as vscode from "vscode";
-import * as fs from "node:fs/promises";
 import { executePush, isPushLocked } from "./push.js";
 import { executePull, isPullLocked } from "./pull.js";
 import { GistClient } from "./gist.js";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { loadSyncState, getLogger } from "./diagnostics.js";
-import { enumerateSyncFiles } from "./paths.js";
-import { computeChecksum } from "./packaging.js";
 import { sendEvent } from "./analytics.js";
 import {
   buildSyncDebugFailure,
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
+import {
+  CHAT_BUNDLES_SYNC_KEY,
+  CURSOR_CHAT_SYNC_KEY,
+  isChatSyncEnabled,
+  computeChatSyncLocalFingerprint,
+} from "./chat-sync.js";
+import {
+  computeLocalChecksums,
+  findConflicts,
+  registerPendingConflicts,
+} from "./conflicts.js";
 import type { Manifest } from "./types.js";
 
 const MIN_INTERVAL_MINUTES = 5;
@@ -69,7 +77,7 @@ export function stopScheduler(): void {
 export async function determineSyncAction(
   context: vscode.ExtensionContext
 ): Promise<SyncAction> {
-  const syncState = await loadSyncState(context);
+  let syncState = await loadSyncState(context);
 
   if (!syncState || !syncState.gistId) {
     return { action: "push" };
@@ -81,7 +89,7 @@ export async function determineSyncAction(
   }
 
   const client = new GistClient(token);
-  const gistResult = await withRetry(() => client.getGist(syncState.gistId));
+  const gistResult = await withRetry(() => client.getGist(syncState!.gistId));
   if (!gistResult.ok) {
     return { action: "error", reason: gistResult.error.category };
   }
@@ -103,15 +111,20 @@ export async function determineSyncAction(
     remoteChecksums[key] = entry.checksum;
   }
 
-  const localFiles = await enumerateSyncFiles();
-  const localChecksums: Record<string, string> = {};
-  for (const file of localFiles) {
-    try {
-      const buf = await fs.readFile(file.absolutePath);
-      localChecksums[file.relativeSyncKey] = computeChecksum(buf);
-    } catch {
-      continue;
-    }
+  const localChecksums = await computeLocalChecksums();
+  if (isChatSyncEnabled()) {
+    const fingerprint = await computeChatSyncLocalFingerprint();
+    localChecksums[CURSOR_CHAT_SYNC_KEY] = fingerprint;
+    delete localChecksums[CHAT_BUNDLES_SYNC_KEY];
+  }
+
+  const conflicts = findConflicts(syncState, localChecksums, remoteChecksums);
+  if (conflicts.length > 0) {
+    await registerPendingConflicts(conflicts);
+    return {
+      action: "conflict",
+      keys: conflicts.map((c) => c.relativeSyncKey),
+    };
   }
 
   const allKeys = new Set([
@@ -123,7 +136,6 @@ export async function determineSyncAction(
 
   let localHasChanges = false;
   let remoteHasChanges = false;
-  const conflictKeys: string[] = [];
 
   for (const key of allKeys) {
     const baseLocal = syncState.localChecksums[key];
@@ -131,23 +143,12 @@ export async function determineSyncAction(
     const currentLocal = localChecksums[key];
     const currentRemote = remoteChecksums[key];
 
-    const localChanged = currentLocal !== baseLocal;
-    const remoteChanged = currentRemote !== baseRemote;
-
-    if (localChanged) {
+    if (currentLocal !== baseLocal) {
       localHasChanges = true;
     }
-    if (remoteChanged) {
+    if (currentRemote !== baseRemote) {
       remoteHasChanges = true;
     }
-
-    if (localChanged && remoteChanged && currentLocal !== currentRemote) {
-      conflictKeys.push(key);
-    }
-  }
-
-  if (conflictKeys.length > 0) {
-    return { action: "conflict", keys: conflictKeys };
   }
 
   if (remoteHasChanges && localHasChanges) {

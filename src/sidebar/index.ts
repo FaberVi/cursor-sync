@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import { renderSidebarHtml, renderSyncPaneHtml } from "./html.js";
 import { dispatchSidebarMessage, type SidebarMessage } from "./messages.js";
 import { onChatImportProgress } from "../chat-progress-events.js";
-
 let sidebarProviderInstance: SidebarProvider | undefined;
 
 export function initializeSidebar(context: vscode.ExtensionContext): SidebarProvider {

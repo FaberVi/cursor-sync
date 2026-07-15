@@ -30,7 +30,7 @@ function baseFailure(overrides: Partial<SyncDebugFailure> = {}): SyncDebugFailur
     trigger: "manual",
     message: "GitHub API returned 401 Unauthorized",
     category: "AUTH_FAILED",
-    extensionVersion: "0.8.0",
+    extensionVersion: "0.9.0",
     platform: "linux",
     ...overrides,
   };

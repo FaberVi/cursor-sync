@@ -57,6 +57,10 @@ export {
   restoreChatBundle,
   __chatPersistenceTestUtils,
 } from "./chat-persistence-restore.js";
+export {
+  restoreNativeChatJson,
+  restoreNativeChatsBatch,
+} from "./chat-native-import.js";
 
 const {
   querySqliteRows,
@@ -213,28 +217,31 @@ export async function executeSaveChatLocal(
 async function executeImportChatBundleCore(
   context: vscode.ExtensionContext,
   importUx: { forceActivate?: boolean; skipActivatePrompt?: boolean },
-  progressTitle: string
+  progressTitle: string,
+  bundlePathOverride?: string
 ): Promise<void> {
   const logger = getLogger();
 
-  const uris = await vscode.window.showOpenDialog({
-    canSelectFiles: true,
-    canSelectFolders: false,
-    canSelectMany: false,
-    filters: { "Chat Bundle": ["json"] },
-    title: "Select chat bundle to import",
-  });
+  let bundlePath = bundlePathOverride?.trim();
+  if (!bundlePath) {
+    const uris = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      filters: { "Chat Bundle": ["json"] },
+      title: "Select chat bundle to import",
+    });
 
-  if (!uris || uris.length === 0) {
-    return;
+    if (!uris || uris.length === 0) {
+      return;
+    }
+    bundlePath = uris[0]!.fsPath;
   }
 
   const promptResult = await promptChatImportOptions(importUx);
   if (!promptResult) {
     return;
   }
-
-  const bundlePath = uris[0]!.fsPath;
 
   let parsed: ReturnType<typeof parseChatBundleOrCollection>;
   try {
@@ -308,12 +315,14 @@ export async function executeLoadChatLocal(
 }
 
 export async function executeImportChatBundle(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
+  bundlePath?: string
 ): Promise<void> {
   await executeImportChatBundleCore(
     context,
     {},
-    "Importing chat bundle..."
+    "Importing chat bundle...",
+    bundlePath
   );
 }
 

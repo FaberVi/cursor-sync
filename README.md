@@ -2,6 +2,77 @@
 
 Sync user-level Cursor settings and `~/.cursor` assets to a private GitHub Gist, with manual push/pull, optional scheduled pull-push, export/import via private Gists (anyone with the gist URL can still open it), and configurable extension sync.
 
+## Build and Install
+
+Use these steps to build a `.vsix` from this repository and install it in Cursor (or VS Code).
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) 20+ and npm
+- [Cursor](https://cursor.com/) or [VS Code](https://code.visualstudio.com/) with the `cursor` / `code` CLI on your `PATH`
+
+### 1. Install dependencies
+
+```bash
+git clone https://github.com/Marcelo-Barella/cursor-sync.git
+cd cursor-sync
+npm ci
+```
+
+### 2. Build the VSIX package
+
+```bash
+npm run package
+```
+
+This runs the production build (`esbuild`) and packages the extension with `@vscode/vsce`. The output file is:
+
+```
+cursor-sync-<version>.vsix
+```
+
+For example, at version `0.9.0`: `cursor-sync-0.9.0.vsix` in the repository root.
+
+On macOS or Linux you can also run `./package-vsix.sh` (installs dependencies if needed, then runs `npm run package`).
+
+### 3. Install the extension
+
+**Cursor** (recommended):
+
+```bash
+cursor --install-extension ./cursor-sync-0.9.0.vsix --force
+```
+
+**VS Code**:
+
+```bash
+code --install-extension ./cursor-sync-0.9.0.vsix --force
+```
+
+Replace `0.9.0` with the version from `package.json`. Use `--force` to upgrade an existing install.
+
+**Windows (PowerShell)** — use the full path if you are not in the repo directory:
+
+```powershell
+cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-0.9.0.vsix" --force
+```
+
+### 4. Reload the window
+
+After installation, run **Developer: Reload Window** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) so Cursor loads the new build.
+
+### Development workflow
+
+| Command | Description |
+|---------|-------------|
+| `npm run build` | Compile `dist/extension.js` only (no VSIX) |
+| `npm run watch` | Rebuild on file changes |
+| `npm run package` | Build + create `.vsix` |
+| `npm run lint` | TypeScript check (`tsc --noEmit`) |
+| `npm test` | Run the test suite |
+
+To iterate quickly during development, open this folder in Cursor and press **F5** to launch an Extension Development Host instead of packaging a VSIX each time.
+
 ## What Is Synced
 
 ### Cursor User Config
@@ -58,7 +129,7 @@ The following are always excluded from sync:
 
 ### 4. Pull on Another Machine
 
-1. Install the extension on the target machine.
+1. Install the extension on the target machine (see [Build and Install](#build-and-install) or install from a shared `.vsix`).
 2. Configure your GitHub token (step 2).
 3. Push first from the source machine, then run **Cursor Sync: Pull Now** on the target.
 4. If safe mode is enabled (default), you will be shown a list of files that will change and must confirm.
@@ -91,7 +162,7 @@ The **Cursor Sync** view in the activity bar is a tabbed webview:
 - **Configure GitHub** — Token setup link.
 
 ### Chats tab
-- **Recent in this workspace** — Local conversations from `~/.cursor/chats/<md5(workspace)>/<uuid>/store.db`, with one-click Export Bundle / Export to Gist / Reveal Transcripts per row.
+- **Local chats by project** — Conversations grouped by Cursor project folder under `~/.cursor/projects/<project>/agent-transcripts/<uuid>/` (`.jsonl` transcripts, including nested `subagents/`). Optional `~/.cursor/chats/<md5(workspace)>/<uuid>/store.db` when present. Each project group is collapsible; the current workspace project is expanded by default. Per-group pagination (20 chats/page) with **Open** and **Files** actions.
 - **Imports & bundles** — `cursorSync.chatImports` history (max 200 entries) plus ad-hoc bundle files discovered under `/tmp/chat-transport-*.json` and `<globalStorage>/chat-bundles/*.json`. Each import row offers **Re-activate** (re-runs Phase B without re-writing disk) and **Reveal Transcripts**.
 - **Active operation** — Live Phase A / Phase B status while an import runs, driven by the `onChatImportProgress` event emitter.
 

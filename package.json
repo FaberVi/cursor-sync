@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync",
   "description": "Sync user-level Cursor settings and assets to a private GitHub Gist",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "icon": "assets/icon.png",
   "publisher": "MarceloBarella",
   "repository": {
@@ -170,6 +170,10 @@
         "title": "Cursor Sync: Verify Chat Import"
       },
       {
+        "command": "cursorSync.validateChatBackups",
+        "title": "Cursor Sync: Validate Chat Backups"
+      },
+      {
         "command": "cursorSync.exportChatToGist",
         "title": "Cursor Sync: Export Chat to Private Gist"
       },
@@ -309,6 +313,21 @@
           "default": false,
           "description": "Fail import if activation is staged only (no confirmed composer.createComposer or result.json)"
         },
+        "cursorSync.chatImport.useProtobufHydration": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hydrate composer partialState from bundle diskKv / native JSON before IDE activation (recommended)."
+        },
+        "cursorSync.chatImport.useIdeHydration": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip protobuf hydration and rely on IDE composer.createComposer only (use when hydration causes issues)."
+        },
+        "cursorSync.chatImport.strictDiskGates": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fail import when partialState stays empty after protobuf hydration."
+        },
         "cursorSync.chatImport.bridgeWaitResultSeconds": {
           "type": "number",
           "default": 0,
@@ -334,6 +353,33 @@
           "type": "boolean",
           "default": true,
           "description": "When true, chat gist exports (chat-bundle.json / chat-bundles.json) are encrypted with your chat encryption password before upload."
+        },
+        "cursorSync.chats.syncEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include chats in Sync Now, Push, and Pull (uploads chat-bundles.json to your settings Gist)."
+        },
+        "cursorSync.chats.maxCollectionSizeKB": {
+          "type": "number",
+          "default": 8192,
+          "minimum": 0,
+          "description": "Maximum size in KB for the synced chat collection. Larger chats may be skipped with a warning."
+        },
+        "cursorSync.chats.syncOnlyFullBackups": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, chat sync push skips transcript-only chats (requires resumable tier: store.db and/or Layer 4 diskKv)."
+        },
+        "cursorSync.chats.pullUpdates": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, pull may re-import chats that already exist locally (see pullUpdatePolicy)."
+        },
+        "cursorSync.chats.pullUpdatePolicy": {
+          "type": "string",
+          "enum": ["skip", "remoteWins", "newerWins", "ask"],
+          "default": "newerWins",
+          "description": "How to handle remote chat bundles for conversation IDs already on this machine when pullUpdates is enabled."
         }
       }
     }
@@ -349,7 +395,7 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.74.0",
-    "@vscode/vsce": "^3.0.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.24.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

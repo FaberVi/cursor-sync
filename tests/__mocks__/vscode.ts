@@ -68,6 +68,21 @@ export class Disposable {
   }
 }
 
+export enum ConfigurationTarget {
+  Global = 1,
+  Workspace = 2,
+  WorkspaceFolder = 3,
+}
+
+const mockGlobalConfig: Record<string, unknown> = {
+  "chats.syncEnabled": true,
+  "chatImport.activateDefault": false,
+  "chatImport.activateStrict": false,
+  "chatImport.bridgeWaitResultSeconds": 0,
+  "transcripts.autoReloadAfterImport": false,
+  "chatImport.pythonPath": "",
+};
+
 export const workspace = {
   get workspaceFolders() {
     return mockWorkspaceFolders.length ? mockWorkspaceFolders : undefined;
@@ -86,6 +101,9 @@ export const workspace = {
   onDidChangeWorkspaceFolders: (_cb: () => void) => ({ dispose: () => {} }),
   getConfiguration: (_section?: string) => ({
     get: <T>(key: string, defaultValue?: T): T | undefined => {
+      if (Object.prototype.hasOwnProperty.call(mockGlobalConfig, key)) {
+        return mockGlobalConfig[key] as T;
+      }
       const defaults: Record<string, unknown> = {
         enabledPaths: [
           "settings.json",
@@ -106,6 +124,9 @@ export const workspace = {
         "schedule.intervalMin": 30,
       };
       return (defaults[key] as T) ?? defaultValue;
+    },
+    update: async (key: string, value: unknown) => {
+      mockGlobalConfig[key] = value;
     },
   }),
   onDidChangeConfiguration: () => ({ dispose: () => {} }),

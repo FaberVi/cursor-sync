@@ -10,6 +10,7 @@ import {
   repairComposerDataAfterActivation,
   type WorkspaceIdentifier as MergeWorkspaceIdentifier,
 } from "./chat-import-merge.js";
+import { repairDiskKvAfterActivation } from "./chat-disk-kv-import.js";
 import {
   buildActivationManifest,
   enrichManifestPartialStateFromDisk,
@@ -221,6 +222,8 @@ export async function flushPendingSidebarWriteback(
           try {
             await repairComposerDataAfterActivation(workspaceDb, entry.conversationId, partial);
             await repairComposerDataAfterActivation(globalDb, entry.conversationId, partial);
+            await repairDiskKvAfterActivation(workspaceDb, entry.conversationId, bundle);
+            await repairDiskKvAfterActivation(globalDb, entry.conversationId, bundle);
             applied = true;
           } catch (repairErr) {
             activationOk = false;

@@ -2,6 +2,30 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
+vi.mock("../src/transcripts.js", async () => {
+  const pathMod = await import("node:path");
+  const osMod = await import("node:os");
+  return {
+    __chatPersistenceInternals: {
+      resolveChatsRoot: () =>
+        pathMod.join(osMod.homedir(), ".cursor", "chats"),
+      querySqliteRows: vi.fn().mockResolvedValue([]),
+      resolveStateDbCandidates: vi.fn().mockResolvedValue([]),
+      listGlobalStateVscdbPaths: vi.fn().mockResolvedValue([]),
+    },
+  };
+});
+
+vi.mock("../src/chat-discovery.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/chat-discovery.js")>(
+    "../src/chat-discovery.js"
+  );
+  return {
+    ...actual,
+    discoverConversationsGroupedByProject: vi.fn().mockResolvedValue([]),
+  };
+});
+
 import { dispatchSidebarMessage } from "../src/sidebar/messages.js";
 import { recordImport } from "../src/sidebar/import-history.js";
 
@@ -86,22 +110,40 @@ describe("dispatchSidebarMessage - settings:get", () => {
     const call = wv.postMessage.mock.calls[0]![0];
     expect(call.type).toBe("settings:current");
     expect(call.values).toBeDefined();
-    expect(typeof call.values.activateDefault).toBe("boolean");
-    expect(typeof call.values.activateStrict).toBe("boolean");
-    expect(typeof call.values.bridgeWaitResultSeconds).toBe("number");
-    expect(typeof call.values.autoReloadAfterImport).toBe("boolean");
-    expect(typeof call.values.pythonPath).toBe("string");
+    expect(typeof call.values["chatImport.activateDefault"]).toBe("boolean");
+    expect(typeof call.values["chatImport.activateStrict"]).toBe("boolean");
+    expect(typeof call.values["chatImport.bridgeWaitResultSeconds"]).toBe("number");
+    expect(typeof call.values["transcripts.autoReloadAfterImport"]).toBe("boolean");
+    expect(typeof call.values["chatImport.pythonPath"]).toBe("string");
+    expect(typeof call.values["chats.syncEnabled"]).toBe("boolean");
+  });
+});
+
+describe("dispatchSidebarMessage - settings:set", () => {
+  it("persists globally and echoes settings:current", async () => {
+    const ctx = mockContext();
+    const wv = mockWebview();
+    await dispatchSidebarMessage(ctx, wv, {
+      command: "settings:set",
+      key: "chats.syncEnabled",
+      value: false,
+    });
+    expect(wv.postMessage).toHaveBeenCalledOnce();
+    const call = wv.postMessage.mock.calls[0]![0];
+    expect(call.type).toBe("settings:current");
+    expect(call.values["chats.syncEnabled"]).toBe(false);
   });
 });
 
 describe("dispatchSidebarMessage - chats:listLocal", () => {
-  it("posts chats:recent with empty rows when no workspace folders", async () => {
+  it("posts chats:grouped with empty groups when no chats", async () => {
     const ctx = mockContext();
     const wv = mockWebview();
     await dispatchSidebarMessage(ctx, wv, { command: "chats:listLocal" });
     expect(wv.postMessage).toHaveBeenCalledOnce();
     const call = wv.postMessage.mock.calls[0]![0];
-    expect(call.type).toBe("chats:recent");
-    expect(call.rows).toEqual([]);
+    expect(call.type).toBe("chats:grouped");
+    expect(call.groups).toEqual([]);
+    expect(call.totalConversations).toBe(0);
   });
 });

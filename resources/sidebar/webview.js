@@ -60,6 +60,181 @@
     return (b / (1024 * 1024)).toFixed(1) + " MB";
   }
 
+  var groupedChatsState = {
+    groups: [],
+    expanded: {},
+    pageByGroup: {},
+    loadingGroups: {},
+    openingConversationId: null,
+    pageSize: 10,
+  };
+
+  function isGroupExpanded(projectKey) {
+    return Boolean(groupedChatsState.expanded[projectKey]);
+  }
+
+  function rowShowsFilesButton(r) {
+    return (r.jsonlCount || 0) > 0 || Boolean(r.hasStore);
+  }
+
+  function tierBadgeClass(tier) {
+    if (tier === "full") return "chat-tier-full";
+    if (tier === "resume") return "chat-tier-resume";
+    if (tier === "partial") return "chat-tier-partial";
+    return "chat-tier-archive";
+  }
+
+  function renderChatRow(r, groupProjectKey) {
+    var wsAttr = r.workspaceKey
+      ? ' data-workspace-key="' + escHtml(r.workspaceKey) + '"'
+      : "";
+    var projKey = r.projectKey || groupProjectKey || "";
+    var projAttr = projKey
+      ? ' data-project-key="' + escHtml(projKey) + '"'
+      : "";
+    var isOpening = groupedChatsState.openingConversationId === r.conversationId;
+    var openBtnClass = "chat-action-btn" + (isOpening ? " is-loading" : "");
+    var openDisabled = isOpening ? " disabled" : "";
+    var openLabel = isOpening ? "Opening\u2026" : "Open";
+    var tierAttr = r.backupTier
+      ? ' data-backup-tier="' + escHtml(r.backupTier) + '"'
+      : "";
+    return (
+      '<div class="chat-row">' +
+      '<div class="chat-row-info">' +
+      '<div class="chat-row-title">' +
+      escHtml(r.label || r.conversationId) +
+      (r.backupTierLabel
+        ? '<span class="chat-tier-badge ' +
+          tierBadgeClass(r.backupTier) +
+          '">' +
+          escHtml(r.backupTierLabel) +
+          "</span>"
+        : "") +
+      "</div>" +
+      '<div class="chat-row-meta" title="' +
+      escHtml((r.fidelityWarnings || []).join(" ")) +
+      '">' +
+      escHtml(r.detail || "") +
+      "</div>" +
+      "</div>" +
+      '<div class="chat-row-actions">' +
+      '<button type="button" class="' +
+      openBtnClass +
+      '" data-command="chats:open" data-conversation-id="' +
+      escHtml(r.conversationId) +
+      '"' +
+      wsAttr +
+      projAttr +
+      tierAttr +
+      openDisabled +
+      ">" +
+      openLabel +
+      "</button>" +
+      (rowShowsFilesButton(r)
+        ? '<button type="button" class="chat-action-btn" data-command="chats:revealFiles" data-conversation-id="' +
+          escHtml(r.conversationId) +
+          '"' +
+          wsAttr +
+          projAttr +
+          ">Files</button>"
+        : "") +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderGroupedChats() {
+    var el = document.getElementById("chats-grouped");
+    if (!el) return;
+    var groups = groupedChatsState.groups || [];
+    if (groups.length === 0) {
+      el.innerHTML = '<div class="empty-state">No local chats found</div>';
+      return;
+    }
+    var htmlParts = groups
+      .map(function (g) {
+        var expanded = isGroupExpanded(g.projectKey);
+        var page = groupedChatsState.pageByGroup[g.projectKey] || 0;
+        var rows = g.rows || [];
+        var pageSize = groupedChatsState.pageSize;
+        var totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+        if (page >= totalPages) page = totalPages - 1;
+        if (page < 0) page = 0;
+        groupedChatsState.pageByGroup[g.projectKey] = page;
+        var start = page * pageSize;
+        var pageRows = rows.slice(start, start + pageSize);
+        var currentClass = g.isCurrentWorkspace ? " current" : "";
+        var bodyClass = expanded ? "chat-group-body" : "chat-group-body collapsed";
+        var chevron = expanded ? "\u25BE" : "\u25B8";
+        var groupLabel = g.label || g.projectKey || "Unknown project";
+        var labelLine = groupLabel;
+        if (g.pathHint && g.pathHint !== groupLabel) {
+          labelLine = groupLabel + " \u00b7 " + g.pathHint;
+        }
+        var isLoading = Boolean(groupedChatsState.loadingGroups[g.projectKey]);
+        var rowsHtml = isLoading
+          ? '<div class="chat-group-loading">Loading chats\u2026</div>'
+          : pageRows.map(function (r) {
+              return renderChatRow(r, g.projectKey);
+            }).join("");
+        if (!isLoading && expanded && rows.length === 0 && (g.conversationCount || 0) > 0) {
+          rowsHtml = '<div class="chat-group-loading">Loading chats\u2026</div>';
+        }
+        var pagerHtml =
+          rows.length > pageSize
+            ? '<div class="chat-group-pager">' +
+              '<div class="chats-pager">' +
+              '<button type="button" class="pager-btn" data-command="chats:groupPrev" data-project-key="' +
+              escHtml(g.projectKey) +
+              '"' +
+              (page <= 0 ? " disabled" : "") +
+              ">Prev</button>" +
+              '<span class="pager-label">' +
+              (page + 1) +
+              " / " +
+              totalPages +
+              "</span>" +
+              '<button type="button" class="pager-btn" data-command="chats:groupNext" data-project-key="' +
+              escHtml(g.projectKey) +
+              '"' +
+              (page >= totalPages - 1 ? " disabled" : "") +
+              ">Next</button>" +
+              "</div></div>"
+            : "";
+        return (
+          '<div class="chat-group" data-project-key="' +
+          escHtml(g.projectKey) +
+          '">' +
+          '<div class="chat-group-header' +
+          currentClass +
+          '" data-command="chats:toggleGroup" data-project-key="' +
+          escHtml(g.projectKey) +
+          '" title="' +
+          escHtml(labelLine) +
+          '">' +
+          '<span class="chat-group-chevron" aria-hidden="true">' +
+          chevron +
+          "</span>" +
+          '<span class="chat-group-label">' +
+          escHtml(labelLine) +
+          "</span>" +
+          '<span class="chat-group-count">' +
+          (g.conversationCount || rows.length) +
+          " chats</span>" +
+          "</div>" +
+          '<div class="' +
+          bodyClass +
+          '">' +
+          rowsHtml +
+          pagerHtml +
+          "</div>" +
+          "</div>"
+        );
+      });
+    el.innerHTML = htmlParts.join("");
+  }
+
   document.addEventListener("click", function (ev) {
     var t = ev.target;
     var el = t && t.nodeType === 1 ? t : t && t.parentElement;
@@ -68,15 +243,81 @@
       switchTab(tabBtn.getAttribute("data-tab"));
       return;
     }
+    var actionBtn =
+      el && el.closest
+        ? el.closest(".chat-action-btn[data-command]")
+        : null;
+    if (actionBtn) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      var actionCmd = actionBtn.getAttribute("data-command");
+      if (!actionCmd || actionBtn.disabled) return;
+      var actionExtra = {};
+      var actionConversationId = actionBtn.getAttribute("data-conversation-id");
+      if (actionConversationId) actionExtra.conversationId = actionConversationId;
+      var actionWorkspaceKey = actionBtn.getAttribute("data-workspace-key");
+      if (actionWorkspaceKey) actionExtra.workspaceKey = actionWorkspaceKey;
+      var actionProjectKey = actionBtn.getAttribute("data-project-key");
+      if (actionProjectKey) actionExtra.projectKey = actionProjectKey;
+      var actionBackupTier = actionBtn.getAttribute("data-backup-tier");
+      if (actionBackupTier) actionExtra.backupTier = actionBackupTier;
+      if (actionCmd === "chats:open" && actionConversationId) {
+        groupedChatsState.openingConversationId = actionConversationId;
+        renderGroupedChats();
+      }
+      post(actionCmd, actionExtra);
+      return;
+    }
     var cmdBtn = el && el.closest ? el.closest("[data-command]") : null;
     if (!cmdBtn) return;
+    if (cmdBtn.disabled) return;
     var cmd = cmdBtn.getAttribute("data-command");
     if (!cmd) return;
     var extra = {};
     var conversationId = cmdBtn.getAttribute("data-conversation-id");
     if (conversationId) extra.conversationId = conversationId;
+    var workspaceKey = cmdBtn.getAttribute("data-workspace-key");
+    if (workspaceKey) extra.workspaceKey = workspaceKey;
+    var projectKey = cmdBtn.getAttribute("data-project-key");
+    if (projectKey) extra.projectKey = projectKey;
     var bundlePath = cmdBtn.getAttribute("data-bundle-path");
     if (bundlePath) extra.bundlePath = bundlePath;
+    if (cmd === "chats:toggleGroup" && projectKey) {
+      var currently = isGroupExpanded(projectKey);
+      if (!currently) {
+        groupedChatsState.expanded = {};
+      }
+      groupedChatsState.expanded[projectKey] = !currently;
+      if (!currently) {
+        var group = groupedChatsState.groups.find(function (g) {
+          return g.projectKey === projectKey;
+        });
+        if (
+          group &&
+          (!group.rows || group.rows.length === 0) &&
+          (group.conversationCount || 0) > 0
+        ) {
+          groupedChatsState.loadingGroups[projectKey] = true;
+          renderGroupedChats();
+          post("chats:loadGroup", { projectKey: projectKey });
+          return;
+        }
+      }
+      renderGroupedChats();
+      return;
+    }
+    if (cmd === "chats:groupPrev" && projectKey) {
+      groupedChatsState.pageByGroup[projectKey] =
+        (groupedChatsState.pageByGroup[projectKey] || 0) - 1;
+      renderGroupedChats();
+      return;
+    }
+    if (cmd === "chats:groupNext" && projectKey) {
+      groupedChatsState.pageByGroup[projectKey] =
+        (groupedChatsState.pageByGroup[projectKey] || 0) + 1;
+      renderGroupedChats();
+      return;
+    }
     post(cmd, extra);
   });
 
@@ -112,37 +353,35 @@
       return;
     }
 
-    if (msg.type === "chats:recent") {
-      var el = document.getElementById("chats-recent");
-      if (!el) return;
-      if (!msg.rows || msg.rows.length === 0) {
-        el.innerHTML = '<div class="empty-state">No chats in this workspace</div>';
-        return;
+    if (msg.type === "chats:grouped") {
+      groupedChatsState.groups = msg.groups || [];
+      groupedChatsState.pageByGroup = {};
+      groupedChatsState.loadingGroups = {};
+      renderGroupedChats();
+    }
+
+    if (msg.type === "chats:groupRows") {
+      var pk = msg.projectKey;
+      if (pk) {
+        var target = groupedChatsState.groups.find(function (g) {
+          return g.projectKey === pk;
+        });
+        if (target) {
+          target.rows = msg.rows || [];
+        }
+        delete groupedChatsState.loadingGroups[pk];
+        renderGroupedChats();
       }
-      el.innerHTML = msg.rows
-        .map(function (r) {
-          return (
-            '<div class="chat-row">' +
-            '<div class="chat-row-info">' +
-            '<div class="chat-row-title">' +
-            escHtml(r.label || r.conversationId) +
-            "</div>" +
-            '<div class="chat-row-meta">' +
-            escHtml(r.detail || "") +
-            "</div>" +
-            "</div>" +
-            '<div class="chat-row-actions">' +
-            '<button class="chat-action-btn" data-command="chats:reactivate" data-conversation-id="' +
-            escHtml(r.conversationId) +
-            '">Open</button>' +
-            '<button class="chat-action-btn" data-command="chats:revealTranscripts" data-conversation-id="' +
-            escHtml(r.conversationId) +
-            '">Files</button>' +
-            "</div>" +
-            "</div>"
-          );
-        })
-        .join("");
+    }
+
+    if (msg.type === "chats:openComplete") {
+      if (
+        msg.conversationId &&
+        groupedChatsState.openingConversationId === msg.conversationId
+      ) {
+        groupedChatsState.openingConversationId = null;
+        renderGroupedChats();
+      }
     }
 
     if (msg.type === "chats:imports") {
@@ -272,24 +511,11 @@
     if (msg.type === "settings:current") {
       var vals = msg.values;
       if (!vals) return;
-      Object.keys(vals).forEach(function (k) {
-        var settingsKey =
-          k === "activateDefault"
-            ? "chatImport.activateDefault"
-            : k === "activateStrict"
-              ? "chatImport.activateStrict"
-              : k === "bridgeWaitResultSeconds"
-                ? "chatImport.bridgeWaitResultSeconds"
-                : k === "autoReloadAfterImport"
-                  ? "transcripts.autoReloadAfterImport"
-                  : k === "pythonPath"
-                    ? "chatImport.pythonPath"
-                    : null;
-        if (!settingsKey) return;
-        var el6 = document.getElementById(settingsKey);
+      Object.keys(vals).forEach(function (key) {
+        var el6 = document.getElementById(key);
         if (!el6) return;
-        if (el6.type === "checkbox") el6.checked = Boolean(vals[k]);
-        else el6.value = vals[k];
+        if (el6.type === "checkbox") el6.checked = Boolean(vals[key]);
+        else el6.value = vals[key];
       });
     }
   });

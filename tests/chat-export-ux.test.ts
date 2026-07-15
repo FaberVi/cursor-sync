@@ -7,6 +7,29 @@ const showErrorMessageMock = vi.fn();
 const showInformationMessageMock = vi.fn();
 
 const testEnv = { home: "" };
+const buildChatsKeyToFolderMapMock = vi.hoisted(() =>
+  vi.fn<typeof import("../src/chat-workspace-context.js").buildChatsKeyToFolderMap>()
+);
+
+vi.mock("../src/chat-workspace-context.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/chat-workspace-context.js")>(
+    "../src/chat-workspace-context.js"
+  );
+  return {
+    ...actual,
+    buildChatsKeyToFolderMap: buildChatsKeyToFolderMapMock,
+  };
+});
+
+vi.mock("../src/paths.js", () => ({
+  resolveSyncRoots: () => {
+    const pathMod = require("node:path") as typeof import("node:path");
+    return {
+      cursorUser: pathMod.join(testEnv.home, "Cursor", "User"),
+      dotCursor: pathMod.join(testEnv.home, ".cursor"),
+    };
+  },
+}));
 
 vi.mock("vscode", () => ({
   window: {
@@ -26,8 +49,9 @@ vi.mock("../src/transcripts.js", async () => {
   return {
     __chatPersistenceInternals: {
       resolveChatsRoot: () => path.join(testEnv.home, ".cursor", "chats"),
-      querySqliteRows: vi.fn(),
+      querySqliteRows: vi.fn().mockResolvedValue([]),
       resolveStateDbCandidates: vi.fn().mockResolvedValue([]),
+      listGlobalStateVscdbPaths: vi.fn().mockResolvedValue([]),
     },
   };
 });
@@ -38,6 +62,7 @@ describe("chat-export-ux", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    buildChatsKeyToFolderMapMock.mockResolvedValue(new Map());
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "chat-export-ux-"));
     testEnv.home = tmpRoot;
     chatsRoot = path.join(tmpRoot, ".cursor", "chats");
@@ -57,38 +82,36 @@ describe("chat-export-ux", () => {
 
   it("listConversationsForWorkspace includes dirs with store.db only", async () => {
     const wk = "workspace-md5";
-    const withStore = path.join(chatsRoot, wk, "conv-a");
-    const withoutStore = path.join(chatsRoot, wk, "conv-b");
+    const convId = "11111111-2222-4333-8444-555555555555";
+    const withStore = path.join(chatsRoot, wk, convId);
+    const withoutStore = path.join(chatsRoot, wk, "22222222-3333-4444-8555-666666666666");
     await fs.mkdir(withStore, { recursive: true });
     await fs.mkdir(withoutStore, { recursive: true });
     await fs.writeFile(path.join(withStore, "store.db"), "sqlite", "utf-8");
     const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
     const { listConversationsForWorkspace } = await import("../src/chat-export-ux.js");
     const rows = await listConversationsForWorkspace(wk, chatsRoot, projectsRoot);
-    expect(rows.map((r) => r.conversationId)).toEqual(["conv-a"]);
+    expect(rows.map((r) => r.conversationId)).toEqual([convId]);
   });
 
   it("returns null when workspace picker dismissed", async () => {
     await fs.mkdir(path.join(chatsRoot, "wk-a"), { recursive: true });
     await fs.mkdir(path.join(chatsRoot, "wk-b"), { recursive: true });
-    showQuickPickMock.mockResolvedValueOnce(undefined);
     const { pickChatsForExport } = await import("../src/chat-export-ux.js");
     await expect(pickChatsForExport()).resolves.toBeNull();
+    expect(showQuickPickMock).not.toHaveBeenCalled();
   });
 
   it("returns workspaceKey and conversationIds on success", async () => {
     const wk = "wk-md5";
-    await fs.mkdir(path.join(chatsRoot, wk, "conv-1"), { recursive: true });
-    await fs.writeFile(path.join(chatsRoot, wk, "conv-1", "store.db"), "x");
-    await fs.mkdir(path.join(chatsRoot, wk, "wk-b"), { recursive: true });
-    await fs.mkdir(path.join(chatsRoot, "wk-other"), { recursive: true });
-    showQuickPickMock
-      .mockResolvedValueOnce({ description: wk })
-      .mockResolvedValueOnce([{ description: "conv-1" }]);
+    const convId = "11111111-2222-4333-8444-555555555555";
+    await fs.mkdir(path.join(chatsRoot, wk, convId), { recursive: true });
+    await fs.writeFile(path.join(chatsRoot, wk, convId, "store.db"), "x");
+    showQuickPickMock.mockResolvedValueOnce([{ description: convId }]);
     const { pickChatsForExport } = await import("../src/chat-export-ux.js");
     await expect(pickChatsForExport()).resolves.toEqual({
       workspaceKey: wk,
-      conversationIds: ["conv-1"],
+      conversationIds: [convId],
     });
   });
 });
@@ -99,6 +122,7 @@ describe("listConversationsForWorkspace labels", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    buildChatsKeyToFolderMapMock.mockResolvedValue(new Map());
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "chat-export-ux-"));
     testEnv.home = tmpRoot;
     chatsRoot = path.join(tmpRoot, ".cursor", "chats");
@@ -108,7 +132,7 @@ describe("listConversationsForWorkspace labels", () => {
 
   it("uses composer name when provided in index", async () => {
     const wk = "wk-1";
-    const convId = "conv-composer";
+    const convId = "11111111-2222-4333-8444-555555555555";
     await fs.mkdir(path.join(chatsRoot, wk, convId), { recursive: true });
     await fs.writeFile(path.join(chatsRoot, wk, convId, "store.db"), "x");
     const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
@@ -123,7 +147,7 @@ describe("listConversationsForWorkspace labels", () => {
 
   it("uses workspace-scoped composer index over global-only wrong name", async () => {
     const wk = "wk-1";
-    const convId = "conv-shared";
+    const convId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
     await fs.mkdir(path.join(chatsRoot, wk, convId), { recursive: true });
     await fs.writeFile(path.join(chatsRoot, wk, convId, "store.db"), "x");
     const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
@@ -139,7 +163,7 @@ describe("listConversationsForWorkspace labels", () => {
 
   it("skips skills preamble and uses first user message", async () => {
     const wk = "wk-2";
-    const convId = "conv-transcript";
+    const convId = "22222222-3333-4444-8555-666666666666";
     await fs.mkdir(path.join(chatsRoot, wk, convId), { recursive: true });
     await fs.writeFile(path.join(chatsRoot, wk, convId, "store.db"), "x");
     const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
@@ -176,7 +200,7 @@ describe("listConversationsForWorkspace labels", () => {
 
   it("falls back to conversationId when no title sources", async () => {
     const wk = "wk-3";
-    const convId = "only-id";
+    const convId = "33333333-4444-4555-8666-777777777777";
     await fs.mkdir(path.join(chatsRoot, wk, convId), { recursive: true });
     await fs.writeFile(path.join(chatsRoot, wk, convId, "store.db"), "x");
     const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
@@ -185,7 +209,7 @@ describe("listConversationsForWorkspace labels", () => {
       workspaceIndex: new Map(),
       globalIndex: new Map(),
     });
-    expect(rows[0]!.label).toBe("only-id");
+    expect(rows[0]!.label).toBe(convId);
   });
 });
 
@@ -195,6 +219,7 @@ describe("pickChatsForExport workspace labels", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    buildChatsKeyToFolderMapMock.mockResolvedValue(new Map());
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "chat-export-ux-"));
     testEnv.home = tmpRoot;
     chatsRoot = path.join(tmpRoot, ".cursor", "chats");
@@ -207,24 +232,18 @@ describe("pickChatsForExport workspace labels", () => {
     const folder = path.join(tmpRoot, "dev", "my-app");
     await fs.mkdir(folder, { recursive: true });
     const chatsKey = md5FolderKey(path.resolve(folder));
-    await fs.mkdir(path.join(chatsRoot, chatsKey), { recursive: true });
-    await fs.mkdir(path.join(chatsRoot, "zzz-other-workspace"), { recursive: true });
-    const cursorUser = path.join(tmpRoot, "Cursor", "User");
-    const wsDir = path.join(cursorUser, "workspaceStorage", "ws-1");
-    await fs.mkdir(wsDir, { recursive: true });
-    const { pathToFileURL } = await import("node:url");
+    const convId = "44444444-5555-4666-8777-888888888888";
+    await fs.mkdir(path.join(chatsRoot, chatsKey, convId), { recursive: true });
+    await fs.writeFile(path.join(chatsRoot, chatsKey, convId, "store.db"), "x");
+    const otherConv = "55555555-6666-4777-8888-999999999999";
+    await fs.mkdir(path.join(chatsRoot, "zzz-other-workspace", otherConv), { recursive: true });
     await fs.writeFile(
-      path.join(wsDir, "workspace.json"),
-      JSON.stringify({ folder: pathToFileURL(path.resolve(folder)).href }),
-      "utf8"
+      path.join(chatsRoot, "zzz-other-workspace", otherConv, "store.db"),
+      "x"
     );
-    vi.doMock("../src/paths.js", () => ({
-      resolveSyncRoots: () => ({
-        cursorUser,
-        dotCursor: path.join(tmpRoot, ".cursor"),
-      }),
-    }));
-    vi.resetModules();
+    buildChatsKeyToFolderMapMock.mockResolvedValue(
+      new Map([[chatsKey, path.resolve(folder)]])
+    );
     showQuickPickMock.mockResolvedValueOnce(undefined);
     const { pickChatsForExport } = await import("../src/chat-export-ux.js");
     await pickChatsForExport();
@@ -232,7 +251,8 @@ describe("pickChatsForExport workspace labels", () => {
       label: string;
       description: string;
     }>;
-    expect(firstPickArg[0]!.label).toBe("~/dev/my-app");
-    expect(firstPickArg[0]!.description).toBe(chatsKey);
+    const row = firstPickArg.find((p) => p.description === chatsKey);
+    expect(row).toBeDefined();
+    expect(row!.label.replace(/\\/g, "/")).toBe("~/dev/my-app");
   });
 });

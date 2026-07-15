@@ -29,6 +29,7 @@ export type SyncDebugFailure = {
 };
 
 export const DEBUG_WITH_CURSOR_ACTION = "Debug with Cursor";
+export const RESOLVE_CONFLICTS_ACTION = "Resolve Conflicts";
 
 const CLIPBOARD_FALLBACK_MESSAGE =
   "The debug prompt was copied to your clipboard. Paste it into Cursor chat to continue debugging.";
@@ -295,7 +296,16 @@ export async function showSyncFailureWithDebug(
       ? vscode.window.showWarningMessage.bind(vscode.window)
       : vscode.window.showErrorMessage.bind(vscode.window);
 
-  const selection = await showMessage(message, DEBUG_WITH_CURSOR_ACTION);
+  const actions =
+    failure.category === "CONFLICT"
+      ? [RESOLVE_CONFLICTS_ACTION, DEBUG_WITH_CURSOR_ACTION]
+      : [DEBUG_WITH_CURSOR_ACTION];
+
+  const selection = await showMessage(message, ...actions);
+  if (selection === RESOLVE_CONFLICTS_ACTION) {
+    await vscode.commands.executeCommand("cursorSync.resolveConflicts");
+    return;
+  }
   if (selection === DEBUG_WITH_CURSOR_ACTION) {
     await openComposerWithPrefilledPrompt(prompt);
   }

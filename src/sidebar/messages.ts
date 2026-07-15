@@ -4,13 +4,33 @@ import { clearImports } from "./import-history.js";
 export type SidebarMessage =
   | { command: "syncNow" | "push" | "pull" | "export" | "import" | "configure" }
   | { command: "chats:listLocal" }
+  | { command: "chats:loadGroup"; projectKey: string }
   | { command: "chats:listImports" }
   | { command: "chats:listBundles" }
   | { command: "chats:export"; conversationId: string }
   | { command: "chats:exportGist"; conversationId: string }
   | { command: "chats:importBundle"; bundlePath?: string }
-  | { command: "chats:reactivate"; conversationId: string }
-  | { command: "chats:revealTranscripts"; conversationId: string }
+  | {
+      command: "chats:open";
+      conversationId: string;
+      workspaceKey?: string;
+      projectKey?: string;
+      backupTier?: string;
+    }
+  | {
+      command: "chats:revealFiles";
+      conversationId: string;
+      workspaceKey?: string;
+      projectKey?: string;
+    }
+  | {
+      command: "chats:reactivate";
+      conversationId: string;
+      workspaceKey?: string;
+      projectKey?: string;
+      backupTier?: string;
+    }
+  | { command: "chats:revealTranscripts"; conversationId: string; workspaceKey?: string; projectKey?: string }
   | { command: "chats:clearHistory" }
   | { command: "settings:get" }
   | { command: "settings:set"; key: string; value: unknown };
@@ -40,9 +60,23 @@ export async function dispatchSidebarMessage(
       await vscode.commands.executeCommand("cursorSync.configureGithub");
       break;
     case "chats:listLocal": {
-      const { listLocalConversations } = await import("./chats-tab.js");
-      const result = await listLocalConversations();
-      await webview.postMessage({ type: "chats:recent", rows: result.rows });
+      const { listLocalConversationsGrouped } = await import("./chats-tab.js");
+      const result = await listLocalConversationsGrouped();
+      await webview.postMessage({
+        type: "chats:grouped",
+        groups: result.groups,
+        totalConversations: result.totalConversations,
+      });
+      break;
+    }
+    case "chats:loadGroup": {
+      const { loadConversationGroupRows } = await import("./chats-tab.js");
+      const rows = await loadConversationGroupRows(msg.projectKey);
+      await webview.postMessage({
+        type: "chats:groupRows",
+        projectKey: msg.projectKey,
+        rows,
+      });
       break;
     }
     case "chats:listImports": {
@@ -64,54 +98,54 @@ export async function dispatchSidebarMessage(
       await vscode.commands.executeCommand("cursorSync.exportChatToGist");
       break;
     case "chats:importBundle":
-      await vscode.commands.executeCommand("cursorSync.importChatBundle");
+      await vscode.commands.executeCommand(
+        "cursorSync.importChatBundle",
+        msg.bundlePath
+      );
       break;
+    case "chats:open":
     case "chats:reactivate": {
-      const folders = vscode.workspace.workspaceFolders;
-      if (!folders || folders.length === 0) {
-        await webview.postMessage({
-          type: "chats:reactivate:result",
-          conversationId: msg.conversationId,
-          ok: false,
-          error: "No workspace folder open",
-        });
-        break;
-      }
-      const folder = folders[0];
-      if (!folder) {
-        await webview.postMessage({
-          type: "chats:reactivate:result",
-          conversationId: msg.conversationId,
-          ok: false,
-          error: "No workspace folder open",
-        });
-        break;
-      }
+      const conversationId = msg.conversationId;
       try {
-        const { activateExistingChat } = await import("../chat-activate-existing.js");
-        const outcome = await activateExistingChat(
-          context,
-          msg.conversationId,
-          folder.uri
-        );
-        await webview.postMessage({
-          type: "chats:reactivate:result",
-          conversationId: msg.conversationId,
-          ...outcome,
-        });
-      } catch (err) {
-        await webview.postMessage({
-          type: "chats:reactivate:result",
-          conversationId: msg.conversationId,
-          ok: false,
-          error: String(err),
-        });
+        const folders = vscode.workspace.workspaceFolders;
+        if (!conversationId) {
+          void vscode.window.showWarningMessage("Missing conversation id for Open.");
+        } else if (!folders || folders.length === 0) {
+          void vscode.window.showWarningMessage("Open a workspace folder first.");
+        } else {
+          try {
+            const { openConversation } = await import("./chats-tab.js");
+            await openConversation(context, conversationId, {
+              workspaceKey: msg.workspaceKey,
+              projectKey: msg.projectKey,
+              backupTier: msg.backupTier,
+            });
+          } catch (err) {
+            void vscode.window.showErrorMessage(`Could not open chat: ${String(err)}`);
+          }
+        }
+      } finally {
+        if (conversationId) {
+          await webview.postMessage({
+            type: "chats:openComplete",
+            conversationId,
+          });
+        }
       }
       break;
     }
+    case "chats:revealFiles":
     case "chats:revealTranscripts": {
-      const { revealTranscriptsForConversation } = await import("./chats-tab.js");
-      await revealTranscriptsForConversation(msg.conversationId);
+      if (!msg.conversationId) {
+        void vscode.window.showWarningMessage("Missing conversation id for Files.");
+        break;
+      }
+      try {
+        const { revealConversationFiles } = await import("./chats-tab.js");
+        await revealConversationFiles(msg.conversationId, msg.workspaceKey, msg.projectKey);
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Could not reveal files: ${String(err)}`);
+      }
       break;
     }
     case "chats:clearHistory":
@@ -125,9 +159,16 @@ export async function dispatchSidebarMessage(
       break;
     }
     case "settings:set": {
-      const { updateSettingValue } = await import("./settings-tab.js");
+      const { updateSettingValue, readSettingsValues } = await import("./settings-tab.js");
       await updateSettingValue(msg.key, msg.value);
+      await webview.postMessage({ type: "settings:current", values: readSettingsValues() });
+      if (msg.key === "chats.syncEnabled") {
+        const { refreshSidebar } = await import("./index.js");
+        refreshSidebar();
+      }
       break;
     }
+    default:
+      break;
   }
 }

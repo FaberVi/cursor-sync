@@ -343,6 +343,11 @@ function parseComposerDataEntryValue(raw: unknown): Record<string, unknown> | nu
   return null;
 }
 
+/** Decode hex or UTF-8 cursorDiskKV composerData value JSON. */
+export function parseComposerDataKvJson(raw: unknown): Record<string, unknown> | null {
+  return parseComposerDataEntryValue(raw);
+}
+
 async function readComposerDataEntryFromDiskKv(
   dbPath: string,
   conversationId: string

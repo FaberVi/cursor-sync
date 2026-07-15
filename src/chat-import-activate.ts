@@ -16,6 +16,8 @@ import {
   readRichComposerDataEntryFromStateDb,
   repairComposerDataAfterActivation,
 } from "./chat-import-merge.js";
+import { repairDiskKvAfterActivation } from "./chat-disk-kv-import.js";
+import { hydratePartialStateFromBundleDiskKv } from "./native-chat-json/hydrate.js";
 import type { WorkspaceContext } from "./chat-workspace-context.js";
 import { stateDbPathForWorkspaceStorageId } from "./chat-workspace-context.js";
 import { resolveSyncRoots } from "./paths.js";
@@ -28,6 +30,54 @@ export const OPEN_COMPOSER_COMMAND_ID = "composer.openComposer";
 export const FOCUS_COMPOSER_COMMAND_ID = "composer.focusComposer";
 export const COMPOSER_URI_SCHEME = "cursor.composer";
 export const MANIFEST_VERSION = 1;
+
+export type OpenComposerCommandOptions = {
+  openInNewTab?: boolean;
+  view?: string;
+  openExistingOnly?: boolean;
+};
+
+export function buildOpenComposerCommandOptions(
+  options: OpenComposerCommandOptions = {}
+): Record<string, unknown> {
+  return {
+    openInNewTab: options.openInNewTab ?? true,
+    view: options.view ?? "editor",
+    openExistingOnly: options.openExistingOnly ?? true,
+  };
+}
+
+/** Open an on-disk composer without replacing the active chat tab. */
+export async function openExistingComposerInNewTab(
+  composerId: string,
+  options: { view?: string; log?: (message: string) => void } = {}
+): Promise<boolean> {
+  const log = options.log ?? (() => {});
+  const trimmed = composerId.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (!(await composerCommandAvailable(OPEN_COMPOSER_COMMAND_ID))) {
+    return false;
+  }
+  const openOpts = buildOpenComposerCommandOptions({
+    openInNewTab: true,
+    view: options.view ?? "editor",
+    openExistingOnly: true,
+  });
+  try {
+    await vscode.commands.executeCommand(
+      OPEN_COMPOSER_COMMAND_ID,
+      trimmed,
+      openOpts
+    );
+    return true;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`composer.openComposer (new tab) failed: ${message}`);
+    return false;
+  }
+}
 
 export const ACTIVATION_DIR = path.join(os.homedir(), ".cursor", "import-activation");
 export const ACTIVATION_PENDING_PATH = path.join(ACTIVATION_DIR, "pending.json");
@@ -466,11 +516,14 @@ async function tryOpenViaComposerCommands(
 ): Promise<boolean> {
   const openAvailable = await composerCommandAvailable(OPEN_COMPOSER_COMMAND_ID);
   const focusAvailable = await composerCommandAvailable(FOCUS_COMPOSER_COMMAND_ID);
-  const openOpts = {
+  const openOpts = buildOpenComposerCommandOptions({
     openInNewTab: manifest.openInNewTab,
-    view: manifest.createComposerOptions.view ?? "editor",
+    view:
+      typeof manifest.createComposerOptions.view === "string"
+        ? manifest.createComposerOptions.view
+        : "editor",
     openExistingOnly: true,
-  };
+  });
 
   if (openAvailable) {
     try {
@@ -483,20 +536,22 @@ async function tryOpenViaComposerCommands(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log(`composer.openComposer failed: ${message}`);
-      try {
-        await vscode.commands.executeCommand(
-          OPEN_COMPOSER_COMMAND_ID,
-          manifest.composerId
-        );
-        return true;
-      } catch (err2) {
-        const message2 = err2 instanceof Error ? err2.message : String(err2);
-        log(`composer.openComposer (id only) failed: ${message2}`);
+      if (!manifest.openInNewTab) {
+        try {
+          await vscode.commands.executeCommand(
+            OPEN_COMPOSER_COMMAND_ID,
+            manifest.composerId
+          );
+          return true;
+        } catch (err2) {
+          const message2 = err2 instanceof Error ? err2.message : String(err2);
+          log(`composer.openComposer (id only) failed: ${message2}`);
+        }
       }
     }
   }
 
-  if (focusAvailable) {
+  if (!manifest.openInNewTab && focusAvailable) {
     try {
       await vscode.commands.executeCommand(
         FOCUS_COMPOSER_COMMAND_ID,
@@ -817,7 +872,31 @@ export async function runPostImportActivation(
   const manifest = normalizeActivationManifest(
     raw as unknown as Record<string, unknown>
   );
+  const cfg = vscode.workspace.getConfiguration("cursorSync");
+  const useProtobuf = cfg.get<boolean>("chatImport.useProtobufHydration") ?? true;
+  const useIde = cfg.get<boolean>("chatImport.useIdeHydration") ?? false;
+  const strictDiskGates = cfg.get<boolean>("chatImport.strictDiskGates") ?? false;
+
+  if (useProtobuf && !useIde) {
+    const partial = manifest.partialState as PartialState;
+    if (
+      hydratePartialStateFromBundleDiskKv(
+        partial,
+        bundle as ChatBundle,
+        conversationId
+      )
+    ) {
+      log("Hydrated partialState from bundle diskKv (protobuf path).");
+    }
+  }
+
   await enrichManifestPartialStateFromDisk(manifest, workspaceCtx.workspaceStorageId);
+
+  if (strictDiskGates && !partialStateHasConversationContent(manifest.partialState)) {
+    throw new Error(
+      "strictDiskGates: partialState has no conversation content after hydration."
+    );
+  }
 
   log(`Activating composer ${conversationId}...`);
 
@@ -834,6 +913,21 @@ export async function runPostImportActivation(
     const { cursorUser } = resolveSyncRoots();
     const globalDb = path.join(cursorUser, "globalStorage", "state.vscdb");
     await repairComposerDataAfterActivation(globalDb, conversationId, partial);
+    const diskKvRepairWorkspace = await repairDiskKvAfterActivation(
+      dbPath,
+      conversationId,
+      bundle
+    );
+    const diskKvRepairGlobal = await repairDiskKvAfterActivation(
+      globalDb,
+      conversationId,
+      bundle
+    );
+    if (diskKvRepairWorkspace.repaired || diskKvRepairGlobal.repaired) {
+      log(
+        `Re-persisted diskKv after activation (workspace=${diskKvRepairWorkspace.rowCount}, global=${diskKvRepairGlobal.rowCount} rows).`
+      );
+    }
     return activationOutcome;
   }
 

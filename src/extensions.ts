@@ -1,4 +1,7 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import * as vscode from "vscode";
+import { resolveSyncRoots } from "./paths.js";
 
 interface ExtensionEntry {
   id: string;
@@ -27,6 +30,15 @@ export function generateExtensionsJson(): string {
 
   entries.sort((a, b) => a.id.localeCompare(b.id));
   return JSON.stringify(entries, null, 2);
+}
+
+/** Regenerates extensions.json from installed extensions before checksum/conflict checks. */
+export async function ensureExtensionsJsonOnDisk(): Promise<void> {
+  const { cursorUser } = resolveSyncRoots();
+  const filePath = path.join(cursorUser, "extensions.json");
+  const content = generateExtensionsJson();
+  await fs.mkdir(cursorUser, { recursive: true });
+  await fs.writeFile(filePath, content, "utf-8");
 }
 
 export function findMissingExtensions(

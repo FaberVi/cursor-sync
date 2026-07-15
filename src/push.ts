@@ -15,6 +15,17 @@ import {
   buildSyncDebugFailure,
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
+import {
+  CHAT_BUNDLES_SYNC_KEY,
+  CURSOR_CHAT_GIST_FILE_NAME,
+  CURSOR_CHAT_SYNC_KEY,
+  formatChatSyncFidelityToast,
+  isChatSyncEnabled,
+  prepareChatSyncPushPayload,
+  storeChatSyncFingerprint,
+  computeChatSyncLocalFingerprint,
+} from "./chat-sync.js";
+import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import type { SyncState } from "./types.js";
 
 export type PushTrigger = "manual" | "scheduled";
@@ -99,7 +110,26 @@ async function doPush(
   const syncState = await loadSyncState(context);
 
   if (syncState) {
-    const remoteChecksums = syncState.remoteChecksums;
+    let remoteChecksums = syncState.remoteChecksums;
+    if (syncState.gistId) {
+      const gistResult = await withRetry(() => client.getGist(syncState.gistId));
+      if (gistResult.ok) {
+        const manifestFile = gistResult.data.files["manifest.json"];
+        if (manifestFile) {
+          try {
+            const manifest = JSON.parse(manifestFile.content) as {
+              files: Record<string, { checksum: string }>;
+            };
+            remoteChecksums = {};
+            for (const [key, entry] of Object.entries(manifest.files)) {
+              remoteChecksums[key] = entry.checksum;
+            }
+          } catch {
+            // Fall back to last-known remote checksums.
+          }
+        }
+      }
+    }
     const conflicts = await detectConflicts(context, remoteChecksums);
     if (conflicts.length > 0) {
       const unresolved = conflicts.filter((c) => {
@@ -119,6 +149,9 @@ async function doPush(
         );
         logger.appendLine(`[${new Date().toISOString()}] Push blocked: CONFLICT`);
         sendEvent(context, "sync_failed", { direction: "push", reason: "CONFLICT", trigger });
+        if (trigger === "manual") {
+          await vscode.commands.executeCommand("cursorSync.resolveConflicts");
+        }
         return false;
       }
     }
@@ -134,6 +167,52 @@ async function doPush(
   const { packaged, manifest } = await packageFiles(files, profileName);
 
   const gistFiles: Record<string, { content: string }> = {};
+  let chatBundleCount = 0;
+  let pushNativeChatFile = false;
+  if (isChatSyncEnabled()) {
+    try {
+      const chatPayload = await prepareChatSyncPushPayload(
+        context,
+        syncState?.gistId,
+        token,
+        { report: () => {} }
+      );
+      if (chatPayload) {
+        manifest.files[chatPayload.syncKey] = {
+          checksum: chatPayload.checksum,
+          sizeBytes: chatPayload.sizeBytes,
+        };
+        chatBundleCount = chatPayload.bundleCount;
+        gistFiles[chatPayload.gistFileName] = { content: chatPayload.content };
+        pushNativeChatFile = chatPayload.gistFileName === CURSOR_CHAT_GIST_FILE_NAME;
+        pushNativeChatFile = chatPayload.gistFileName === CURSOR_CHAT_GIST_FILE_NAME;
+        const fidelity = chatPayload.fidelityReport;
+        const lowTier =
+          fidelity.byTier.archive + fidelity.byTier.partial;
+        if (lowTier > 0 || fidelity.textOnlyLayer4 > 0) {
+          const detail = formatChatSyncFidelityToast(fidelity);
+          logger.appendLine(
+            `[${new Date().toISOString()}] [chat-sync] push fidelity: ${detail}`
+          );
+          void vscode.window.showWarningMessage(
+            `Chat sync: ${detail}. See Output for details.`,
+            "Show Output"
+          ).then((choice) => {
+            if (choice === "Show Output") {
+              logger.show();
+            }
+          });
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.appendLine(
+        `[${new Date().toISOString()}] Push chat sync skipped: ${msg}`
+      );
+      vscode.window.showWarningMessage(`Settings push continues; chat sync skipped: ${msg}`);
+    }
+  }
+
   gistFiles["manifest.json"] = { content: JSON.stringify(manifest, null, 2) };
 
   for (const [key, value] of packaged) {
@@ -192,9 +271,16 @@ async function doPush(
     if (existingResult.ok) {
       const existingFiles = Object.keys(existingResult.data.files);
       for (const existing of existingFiles) {
-        if (existing !== "manifest.json" && !gistFiles[existing]) {
-          filesToDelete[existing] = null;
+        if (existing === "manifest.json" || gistFiles[existing]) {
+          continue;
         }
+        if (existing === CHAT_BUNDLES_GIST_FILE_NAME && !isChatSyncEnabled()) {
+          continue;
+        }
+        filesToDelete[existing] = null;
+      }
+      if (pushNativeChatFile) {
+        filesToDelete[CHAT_BUNDLES_GIST_FILE_NAME] = null;
       }
     }
 
@@ -241,6 +327,17 @@ async function doPush(
   for (const [key, value] of packaged) {
     checksums[key] = value.checksum;
   }
+  if (gistFiles[CURSOR_CHAT_GIST_FILE_NAME]) {
+    const chatEntry = manifest.files[CURSOR_CHAT_SYNC_KEY];
+    if (chatEntry) {
+      checksums[CURSOR_CHAT_SYNC_KEY] = chatEntry.checksum;
+    }
+  } else if (gistFiles[CHAT_BUNDLES_GIST_FILE_NAME]) {
+    const chatEntry = manifest.files[CHAT_BUNDLES_SYNC_KEY];
+    if (chatEntry) {
+      checksums[CHAT_BUNDLES_SYNC_KEY] = chatEntry.checksum;
+    }
+  }
 
   const newState: SyncState = {
     lastSyncTimestamp: new Date().toISOString(),
@@ -250,9 +347,15 @@ async function doPush(
     remoteChecksums: checksums,
   };
   await saveSyncState(context, newState);
+  if (isChatSyncEnabled()) {
+    const fingerprint = await computeChatSyncLocalFingerprint();
+    await storeChatSyncFingerprint(context, fingerprint);
+  }
   clearConflicts();
 
   const fileCount = packaged.size;
+  const chatSuffix =
+    chatBundleCount > 0 ? ` · ${chatBundleCount} chat(s)` : "";
   await addSyncHistoryEntry(context, {
     timestamp: new Date().toISOString(),
     direction: "push",
@@ -267,7 +370,7 @@ async function doPush(
     is_new_gist: isNewGist,
   });
   vscode.window.showInformationMessage(
-    `Push complete: ${fileCount} file(s) synced.`
+    `Push complete: ${fileCount} file(s) synced${chatSuffix}.`
   );
   logger.appendLine(
     `[${new Date().toISOString()}] Push succeeded: ${fileCount} files`

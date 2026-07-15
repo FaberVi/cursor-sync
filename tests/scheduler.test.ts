@@ -40,6 +40,17 @@ vi.mock("../src/pull.js", () => ({
   isPullLocked: isPullLockedMock,
 }));
 
+vi.mock("../src/chat-sync.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/chat-sync.js")>(
+    "../src/chat-sync.js"
+  );
+  return {
+    ...actual,
+    isChatSyncEnabled: vi.fn(() => false),
+    computeChatSyncLocalFingerprint: vi.fn(async () => "chat-fingerprint"),
+  };
+});
+
 function mockContext(): import("vscode").ExtensionContext {
   return {
     globalStorageUri: { fsPath: "/tmp/cursor-sync-test" },
@@ -541,16 +552,10 @@ describe("determineSyncAction", () => {
     const retry = await import("../src/retry.js");
     vi.spyOn(retry, "withRetry").mockImplementation((fn: () => unknown) => fn());
 
-    const paths = await import("../src/paths.js");
-    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
-      { absolutePath: "/tmp/settings.json", relativeSyncKey: "cursor-user/settings.json" },
-    ]);
-
-    const fsPromises = await import("node:fs/promises");
-    vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from("local-changed"));
-
-    const packaging = await import("../src/packaging.js");
-    vi.spyOn(packaging, "computeChecksum").mockReturnValue("ccc333");
+    const conflictsMod = await import("../src/conflicts.js");
+    vi.spyOn(conflictsMod, "computeLocalChecksums").mockResolvedValue({
+      "cursor-user/settings.json": "ccc333",
+    });
 
     const { determineSyncAction } = await import("../src/scheduler.js");
     const context = {

@@ -6,7 +6,7 @@ import { getToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { getLogger } from "./diagnostics.js";
 import { resolveSyncRoots, gistFileNameToSyncKey } from "./paths.js";
-import { createBackup, rollbackFromBackup, pruneOldBackups } from "./rollback.js";
+import { createBackup, rollbackFromBackup, pruneOldBackups, ensureParentDirectory } from "./rollback.js";
 import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
 import type { Manifest } from "./types.js";
 
@@ -136,8 +136,7 @@ export async function executeImport(context: vscode.ExtensionContext): Promise<v
 
   for (const file of filesToWrite) {
     try {
-      const dir = path.dirname(file.absolutePath);
-      await fs.mkdir(dir, { recursive: true });
+      await ensureParentDirectory(file.absolutePath);
       const tmpPath = file.absolutePath + ".tmp";
       await fs.writeFile(tmpPath, file.content);
       await fs.rename(tmpPath, file.absolutePath);

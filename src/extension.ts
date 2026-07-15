@@ -14,6 +14,7 @@ import {
   executeImportChatBundleActivate,
   executeVerifyChatImport,
 } from "./chat-persistence.js";
+import { executeValidateChatBackups } from "./chat-backup-validate.js";
 import {
   executeExportChatToGist,
   executeExportCurrentChatBundleToGist,
@@ -148,8 +149,8 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.importChatBundle", () =>
-      executeImportChatBundle(context)
+    vscode.commands.registerCommand("cursorSync.importChatBundle", (bundlePath?: string) =>
+      executeImportChatBundle(context, bundlePath)
     )
   );
 
@@ -174,6 +175,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.verifyChatImport", () =>
       executeVerifyChatImport(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.validateChatBackups", () =>
+      executeValidateChatBackups(context)
     )
   );
 

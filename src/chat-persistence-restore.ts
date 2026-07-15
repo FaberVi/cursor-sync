@@ -48,7 +48,7 @@ import { parseChatBundleOrCollection } from "./chat-bundle-format.js";
 import {
   fidelityFieldsForImportHistory,
   publishImportFidelitySummary,
-} from "./sidebar/chats-tab.js";
+} from "./sidebar/chats-tab-fidelity.js";
 import { recordImport as recordImportEntry } from "./sidebar/import-history.js";
 import type { ChatBundle, LoadChatResult, RestoreChatBundleOptions } from "./chat-persistence.js";
 import type { WorkspaceContext } from "./chat-workspace-context.js";
@@ -241,6 +241,9 @@ async function ensureGoldenStoreDb(
   );
   return { storeWritten: true, warnings };
 }
+
+/** @see AGENTS.md — writes store.db from golden template when export lacks store snapshot. */
+export const ensureNativeChatStoreDb = ensureGoldenStoreDb;
 
 function applyProjectMappingToBundle(
   bundle: ChatBundle,
@@ -532,6 +535,24 @@ export async function restoreChatBundle(
         throw new Error(
           `Activation verify failed:\n${formatVerifyReport(activationChecks)}`
         );
+      }
+      const fidelity = summarizeBundleFidelity(workingBundle);
+      if (options.activateStrict && fidelity.toolBubbleCount > 0) {
+        const layer4Checks = (
+          await runDiskAndActivationVerify(conversationId, wsCtx, {
+            bundle: workingBundle,
+            strictLayer4: true,
+          })
+        ).filter((c) => c.name.startsWith("layer4."));
+        verifyChecks.push(...layer4Checks);
+        for (const c of layer4Checks) {
+          logChatRestoreDebug(`verify: ${formatVerifyCheckLine(c)}`);
+        }
+        if (!verifyChecksAllOk(layer4Checks)) {
+          throw new Error(
+            `Layer 4 verify failed (activate-strict):\n${formatVerifyReport(layer4Checks)}`
+          );
+        }
       }
     } else if (options.postActivate) {
       progress.report({ message: "Verifying activation..." });

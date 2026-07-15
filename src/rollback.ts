@@ -43,6 +43,39 @@ export async function createBackup(
   return { backupDir, entries };
 }
 
+/** Ensures the parent directory exists and is writable (replaces broken symlinks/junctions). */
+export async function ensureParentDirectory(absolutePath: string): Promise<void> {
+  const dir = path.dirname(absolutePath);
+  try {
+    const stat = await fs.lstat(dir);
+    if (stat.isSymbolicLink()) {
+      try {
+        const followed = await fs.stat(dir);
+        if (followed.isDirectory()) {
+          return;
+        }
+      } catch {
+        // Broken symlink/junction: replace with a real directory.
+      }
+      await fs.rm(dir, { recursive: true, force: true });
+      await fs.mkdir(dir, { recursive: true });
+      return;
+    }
+    if (stat.isDirectory()) {
+      return;
+    }
+    await fs.unlink(dir);
+    await fs.mkdir(dir, { recursive: true });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      await fs.mkdir(dir, { recursive: true });
+      return;
+    }
+    throw err;
+  }
+}
+
 export async function rollbackFromBackup(entries: BackupEntry[]): Promise<void> {
   const logger = getLogger();
   for (const entry of entries) {

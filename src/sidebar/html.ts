@@ -1,5 +1,11 @@
 import * as vscode from "vscode";
 import { loadSyncState, loadSyncHistory } from "../diagnostics.js";
+import {
+  countLocalDiscoveredChats,
+  isChatSyncEnabled,
+  fetchRemoteChatCollection,
+} from "../chat-sync.js";
+import { requireToken } from "../auth.js";
 import type { SyncTabState } from "./sync-tab.js";
 import { renderSyncPane } from "./sync-tab.js";
 import { renderSettingsPane, readSettingsValues } from "./settings-tab.js";
@@ -9,6 +15,21 @@ export async function buildSyncTabState(
 ): Promise<SyncTabState> {
   const syncState = await loadSyncState(context);
   const history = await loadSyncHistory(context);
+  const chatsSyncEnabled = isChatSyncEnabled();
+  const localChatCount = await countLocalDiscoveredChats();
+  let remoteChatCount: number | undefined;
+
+  if (chatsSyncEnabled && syncState?.gistId) {
+    const token = await requireToken(context);
+    if (token) {
+      try {
+        const remote = await fetchRemoteChatCollection(context, syncState.gistId, token);
+        remoteChatCount = remote?.length ?? 0;
+      } catch {
+        remoteChatCount = undefined;
+      }
+    }
+  }
 
   if (!syncState) {
     return {
@@ -18,6 +39,9 @@ export async function buildSyncTabState(
       fileCount: 0,
       gistId: undefined,
       history,
+      chatsSyncEnabled,
+      localChatCount,
+      remoteChatCount,
     };
   }
 
@@ -28,6 +52,9 @@ export async function buildSyncTabState(
     fileCount: Object.keys(syncState.localChecksums).length,
     gistId: syncState.gistId,
     history,
+    chatsSyncEnabled,
+    localChatCount,
+    remoteChatCount,
   };
 }
 
@@ -65,7 +92,10 @@ export async function renderSidebarHtml(
       background: #14120b;
       padding: 0;
       line-height: 1.5;
-      min-height: 100vh;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
 
     /* ── Tab Bar ── */
@@ -103,6 +133,9 @@ export async function renderSidebarHtml(
     /* ── Tab Panes ── */
     .tab-pane {
       padding: 14px;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
     }
 
     /* ── Status Card ── */
@@ -420,7 +453,82 @@ export async function renderSidebarHtml(
       align-items: center;
       justify-content: space-between;
     }
-    .chats-list { display: flex; flex-direction: column; gap: 2px; }
+    .chats-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .chats-grouped {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .chat-group {
+      border: 1px solid rgba(237, 236, 236, 0.06);
+      border-radius: 8px;
+      background: #0f0e0c;
+      flex-shrink: 0;
+    }
+    .chat-group-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      min-height: 36px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.35;
+      color: #edecec;
+      background: #1a1814;
+      transition: background 0.15s ease;
+    }
+    .chat-group-header:hover {
+      background: #1f1c18;
+    }
+    .chat-group-header.current {
+      background: #1a1f1c;
+      border-left: 2px solid rgba(52, 211, 153, 0.55);
+    }
+    .chat-group-chevron {
+      font-size: 11px;
+      color: #9ca3af;
+      width: 12px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .chat-group-label {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #f3f1ed;
+    }
+    .chat-group-count {
+      font-size: 10px;
+      font-weight: 500;
+      color: #9ca3af;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .chat-group-body {
+      border-top: 1px solid rgba(237, 236, 236, 0.04);
+      padding: 4px;
+    }
+    .chat-group-body.collapsed {
+      display: none;
+    }
+    .chat-group-loading {
+      padding: 10px 12px;
+      font-size: 11px;
+      color: rgba(237, 236, 236, 0.45);
+    }
+    .chat-group-pager {
+      margin-top: 4px;
+      padding: 0 4px 4px;
+    }
     .chat-row {
       display: flex;
       align-items: flex-start;
@@ -453,6 +561,36 @@ export async function renderSidebarHtml(
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .chat-tier-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 600;
+      vertical-align: middle;
+      letter-spacing: 0.02em;
+    }
+    .chat-tier-full {
+      color: #34d399;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.25);
+    }
+    .chat-tier-resume {
+      color: #60a5fa;
+      background: rgba(96, 165, 250, 0.1);
+      border: 1px solid rgba(96, 165, 250, 0.22);
+    }
+    .chat-tier-partial {
+      color: #fbbf24;
+      background: rgba(251, 191, 36, 0.1);
+      border: 1px solid rgba(251, 191, 36, 0.22);
+    }
+    .chat-tier-archive {
+      color: rgba(237, 236, 236, 0.45);
+      background: rgba(237, 236, 236, 0.06);
+      border: 1px solid rgba(237, 236, 236, 0.1);
+    }
     .chat-row-actions {
       display: flex;
       gap: 4px;
@@ -467,11 +605,58 @@ export async function renderSidebarHtml(
       background: transparent;
       color: rgba(237, 236, 236, 0.4);
       transition: all 0.15s ease;
+      position: relative;
+      z-index: 2;
+      pointer-events: auto;
     }
     .chat-action-btn:hover {
       border-color: rgba(52, 211, 153, 0.3);
       color: #34d399;
       background: rgba(52, 211, 153, 0.04);
+    }
+    .chat-action-btn.is-loading {
+      cursor: wait;
+      color: #34d399;
+      border-color: rgba(52, 211, 153, 0.35);
+      background: rgba(52, 211, 153, 0.08);
+      opacity: 0.9;
+    }
+    .chat-action-btn:disabled {
+      cursor: wait;
+      opacity: 0.85;
+    }
+    .chats-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 8px;
+      padding: 0 2px;
+    }
+    .pager-btn {
+      padding: 4px 10px;
+      border: 1px solid rgba(237, 236, 236, 0.08);
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      background: transparent;
+      color: rgba(237, 236, 236, 0.5);
+      transition: all 0.15s ease;
+    }
+    .pager-btn:hover:not(:disabled) {
+      border-color: rgba(52, 211, 153, 0.3);
+      color: #34d399;
+    }
+    .pager-btn:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+    .pager-label {
+      font-size: 11px;
+      color: rgba(237, 236, 236, 0.35);
+      flex: 1;
+      text-align: center;
+      white-space: nowrap;
     }
     .progress-card {
       padding: 10px 12px;
@@ -552,6 +737,18 @@ export async function renderSidebarHtml(
       outline: none;
       border-color: rgba(52, 211, 153, 0.4);
     }
+    .settings-hint {
+      font-size: 11px;
+      color: rgba(237, 236, 236, 0.32);
+      padding: 0 4px 4px;
+      line-height: 1.4;
+    }
+    .chat-sync-disabled {
+      color: rgba(237, 236, 236, 0.32);
+    }
+    .chat-sync-status {
+      margin-bottom: 12px;
+    }
     input[type="checkbox"] {
       accent-color: #34d399;
       width: 14px;
@@ -577,9 +774,9 @@ export async function renderSidebarHtml(
 
     <div class="chats-section">
       <div class="chats-section-header">
-        <span>Recent in this workspace</span>
+        <span>Local chats by project</span>
       </div>
-      <div id="chats-recent" class="chats-list">
+      <div id="chats-grouped" class="chats-grouped">
         <div class="empty-state">Loading\u2026</div>
       </div>
     </div>

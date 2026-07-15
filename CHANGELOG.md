@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## v0.9.0
+
+### Added
+- **Native chat JSON transport** (`src/native-chat-json/`): `cursor-chat.json` / `cursor-chat-collection` with `conversationState`, `blobs`, optional `storeDb`, `diskKv`, and transcripts; bundle ↔ native bridge and `restoreNativeChatsBatch` / `restoreNativeChatJson`.
+- **Chat sync v0.9**: Push writes `cursor-chat.json` (`dot-cursor/cursor-chat.json`); pull accepts native format with fallback to legacy `chat-bundles.json`; encryption kind `cursor-chat-collection`.
+- **Backup fidelity tiers** (`full` / `resume` / `partial` / `archive`) with sidebar badges, pre-push warnings, and optional `chats.syncOnlyFullBackups`.
+- **`cursorSync.validateChatBackups`**: local backup checklist (tier, store.db path, diskKv probe) with Output report.
+- **Pull chat updates**: `chats.pullUpdates` and `chats.pullUpdatePolicy` (skip / remoteWins / newerWins / ask).
+- **Import settings**: `chatImport.useProtobufHydration`, `useIdeHydration`, `strictDiskGates`; protobuf hydration from bundle diskKv before IDE activation.
+- **Layer 4 repair**: `repairDiskKvAfterActivation` after composer activation and sidebar writeback flush.
+- **`syncImportedComposerSidebar`**, **`parseComposerDataKvJson`**, **`ensureNativeChatStoreDb`** (golden store alias).
+- **Import verify Layer 4** checks (`layer4.composerData`, `bubbles`, `toolBubbles`); `activateStrict` fails on missing tool bubbles when bundle expects them.
+- **`docs/transcript-fidelity-matrix.md`**; tests for native bridge, single-chat sync, diskKv repair, and strict Layer 4.
+
+### Changed
+- `enrichBundleWithLiveDiskKv`: retry on locked global `state.vscdb`, schema v2 promotion, warning when many diskKv rows have zero tool bubbles.
+- Discovery counts **subagent** JSONL files under `agent-transcripts/<id>/subagents/`.
+- Sidebar Chats: backup-eligible filter, tier badges on expand, Open warning for archive/partial tiers.
+- Post-pull activation prompt when `activateDefault` is off (`chat-pull-activation.ts`).
+
+### Fixed
+- Sidebar chat pagination **Next** no longer intercepted by row action handler.
+- **Files** reveal works for `~/.cursor/` paths (OS reveal + Windows `explorer.exe` fallback).
+- `hasStore` enrichment from disk when chats exist under alternate workspace keys.
+
 ## v0.8.0
 
 ### Added

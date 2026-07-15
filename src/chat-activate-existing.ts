@@ -361,7 +361,9 @@ export async function activateExistingChat(
   );
   await ensureSidebarStateForOpen(conversationId, wsCtx, activationBundle);
 
-  const raw = buildActivationManifest(activationBundle, conversationId, wsCtx);
+  const raw = buildActivationManifest(activationBundle, conversationId, wsCtx, {
+    openInNewTab: true,
+  });
   const manifest = normalizeActivationManifest(
     raw as unknown as Record<string, unknown>
   );

@@ -4,6 +4,7 @@ import * as os from "node:os";
 import type { ChatBundle } from "./chat-persistence.js";
 import type { WorkspaceContext } from "./chat-workspace-context.js";
 import { sidebarSnapshotHasComposerData } from "./chat-partial-state.js";
+import { bundleHasNativeDiskKv } from "./chat-bundle-fidelity.js";
 import { resolveSyncRoots } from "./paths.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
@@ -200,7 +201,105 @@ async function composerDataHasConversationKey(
 export interface VerifyImportVisibilityOptions {
   expectRichComposerData?: boolean;
   expectStore?: boolean;
+  expectLayer4?: boolean;
+  strictLayer4?: boolean;
   deps?: Partial<VerifyIoDeps>;
+}
+
+async function verifyLayer4DiskKv(
+  deps: VerifyIoDeps,
+  conversationId: string,
+  expectLayer4: boolean,
+  strictLayer4: boolean
+): Promise<VerifyCheck[]> {
+  const checks: VerifyCheck[] = [];
+  const globalDb = deps.globalStateDbPath();
+  if (!(await deps.fileExists(globalDb))) {
+    checks.push({
+      name: "layer4.globalDb",
+      status: expectLayer4 ? "FAIL" : "SKIP",
+      detail: "global state.vscdb missing",
+    });
+    return checks;
+  }
+
+  const composerKey = `composerData:${conversationId}`;
+  const escComposerKey = composerKey.replace(/'/g, "''");
+  const composerRows = await deps.querySqliteRows(
+    globalDb,
+    `SELECT key, value FROM cursorDiskKV WHERE key = '${escComposerKey}' LIMIT 1`
+  );
+  if (composerRows.length === 0) {
+    checks.push({
+      name: "layer4.composerData",
+      status: expectLayer4 ? "FAIL" : "WARN",
+      detail: `missing cursorDiskKV row ${composerKey}`,
+    });
+  } else {
+    checks.push({
+      name: "layer4.composerData",
+      status: "OK",
+      detail: composerKey,
+    });
+  }
+
+  const prefix = `bubbleId:${conversationId}:`;
+  const escPrefix = prefix.replace(/'/g, "''");
+  const bubbleRows = await deps.querySqliteRows(
+    globalDb,
+    `SELECT key, value FROM cursorDiskKV WHERE key LIKE '${escPrefix}%'`
+  );
+  let toolBubbleCount = 0;
+  for (const row of bubbleRows) {
+    const raw = row.value;
+    if (typeof raw !== "string") {
+      continue;
+    }
+    try {
+      const obj = JSON.parse(raw) as Record<string, unknown>;
+      if (obj.toolFormerData) {
+        toolBubbleCount += 1;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  if (bubbleRows.length === 0) {
+    checks.push({
+      name: "layer4.bubbles",
+      status: expectLayer4 ? "FAIL" : "WARN",
+      detail: "no bubbleId rows in cursorDiskKV",
+    });
+  } else {
+    checks.push({
+      name: "layer4.bubbles",
+      status: "OK",
+      detail: `${bubbleRows.length} bubble row(s)`,
+    });
+  }
+
+  if (toolBubbleCount > 0) {
+    checks.push({
+      name: "layer4.toolBubbles",
+      status: "OK",
+      detail: `${toolBubbleCount} with toolFormerData`,
+    });
+  } else if (expectLayer4) {
+    checks.push({
+      name: "layer4.toolBubbles",
+      status: strictLayer4 ? "FAIL" : "WARN",
+      detail: "no toolFormerData bubbles (text-only Layer 4)",
+    });
+  } else {
+    checks.push({
+      name: "layer4.toolBubbles",
+      status: "SKIP",
+      detail: "not required for this bundle",
+    });
+  }
+
+  return checks;
 }
 
 export async function verifyImportVisibility(
@@ -211,6 +310,8 @@ export async function verifyImportVisibility(
   const deps = { ...defaultDeps(), ...options.deps };
   const expectRichComposerData = options.expectRichComposerData ?? false;
   const expectStore = options.expectStore ?? false;
+  const expectLayer4 = options.expectLayer4 ?? false;
+  const strictLayer4 = options.strictLayer4 ?? false;
   const checks: VerifyCheck[] = [];
 
   const chatsKey = workspaceContext?.chatsWorkspaceKey ?? null;
@@ -391,6 +492,10 @@ export async function verifyImportVisibility(
     }
   }
 
+  checks.push(
+    ...(await verifyLayer4DiskKv(deps, conversationId, expectLayer4, strictLayer4))
+  );
+
   return checks;
 }
 
@@ -541,6 +646,7 @@ export interface RunDiskAndActivationVerifyOptions {
   postActivate?: boolean;
   expectRichComposerData?: boolean;
   expectStore?: boolean;
+  strictLayer4?: boolean;
   deps?: Partial<VerifyIoDeps>;
   pendingPath?: string;
   resultPath?: string;
@@ -554,6 +660,7 @@ export async function runDiskAndActivationVerify(
   const bundle = options.bundle;
   let expectRich = options.expectRichComposerData;
   let expectStore = options.expectStore;
+  let expectLayer4: boolean | undefined;
   if (bundle != null) {
     if (expectRich === undefined) {
       expectRich = sidebarSnapshotHasComposerData(bundle, conversationId);
@@ -566,10 +673,13 @@ export async function runDiskAndActivationVerify(
         !Array.isArray(snap) &&
         !!(snap as Record<string, unknown>).content;
     }
+    expectLayer4 = bundleHasNativeDiskKv(bundle);
   }
   const checks = await verifyImportVisibility(conversationId, workspaceContext, {
     expectRichComposerData: expectRich ?? false,
     expectStore: expectStore ?? false,
+    expectLayer4: expectLayer4 ?? false,
+    strictLayer4: options.strictLayer4 ?? false,
     deps: options.deps,
   });
   if (options.postActivate) {

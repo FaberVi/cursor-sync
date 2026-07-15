@@ -10,6 +10,7 @@ import { computeChecksum } from "./packaging.js";
 import { enumerateSyncFiles } from "./paths.js";
 import { loadSyncState } from "./diagnostics.js";
 import { getLogger } from "./diagnostics.js";
+import { ensureExtensionsJsonOnDisk } from "./extensions.js";
 
 let pendingResolutions: ResolvedConflict[] = [];
 let pendingConflicts: ConflictEntry[] = [];
@@ -28,6 +29,68 @@ export function clearConflicts(): void {
   vscode.commands.executeCommand("setContext", "cursorSync.hasConflicts", false);
 }
 
+export async function computeLocalChecksums(): Promise<Record<string, string>> {
+  await ensureExtensionsJsonOnDisk();
+  const localFiles = await enumerateSyncFiles();
+  const localChecksums: Record<string, string> = {};
+  for (const file of localFiles) {
+    try {
+      const buf = await fs.readFile(file.absolutePath);
+      localChecksums[file.relativeSyncKey] = computeChecksum(buf);
+    } catch {
+      continue;
+    }
+  }
+  return localChecksums;
+}
+
+export function findConflicts(
+  syncState: SyncState,
+  localChecksums: Record<string, string>,
+  remoteChecksums: Record<string, string>
+): ConflictEntry[] {
+  const allKeys = new Set([
+    ...Object.keys(localChecksums),
+    ...Object.keys(remoteChecksums),
+    ...Object.keys(syncState.localChecksums),
+    ...Object.keys(syncState.remoteChecksums),
+  ]);
+
+  const conflicts: ConflictEntry[] = [];
+  for (const key of allKeys) {
+    const baseLocal = syncState.localChecksums[key];
+    const baseRemote = syncState.remoteChecksums[key];
+    const currentLocal = localChecksums[key];
+    const currentRemote = remoteChecksums[key];
+    const localChanged = currentLocal !== baseLocal;
+    const remoteChanged = currentRemote !== baseRemote;
+
+    if (localChanged && remoteChanged && currentLocal !== currentRemote) {
+      conflicts.push({
+        relativeSyncKey: key,
+        localChecksum: currentLocal ?? "",
+        remoteChecksum: currentRemote ?? "",
+        baseChecksum: baseLocal ?? baseRemote ?? "",
+      });
+    }
+  }
+  return conflicts;
+}
+
+export async function registerPendingConflicts(
+  conflicts: ConflictEntry[]
+): Promise<void> {
+  if (conflicts.length === 0) {
+    return;
+  }
+  pendingConflicts = conflicts;
+  await vscode.commands.executeCommand(
+    "setContext",
+    "cursorSync.hasConflicts",
+    true
+  );
+}
+
 export async function detectConflicts(
   context: vscode.ExtensionContext,
   remoteChecksums: Record<string, string>
@@ -37,61 +100,14 @@ export async function detectConflicts(
     return [];
   }
 
-  const localFiles = await enumerateSyncFiles();
-  const localChecksums: Record<string, string> = {};
-
-  for (const file of localFiles) {
-    try {
-      const buf = await fs.readFile(file.absolutePath);
-      localChecksums[file.relativeSyncKey] = computeChecksum(buf);
-    } catch {
-      continue;
-    }
-  }
-
-  const conflicts: ConflictEntry[] = [];
-  const allKeys = new Set([
-    ...Object.keys(localChecksums),
-    ...Object.keys(remoteChecksums),
-  ]);
-
-  for (const key of allKeys) {
-    const baseLocal = syncState.localChecksums[key];
-    const baseRemote = syncState.remoteChecksums[key];
-    const currentLocal = localChecksums[key];
-    const currentRemote = remoteChecksums[key];
-
-    if (!baseLocal || !baseRemote) {
-      continue;
-    }
-
-    const localChanged = currentLocal !== baseLocal;
-    const remoteChanged = currentRemote !== baseRemote;
-
-    if (localChanged && remoteChanged && currentLocal !== currentRemote) {
-      conflicts.push({
-        relativeSyncKey: key,
-        localChecksum: currentLocal ?? "",
-        remoteChecksum: currentRemote ?? "",
-        baseChecksum: baseLocal,
-      });
-    }
-  }
-
-  if (conflicts.length > 0) {
-    pendingConflicts = conflicts;
-    await vscode.commands.executeCommand(
-      "setContext",
-      "cursorSync.hasConflicts",
-      true
-    );
-  }
-
+  const localChecksums = await computeLocalChecksums();
+  const conflicts = findConflicts(syncState, localChecksums, remoteChecksums);
+  await registerPendingConflicts(conflicts);
   return conflicts;
 }
 
 export async function resolveConflictsCommand(
-  context: vscode.ExtensionContext
+  _context: vscode.ExtensionContext
 ): Promise<void> {
   const logger = getLogger();
 

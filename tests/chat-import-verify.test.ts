@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
+
+vi.mock("../src/transcripts.js", () => ({
+  __chatPersistenceInternals: {
+    querySqliteRows: vi.fn().mockResolvedValue([]),
+    runSqliteScript: vi.fn().mockResolvedValue(undefined),
+    listGlobalStateVscdbPaths: vi.fn().mockResolvedValue([]),
+    resolveChatsRoot: () => "/mock/.cursor/chats",
+    resolveStateDbCandidates: vi.fn().mockResolvedValue([]),
+  },
+}));
+
 import type { ChatBundle } from "../src/chat-persistence.js";
 import type { WorkspaceContext } from "../src/chat-workspace-context.js";
 import {
@@ -272,6 +283,74 @@ describe("chat-import-verify", () => {
       ).toMatchObject({
         status: "FAIL",
         detail: "bundle sidebar had composerData but disk key missing",
+      });
+    });
+
+    it("OK layer4 tool bubbles when cursorDiskKV rows exist", async () => {
+      const globalDb = "/mock/global/state.vscdb";
+      const deps = makeDeps({
+        querySqliteRows: async (dbPath, sql) => {
+          if (dbPath !== globalDb) {
+            return [];
+          }
+          if (sql.includes("composerData:")) {
+            return [{ key: `composerData:${CID}`, value: "{}" }];
+          }
+          if (sql.includes("bubbleId:")) {
+            return [
+              {
+                key: `bubbleId:${CID}:b1`,
+                value: JSON.stringify({ toolFormerData: { name: "read" } }),
+              },
+            ];
+          }
+          return [];
+        },
+      });
+      (deps as VerifyIoDeps & { _markExists: (p: string) => void })._markExists(
+        globalDb
+      );
+
+      const checks = await verifyImportVisibility(CID, workspaceContext, {
+        expectLayer4: true,
+        deps,
+      });
+      expect(checkNamed(checks, "layer4.composerData")).toMatchObject({
+        status: "OK",
+      });
+      expect(checkNamed(checks, "layer4.toolBubbles")).toMatchObject({
+        status: "OK",
+        detail: "1 with toolFormerData",
+      });
+    });
+
+    it("FAIL layer4 tool bubbles under strictLayer4 when missing", async () => {
+      const globalDb = "/mock/global/state.vscdb";
+      const deps = makeDeps({
+        querySqliteRows: async (dbPath, sql) => {
+          if (dbPath !== globalDb) {
+            return [];
+          }
+          if (sql.includes("composerData:")) {
+            return [{ key: `composerData:${CID}`, value: "{}" }];
+          }
+          if (sql.includes("bubbleId:")) {
+            return [{ key: `bubbleId:${CID}:b1`, value: JSON.stringify({ text: "hi" }) }];
+          }
+          return [];
+        },
+      });
+      (deps as VerifyIoDeps & { _markExists: (p: string) => void })._markExists(
+        globalDb
+      );
+
+      const checks = await verifyImportVisibility(CID, workspaceContext, {
+        expectLayer4: true,
+        strictLayer4: true,
+        deps,
+      });
+      expect(checkNamed(checks, "layer4.toolBubbles")).toMatchObject({
+        status: "FAIL",
       });
     });
   });

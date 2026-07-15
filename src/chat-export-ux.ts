@@ -1,13 +1,16 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import {
+  discoverAllConversations,
+  discoverBackupEligibleConversations,
+  discoverConversationsForOpenWorkspace,
+  discoveredToExportRows,
+  filterBackupEligibleConversations,
+  type ConversationExportRow,
+} from "./chat-discovery.js";
 import { buildChatsKeyToFolderMap } from "./chat-workspace-context.js";
 import { workspaceQuickPickLabel } from "./chat-workspace-label.js";
-import {
-  loadComposerNameIndexForChatsWorkspaceKey,
-  loadGlobalComposerNameIndex,
-  resolveComposerConversationTitle,
-} from "./composer-title.js";
 import { resolveSyncRoots } from "./paths.js";
 import { __chatPersistenceInternals } from "./transcripts.js";
 
@@ -20,12 +23,7 @@ export interface WorkspaceDir {
   fullPath: string;
 }
 
-export interface ConversationExportRow {
-  conversationId: string;
-  label: string;
-  description: string;
-  detail: string;
-}
+export type { ConversationExportRow } from "./chat-discovery.js";
 
 export interface ChatExportSelection {
   workspaceKey: string;
@@ -35,11 +33,6 @@ export interface ChatExportSelection {
 export interface ListConversationsOptions {
   workspaceIndex?: Map<string, string>;
   globalIndex?: Map<string, string>;
-}
-
-function resolveProjectsRoot(): string {
-  const { dotCursor } = resolveSyncRoots();
-  return path.join(dotCursor, "projects");
 }
 
 export async function listChatsWorkspaceDirs(chatsRoot: string): Promise<WorkspaceDir[]> {
@@ -55,153 +48,88 @@ export async function listChatsWorkspaceDirs(chatsRoot: string): Promise<Workspa
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function countJsonlForConversation(
-  projectsRoot: string,
-  conversationId: string
-): Promise<number> {
-  let count = 0;
-  let projectDirs: import("node:fs").Dirent[];
-  try {
-    projectDirs = await fs.readdir(projectsRoot, { withFileTypes: true });
-  } catch {
-    return 0;
-  }
-  for (const dir of projectDirs) {
-    if (!dir.isDirectory()) continue;
-    const transcriptDir = path.join(projectsRoot, dir.name, "agent-transcripts", conversationId);
-    let files: string[];
-    try {
-      files = await fs.readdir(transcriptDir);
-    } catch {
-      continue;
-    }
-    count += files.filter((f) => f.endsWith(".jsonl")).length;
-  }
-  return count;
-}
-
-async function readTranscriptContentForConversation(
-  projectsRoot: string,
-  conversationId: string
-): Promise<string | null> {
-  let projectDirs: import("node:fs").Dirent[];
-  try {
-    projectDirs = await fs.readdir(projectsRoot, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  for (const dir of projectDirs) {
-    if (!dir.isDirectory()) continue;
-    const transcriptDir = path.join(projectsRoot, dir.name, "agent-transcripts", conversationId);
-    let files: string[];
-    try {
-      files = await fs.readdir(transcriptDir);
-    } catch {
-      continue;
-    }
-    const jsonl = files.find((f) => f.endsWith(".jsonl"));
-    if (!jsonl) continue;
-    try {
-      return (await fs.readFile(path.join(transcriptDir, jsonl), "utf-8")).toString();
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
 export async function listConversationsForWorkspace(
   workspaceKey: string,
   chatsRoot: string,
   projectsRoot: string,
   options: ListConversationsOptions = {}
 ): Promise<ConversationExportRow[]> {
-  const workspaceIndex =
-    options.workspaceIndex ??
-    (await loadComposerNameIndexForChatsWorkspaceKey(workspaceKey));
-  const globalIndex =
-    options.globalIndex ?? (await loadGlobalComposerNameIndex());
-  const workspacePath = path.join(chatsRoot, workspaceKey);
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = await fs.readdir(workspacePath, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const rows: ConversationExportRow[] = [];
-  for (const ent of entries) {
-    if (!ent.isDirectory()) continue;
-    const conversationId = ent.name;
-    const storePath = path.join(workspacePath, conversationId, "store.db");
-    try {
-      const stat = await fs.stat(storePath);
-      if (!stat.isFile()) continue;
-    } catch {
-      continue;
-    }
-    const jsonlCount = await countJsonlForConversation(projectsRoot, conversationId);
-    const transcriptContent =
-      (await readTranscriptContentForConversation(projectsRoot, conversationId)) ?? null;
-    const title = await resolveComposerConversationTitle({
-      conversationId,
-      transcriptContent,
-      workspaceIndex,
-      globalIndex,
-    });
-    const parts = [
-      jsonlCount > 0 ? `${jsonlCount} jsonl` : "no jsonl",
-      "store.db",
-    ];
-    rows.push({
-      conversationId,
-      label: title,
-      description: conversationId,
-      detail: parts.join(" · "),
-    });
-  }
-  return rows.sort((a, b) => a.conversationId.localeCompare(b.conversationId));
+  const all = filterBackupEligibleConversations(await discoverAllConversations());
+  const filtered = all.filter(
+    (d) => d.workspaceKey === workspaceKey || (!d.workspaceKey && Boolean(workspaceKey))
+  );
+  return discoveredToExportRows(filtered, {
+    workspaceIndex: options.workspaceIndex,
+    globalIndex: options.globalIndex,
+    projectsRoot,
+  });
+}
+
+export async function listConversationsForOpenWorkspace(
+  options: ListConversationsOptions = {}
+): Promise<ConversationExportRow[]> {
+  const { dotCursor } = resolveSyncRoots();
+  const projectsRoot = path.join(dotCursor, "projects");
+  const discovered = filterBackupEligibleConversations(
+    await discoverConversationsForOpenWorkspace()
+  );
+  return discoveredToExportRows(discovered, { ...options, projectsRoot });
 }
 
 export async function pickChatsForExport(): Promise<ChatExportSelection | null> {
   const chatsRoot = resolveChatsRoot();
-  const workspaces = await listChatsWorkspaceDirs(chatsRoot);
-
-  if (workspaces.length === 0) {
+  const discovered = await discoverBackupEligibleConversations();
+  if (discovered.length === 0) {
     vscode.window.showErrorMessage(
-      "No local chat workspaces found. Open a workspace in Cursor first."
+      "No local chats found. Create chats in Cursor or open a workspace with agent-transcripts."
     );
     return null;
   }
 
   const { cursorUser } = resolveSyncRoots();
   const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+  const byWorkspace = new Map<string, typeof discovered>();
+  for (const item of discovered) {
+    const key = item.workspaceKey || "_unknown";
+    const list = byWorkspace.get(key) ?? [];
+    list.push(item);
+    byWorkspace.set(key, list);
+  }
 
   let workspaceKey: string;
-  if (workspaces.length === 1) {
-    workspaceKey = workspaces[0]!.name;
+  const workspaceKeys = [...byWorkspace.keys()].sort();
+  if (workspaceKeys.length === 1) {
+    workspaceKey = workspaceKeys[0]!;
   } else {
-    const pick = await vscode.window.showQuickPick(
-      workspaces.map((w) => {
-        const row = workspaceQuickPickLabel(w.name, folderMap);
-        return { label: row.label, description: row.description, detail: w.fullPath };
-      }),
-      {
-        title: "Select workspace for chat export",
-        placeHolder: "Choose the workspace whose chats you want to export",
-        ignoreFocusOut: true,
+    const picks = workspaceKeys.map((key) => {
+      const count = byWorkspace.get(key)?.length ?? 0;
+      if (key === "_unknown") {
+        return {
+          label: "Unknown workspace",
+          description: key,
+          detail: `${count} chat(s)`,
+        };
       }
-    );
-    if (!pick?.description) return null;
+      const row = workspaceQuickPickLabel(key, folderMap);
+      return {
+        label: row.label,
+        description: key,
+        detail: `${count} chat(s) · ${row.description}`,
+      };
+    });
+    const pick = await vscode.window.showQuickPick(picks, {
+      title: "Select workspace for chat export",
+      placeHolder: "Choose the workspace whose chats you want to export",
+      ignoreFocusOut: true,
+    });
+    if (!pick?.description) {
+      return null;
+    }
     workspaceKey = pick.description;
   }
 
-  const projectsRoot = resolveProjectsRoot();
-  const conversations = await listConversationsForWorkspace(
-    workspaceKey,
-    chatsRoot,
-    projectsRoot
-  );
-
+  const workspaceDiscovered = byWorkspace.get(workspaceKey) ?? [];
+  const conversations = await discoveredToExportRows(workspaceDiscovered);
   if (conversations.length === 0) {
     vscode.window.showInformationMessage("No conversations found in this workspace.");
     return null;
@@ -223,10 +151,12 @@ export async function pickChatsForExport(): Promise<ChatExportSelection | null> 
     }
   );
 
-  if (!convPicks || convPicks.length === 0) return null;
+  if (!convPicks || convPicks.length === 0) {
+    return null;
+  }
 
   return {
-    workspaceKey,
+    workspaceKey: workspaceKey === "_unknown" ? "" : workspaceKey,
     conversationIds: convPicks.map((p) => p.description!).filter(Boolean),
   };
 }

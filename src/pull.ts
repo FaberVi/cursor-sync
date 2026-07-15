@@ -8,7 +8,7 @@ import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./
 import { resolveSyncRoots, gistFileNameToSyncKey } from "./paths.js";
 import { computeChecksum } from "./packaging.js";
 import { detectConflicts, clearConflicts, getResolutionForKey, getPendingConflicts } from "./conflicts.js";
-import { createBackup, rollbackFromBackup, pruneOldBackups } from "./rollback.js";
+import { createBackup, rollbackFromBackup, pruneOldBackups, ensureParentDirectory } from "./rollback.js";
 import { findMissingExtensions, findExtraExtensions } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
@@ -18,7 +18,17 @@ import {
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
 import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
-import type { SyncState, Manifest } from "./types.js";
+import {
+  CHAT_BUNDLES_SYNC_KEY,
+  CURSOR_CHAT_GIST_FILE_NAME,
+  CURSOR_CHAT_SYNC_KEY,
+  isChatSyncEnabled,
+  pullChatCollectionFromGist,
+  storeChatSyncFingerprint,
+  computeChatSyncLocalFingerprint,
+} from "./chat-sync.js";
+import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
+import type { SyncState, Manifest, GistFile } from "./types.js";
 
 export type PullTrigger = "manual" | "scheduled";
 
@@ -229,6 +239,9 @@ async function doPull(
       );
       logger.appendLine(`[${new Date().toISOString()}] Pull blocked: CONFLICT`);
       sendEvent(context, "sync_failed", { direction: "pull", reason: "CONFLICT", trigger });
+      if (trigger === "manual") {
+        await vscode.commands.executeCommand("cursorSync.resolveConflicts");
+      }
       return false;
     }
   }
@@ -238,6 +251,9 @@ async function doPull(
 
   for (const [gistFileName, gistFile] of Object.entries(gistData.files)) {
     if (gistFileName === "manifest.json") {
+      continue;
+    }
+    if (gistFileName === CHAT_BUNDLES_GIST_FILE_NAME) {
       continue;
     }
 
@@ -308,11 +324,12 @@ async function doPull(
 
   const writtenBackups: typeof backupEntries = [];
   let writeError = false;
+  let failedSyncKey: string | undefined;
+  let failedErrorDetail: string | undefined;
 
   for (const file of filesToWrite) {
     try {
-      const dir = path.dirname(file.absolutePath);
-      await fs.mkdir(dir, { recursive: true });
+      await ensureParentDirectory(file.absolutePath);
       const tmpPath = file.absolutePath + ".tmp";
       await fs.writeFile(tmpPath, file.content);
       await fs.rename(tmpPath, file.absolutePath);
@@ -321,9 +338,12 @@ async function doPull(
         writtenBackups.push(backup);
       }
     } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err);
       logger.appendLine(
-        `[${new Date().toISOString()}] Write failed for ${file.absolutePath}: ${err instanceof Error ? err.message : String(err)}`
+        `[${new Date().toISOString()}] Write failed for ${file.syncKey} (${file.absolutePath}): ${errMessage}`
       );
+      failedSyncKey = file.syncKey;
+      failedErrorDetail = errMessage;
       writeError = true;
       break;
     }
@@ -332,8 +352,10 @@ async function doPull(
   if (writeError) {
     logger.appendLine(`[${new Date().toISOString()}] Rolling back partial writes`);
     await rollbackFromBackup(writtenBackups);
-    const writeErrorMessage =
-      "Pull failed: file write error. Changes have been rolled back.";
+    const failureDetail = failedSyncKey
+      ? `Could not write ${failedSyncKey}${failedErrorDetail ? ` (${failedErrorDetail})` : ""}.`
+      : "file write error.";
+    const writeErrorMessage = `Pull failed: ${failureDetail} Changes have been rolled back.`;
     void showSyncFailureWithDebug(
       context,
       buildSyncDebugFailure("pull", trigger, writeErrorMessage, {
@@ -386,8 +408,58 @@ async function doPull(
   });
   await syncExtensionsAfterPull(gistData.files, logger);
 
+  let chatImported = 0;
+  let chatSkipped = 0;
+  let chatUpdated = 0;
+  if (
+    isChatSyncEnabled() &&
+    (gistData.files[CURSOR_CHAT_GIST_FILE_NAME] || gistData.files[CHAT_BUNDLES_GIST_FILE_NAME])
+  ) {
+    try {
+      const chatResult = await pullChatCollectionFromGist(
+        context,
+        gistData.files as Record<string, GistFile | undefined>,
+        token,
+        { report: () => {} }
+      );
+      chatImported = chatResult.imported;
+      chatSkipped = chatResult.skipped;
+      chatUpdated = chatResult.updated;
+      if (chatResult.warnings.length > 0) {
+        for (const w of chatResult.warnings) {
+          logger.appendLine(`[${new Date().toISOString()}] [chat-sync] pull warn: ${w}`);
+        }
+      }
+      const fingerprint = await computeChatSyncLocalFingerprint();
+      await storeChatSyncFingerprint(context, fingerprint);
+      const chatChecksum =
+        remoteChecksums[CURSOR_CHAT_SYNC_KEY] ?? remoteChecksums[CHAT_BUNDLES_SYNC_KEY];
+      const chatSyncKey = remoteChecksums[CURSOR_CHAT_SYNC_KEY]
+        ? CURSOR_CHAT_SYNC_KEY
+        : CHAT_BUNDLES_SYNC_KEY;
+      if (chatChecksum) {
+        const updatedState: SyncState = {
+          ...newState,
+          localChecksums: {
+            ...newState.localChecksums,
+            [chatSyncKey]: chatChecksum,
+          },
+        };
+        await saveSyncState(context, updatedState);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.appendLine(`[${new Date().toISOString()}] Pull chat sync failed: ${msg}`);
+      vscode.window.showWarningMessage(`Settings pulled; chat import failed: ${msg}`);
+    }
+  }
+
+  const chatSuffix =
+    chatImported > 0 || chatSkipped > 0 || chatUpdated > 0
+      ? ` · Chats: ${chatImported} imported, ${chatSkipped} skipped${chatUpdated > 0 ? `, ${chatUpdated} updated` : ""}`
+      : "";
   vscode.window.showInformationMessage(
-    `Pull complete: ${filesToWrite.length} file(s) updated.`
+    `Pull complete: ${filesToWrite.length} file(s) updated${chatSuffix}.`
   );
   logger.appendLine(
     `[${new Date().toISOString()}] Pull succeeded: ${filesToWrite.length} files`
