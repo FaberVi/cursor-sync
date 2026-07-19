@@ -372,6 +372,7 @@ async function doPull(
       fileCount: 0,
       success: false,
       error: "File write error",
+      files: filesToWrite.map((f) => f.syncKey).sort(),
     });
     sendEvent(context, "sync_failed", { direction: "pull", reason: "FILE_SYSTEM_ERROR", trigger });
     return false;
@@ -394,12 +395,14 @@ async function doPull(
   await saveSyncState(context, newState);
   clearConflicts();
 
+  const historyFiles = filesToWrite.map((f) => f.syncKey).sort();
   await addSyncHistoryEntry(context, {
     timestamp: new Date().toISOString(),
     direction: "pull",
     trigger,
-    fileCount: filesToWrite.length,
+    fileCount: historyFiles.length,
     success: true,
+    files: historyFiles,
   });
   sendEvent(context, "sync_completed", {
     direction: "pull",

@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## v0.9.1
+
+### Added
+- **Sync History file list**: clicking a History entry in the Sync sidebar opens a QuickPick with the sync keys involved in that push/pull (stored as optional `files` on each history entry).
+
+### Fixed
+- Push/export skip empty and whitespace-only files so GitHub Gist no longer fails with HTTP 422 Validation Failed.
+- Gist API errors now include field-level details; 422 on `files` notes empty/whitespace content as a common cause.
+- Sync denylist excludes `__pycache__` path segments and `*.pyc` files.
+
 ## v0.9.0
 
 ### Added

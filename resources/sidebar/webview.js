@@ -282,6 +282,8 @@
     if (projectKey) extra.projectKey = projectKey;
     var bundlePath = cmdBtn.getAttribute("data-bundle-path");
     if (bundlePath) extra.bundlePath = bundlePath;
+    var timestamp = cmdBtn.getAttribute("data-timestamp");
+    if (timestamp) extra.timestamp = timestamp;
     if (cmd === "chats:toggleGroup" && projectKey) {
       var currently = isGroupExpanded(projectKey);
       if (!currently) {

@@ -63,7 +63,15 @@ export async function executeExport(context: vscode.ExtensionContext): Promise<v
 
   const config = vscode.workspace.getConfiguration("cursorSync");
   const profileName = config.get<string>("syncProfileName") ?? "default";
-  const { packaged, manifest } = await packageFiles(selectedFiles, profileName);
+  const { packaged, manifest, skipped } = await packageFiles(selectedFiles, profileName);
+  if (skipped.length > 0) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Skipping ${skipped.length} empty/whitespace-only file(s) (GitHub Gist rejects them):`
+    );
+    for (const item of skipped) {
+      logger.appendLine(`  - ${item.relativeSyncKey} (${item.reason})`);
+    }
+  }
 
   const gistFiles: Record<string, { content: string }> = {};
   gistFiles["manifest.json"] = { content: JSON.stringify(manifest, null, 2) };

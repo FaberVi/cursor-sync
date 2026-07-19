@@ -166,9 +166,33 @@ export class GistClient {
     if (!response.ok) {
       let errorMessage = `GitHub API error (${response.status})`;
       try {
-        const errorBody = (await response.json()) as { message?: string };
+        const errorBody = (await response.json()) as {
+          message?: string;
+          errors?: Array<{ resource?: string; field?: string; code?: string; message?: string }>;
+        };
         if (errorBody.message) {
           errorMessage = errorBody.message;
+        }
+        if (errorBody.errors && errorBody.errors.length > 0) {
+          const details = errorBody.errors
+            .map((e) => {
+              const parts = [e.resource, e.field, e.code, e.message].filter(Boolean);
+              return parts.join(".");
+            })
+            .join("; ");
+          if (details) {
+            errorMessage = `${errorMessage} (${details})`;
+          }
+          // GitHub returns a generic "Validation Failed" for empty gist file content.
+          if (
+            response.status === 422 &&
+            /validation failed/i.test(errorBody.message ?? "") &&
+            errorBody.errors.some((e) => e.field === "files")
+          ) {
+            errorMessage =
+              `${errorMessage}. Often caused by empty or whitespace-only files ` +
+              `(GitHub Gist rejects them).`;
+          }
         }
       } catch {}
       return {

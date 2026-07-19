@@ -3,22 +3,57 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import type { SyncFileEntry, PackagedFile, Manifest, ManifestFileEntry } from "./types.js";
 
+export type SkippedSyncFile = {
+  relativeSyncKey: string;
+  reason: "empty" | "whitespace-only";
+};
+
+/**
+ * GitHub Gist rejects empty or whitespace-only file content with HTTP 422
+ * ("Validation Failed"). Skip those files so push/export can succeed.
+ */
+export function isGistRejectedContent(content: string): boolean {
+  return content.trim().length === 0;
+}
+
 export async function packageFiles(
   files: SyncFileEntry[],
   profileName: string
-): Promise<{ packaged: Map<string, PackagedFile>; manifest: Manifest }> {
+): Promise<{
+  packaged: Map<string, PackagedFile>;
+  manifest: Manifest;
+  skipped: SkippedSyncFile[];
+}> {
   const sorted = [...files].sort((a, b) =>
     a.relativeSyncKey.localeCompare(b.relativeSyncKey)
   );
 
   const packaged = new Map<string, PackagedFile>();
   const manifestFiles: Record<string, ManifestFileEntry> = {};
+  const skipped: SkippedSyncFile[] = [];
 
   for (const file of sorted) {
     const buf = await fs.readFile(file.absolutePath);
-    const isUtf8 = isValidUtf8(buf);
 
+    if (buf.length === 0) {
+      skipped.push({
+        relativeSyncKey: file.relativeSyncKey,
+        reason: "empty",
+      });
+      continue;
+    }
+
+    const isUtf8 = isValidUtf8(buf);
     const content = isUtf8 ? buf.toString("utf-8") : buf.toString("base64");
+
+    if (isUtf8 && isGistRejectedContent(content)) {
+      skipped.push({
+        relativeSyncKey: file.relativeSyncKey,
+        reason: "whitespace-only",
+      });
+      continue;
+    }
+
     const checksum = crypto.createHash("sha256").update(buf).digest("hex");
     const sizeBytes = buf.length;
 
@@ -43,7 +78,7 @@ export async function packageFiles(
     files: manifestFiles,
   };
 
-  return { packaged, manifest };
+  return { packaged, manifest, skipped };
 }
 
 export function computeChecksum(content: Buffer): string {

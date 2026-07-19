@@ -164,7 +164,15 @@ async function doPush(
   const files = await enumerateSyncFiles();
   const config = vscode.workspace.getConfiguration("cursorSync");
   const profileName = config.get<string>("syncProfileName") ?? "default";
-  const { packaged, manifest } = await packageFiles(files, profileName);
+  const { packaged, manifest, skipped } = await packageFiles(files, profileName);
+  if (skipped.length > 0) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Skipping ${skipped.length} empty/whitespace-only file(s) (GitHub Gist rejects them):`
+    );
+    for (const item of skipped) {
+      logger.appendLine(`  - ${item.relativeSyncKey} (${item.reason})`);
+    }
+  }
 
   const gistFiles: Record<string, { content: string }> = {};
   let chatBundleCount = 0;
@@ -254,6 +262,7 @@ async function doPush(
         fileCount: 0,
         success: false,
         error: result.error.message,
+        files: [...packaged.keys()].sort(),
       });
       sendEvent(context, "sync_failed", {
         direction: "push",
@@ -312,6 +321,7 @@ async function doPush(
         fileCount: 0,
         success: false,
         error: result.error.message,
+        files: [...packaged.keys()].sort(),
       });
       sendEvent(context, "sync_failed", {
         direction: "push",
@@ -353,7 +363,8 @@ async function doPush(
   }
   clearConflicts();
 
-  const fileCount = packaged.size;
+  const historyFiles = [...packaged.keys()].sort();
+  const fileCount = historyFiles.length;
   const chatSuffix =
     chatBundleCount > 0 ? ` · ${chatBundleCount} chat(s)` : "";
   await addSyncHistoryEntry(context, {
@@ -362,6 +373,7 @@ async function doPush(
     trigger,
     fileCount,
     success: true,
+    files: historyFiles,
   });
   sendEvent(context, "sync_completed", {
     direction: "push",

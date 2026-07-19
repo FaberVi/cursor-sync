@@ -89,4 +89,6 @@ export interface SyncHistoryEntry {
   fileCount: number;
   success: boolean;
   error?: string;
+  /** Sync keys involved in this operation (absent on older history entries). */
+  files?: string[];
 }

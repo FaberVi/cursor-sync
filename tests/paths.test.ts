@@ -148,6 +148,30 @@ describe("paths", () => {
       expect(keys).not.toContain("dot-cursor/logs/app.log");
     });
 
+    it("excludes nested __pycache__ and .pyc files", async () => {
+      const pycache = path.join(tmpDir, "dotCursor", "skills", "coding", "__pycache__");
+      await fs.mkdir(pycache, { recursive: true });
+      await fs.writeFile(path.join(pycache, "mod.cpython-313.pyc"), Buffer.from([0x16, 0x0d]));
+      await fs.writeFile(
+        path.join(tmpDir, "dotCursor", "skills", "coding", "helper.pyc"),
+        Buffer.from([0x16, 0x0d])
+      );
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const files = await enumerateSyncFiles(roots);
+      const keys = files.map((f) => f.relativeSyncKey);
+
+      expect(keys).not.toContain(
+        "dot-cursor/skills/coding/__pycache__/mod.cpython-313.pyc"
+      );
+      expect(keys).not.toContain("dot-cursor/skills/coding/helper.pyc");
+      expect(keys).toContain("dot-cursor/skills/coding/SKILL.md");
+    });
+
     it("excludes files exceeding max size", async () => {
       const largePath = path.join(tmpDir, "cursorUser", "settings.json");
       const largeContent = Buffer.alloc(600 * 1024, "x");

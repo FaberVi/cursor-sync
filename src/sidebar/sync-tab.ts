@@ -58,8 +58,12 @@ export function renderHistoryEntry(entry: SyncHistoryEntry): string {
   const detail = entry.success
     ? `${entry.fileCount} file${entry.fileCount !== 1 ? "s" : ""}`
     : escapeHtml(entry.error ?? "Failed");
+  const hasFiles = Array.isArray(entry.files) && entry.files.length > 0;
+  const title = hasFiles
+    ? "Show files involved in this sync"
+    : "File list not recorded for this entry";
 
-  return `<div class="history-entry">
+  return `<div class="history-entry" role="button" tabindex="0" data-command="history:details" data-timestamp="${escapeHtml(entry.timestamp)}" title="${title}">
     <div class="history-entry-left">
       ${statusDot}
       <span class="codicon codicon-${icon}"></span>
@@ -69,6 +73,7 @@ export function renderHistoryEntry(entry: SyncHistoryEntry): string {
     <div class="history-entry-right">
       <span class="history-detail">${detail}</span>
       <span class="history-time">${time}</span>
+      <span class="codicon codicon-chevron-right history-chevron" aria-hidden="true"></span>
     </div>
   </div>`;
 }

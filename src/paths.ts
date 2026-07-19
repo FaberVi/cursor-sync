@@ -29,7 +29,17 @@ const DENYLIST_DIRS = [
 
 const DENYLIST_FILES = ["TransportSecurity"];
 
-const DENYLIST_GLOBS = ["Cookies*", "*.db", "*.db-journal", "*.db-wal", "*.log"];
+const DENYLIST_GLOBS = [
+  "Cookies*",
+  "*.db",
+  "*.db-journal",
+  "*.db-wal",
+  "*.log",
+  "*.pyc",
+];
+
+/** Path segments that must never be synced (matched anywhere in the relative path). */
+const DENYLIST_PATH_SEGMENTS = ["__pycache__"];
 
 const MAX_SYNC_VSIX_BYTES = 50 * 1024 * 1024;
 
@@ -162,6 +172,10 @@ function isDenylisted(relativePath: string): boolean {
   const topDir = parts[0];
 
   if (topDir && DENYLIST_DIRS.includes(topDir)) {
+    return true;
+  }
+
+  if (parts.some((part) => DENYLIST_PATH_SEGMENTS.includes(part))) {
     return true;
   }
 

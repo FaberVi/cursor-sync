@@ -32,6 +32,7 @@ export type SidebarMessage =
     }
   | { command: "chats:revealTranscripts"; conversationId: string; workspaceKey?: string; projectKey?: string }
   | { command: "chats:clearHistory" }
+  | { command: "history:details"; timestamp: string }
   | { command: "settings:get" }
   | { command: "settings:set"; key: string; value: unknown };
 
@@ -152,6 +153,31 @@ export async function dispatchSidebarMessage(
       await clearImports(context);
       await webview.postMessage({ type: "chats:history-cleared" });
       break;
+    case "history:details": {
+      const { loadSyncHistory } = await import("../diagnostics.js");
+      const history = await loadSyncHistory(context);
+      const entry = history.find((e) => e.timestamp === msg.timestamp);
+      if (!entry) {
+        void vscode.window.showWarningMessage("History entry not found.");
+        break;
+      }
+      const files = entry.files ?? [];
+      if (files.length === 0) {
+        void vscode.window.showInformationMessage(
+          "File list was not recorded for this entry. New syncs will keep the list."
+        );
+        break;
+      }
+      const dirLabel = entry.direction === "push" ? "Push" : "Pull";
+      await vscode.window.showQuickPick(
+        files.map((label) => ({ label })),
+        {
+          title: `${dirLabel} · ${files.length} file${files.length !== 1 ? "s" : ""}`,
+          placeHolder: "Files involved in this sync",
+        }
+      );
+      break;
+    }
     case "settings:get": {
       const { readSettingsValues } = await import("./settings-tab.js");
       const values = readSettingsValues();

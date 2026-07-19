@@ -346,10 +346,15 @@ export async function renderSidebarHtml(
       background: #0f0e0c;
       border: 1px solid transparent;
       transition: all 0.15s ease;
+      cursor: pointer;
     }
     .history-entry:hover {
       background: #22201a;
       border-color: rgba(237, 236, 236, 0.06);
+    }
+    .history-entry:focus-visible {
+      outline: 1px solid rgba(110, 231, 183, 0.45);
+      outline-offset: 1px;
     }
     .history-entry-left {
       display: flex;
@@ -367,6 +372,14 @@ export async function renderSidebarHtml(
     .history-dir { font-weight: 500; color: rgba(237, 236, 236, 0.55); }
     .history-detail { color: rgba(237, 236, 236, 0.32); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .history-time { color: rgba(237, 236, 236, 0.22); font-size: 11px; white-space: nowrap; }
+    .history-chevron {
+      color: rgba(237, 236, 236, 0.18);
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .history-entry:hover .history-chevron {
+      color: rgba(237, 236, 236, 0.4);
+    }
 
     .status-dot {
       width: 8px;
