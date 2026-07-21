@@ -51,7 +51,7 @@ export async function restoreChatBundlesBatch(
   bundles: ChatBundle[],
   restoreOptions: RestoreChatBundleOptions,
   progress: vscode.Progress<{ message?: string; increment?: number }>,
-  logTag: "chat-load" | "gist-chat-import"
+  logTag: "chat-load" | "gist-chat-import" | "chat-sync"
 ): Promise<BatchChatImportResult> {
   const logger = getLogger();
   const { restoreChatBundle } = await import("./chat-persistence.js");

@@ -1,6 +1,6 @@
 # Cursor Sync
 
-Sync user-level Cursor settings and `~/.cursor` assets to a private GitHub Gist, with manual push/pull, optional scheduled pull-push, export/import via private Gists (anyone with the gist URL can still open it), and configurable extension sync.
+Sync user-level Cursor settings and `~/.cursor` assets to a private GitHub Gist **or** a classic GitHub repository, with manual push/pull, optional scheduled sync, export/import via private Gists (anyone with the gist URL can still open it), and configurable extension sync.
 
 ## Build and Install
 
@@ -112,7 +112,9 @@ The following are always excluded from sync:
 ### 1. Create a GitHub Personal Access Token
 
 1. Go to [GitHub Settings > Developer settings > Personal access tokens > Fine-grained tokens](https://github.com/settings/personal-access-tokens/new).
-2. Create a fine-grained token and grant **Account permissions > Gists: Read and write**.
+2. Create a fine-grained token:
+   - For **Gist** destination: grant **Account permissions > Gists: Read and write**.
+   - For **Repository** destination: grant access to the target repository (Contents: Read and write), or use a classic PAT with `repo` scope.
 3. Copy the token.
 
 ### 2. Configure the Extension
@@ -125,7 +127,7 @@ The following are always excluded from sync:
 ### 3. Push Your Settings
 
 1. Run **Cursor Sync: Push Now** from the Command Palette or from the Cursor Sync sidebar (Actions → Push Now).
-2. A private Gist is created (or updated) with all synced files.
+2. Files are uploaded to the configured destination (private Gist, or a folder in a GitHub repository).
 
 ### 4. Pull on Another Machine
 
@@ -140,9 +142,9 @@ The following are always excluded from sync:
 |---------|-------------|
 | `Cursor Sync: Sync Now` | Automatically determine and execute the right sync action (push, pull, or both) |
 | `Cursor Sync: Configure GitHub` | Set or update your GitHub Personal Access Token |
-| `Cursor Sync: Push Now` | Upload local settings to the private Gist |
-| `Cursor Sync: Pull Now` | Download settings from the Gist and apply locally |
-| `Cursor Sync: Show Status` | Display last sync time, direction, file count, and Gist URL |
+| `Cursor Sync: Push Now` | Upload local settings to the configured remote (Gist or repository) |
+| `Cursor Sync: Pull Now` | Download settings from the remote and apply locally |
+| `Cursor Sync: Show Status` | Display last sync time, direction, file count, and remote URL |
 | `Cursor Sync: Resolve Conflicts` | Resolve files that changed both locally and remotely (shown when conflicts exist) |
 | `Cursor Sync: Reset Extension State` | Clear token, sync state, and reset extension settings to defaults |
 | `Cursor Sync: Export Settings to Private Gist` | Export selected files to a new **private** Gist; requires token; anyone with the URL can open the gist |
@@ -167,7 +169,7 @@ The **Cursor Sync** view in the activity bar is a tabbed webview:
 - **Active operation** — Live Phase A / Phase B status while an import runs, driven by the `onChatImportProgress` event emitter.
 
 ### Settings tab
-Surfaces the most-used `cursorSync.chatImport.*` knobs (activate by default, strict activation, bridge wait result seconds, Python interpreter, auto-reload after import) as editable controls that call `vscode.workspace.getConfiguration().update(...)`.
+Surfaces auto-sync (enable + interval/unit), sync destination (Gist vs GitHub repository), and the most-used `cursorSync.chatImport.*` knobs as editable controls that call `vscode.workspace.getConfiguration().update(...)`.
 
 Commands such as Resolve Conflicts and Reset are available from the Command Palette when applicable. The standalone "Imported Transcripts" tree view (`cursorSync.transcriptBrowser`) was removed in v0.7.0; the three commands remain as one-release deprecation stubs.
 
@@ -177,8 +179,14 @@ Commands such as Resolve Conflicts and Reset are available from the Command Pale
 |---------|------|---------|-------------|
 | `cursorSync.enabledPaths` | `string[]` | *(see path matrix above)* | Glob patterns for included sync paths |
 | `cursorSync.excludeGlobs` | `string[]` | `[]` | Additional glob patterns to exclude |
-| `cursorSync.schedule.enabled` | `boolean` | `true` | Enable periodic auto-sync (pull and push) |
-| `cursorSync.schedule.intervalMin` | `number` | `30` | Minutes between scheduled syncs (minimum 5) |
+| `cursorSync.schedule.enabled` | `boolean` | `true` | Enable periodic auto-sync (pull and push); also in sidebar Settings |
+| `cursorSync.schedule.interval` | `number` | `30` | Interval between scheduled syncs (see `intervalUnit`; minimum 30 seconds) |
+| `cursorSync.schedule.intervalUnit` | `string` | `"minutes"` | `seconds` or `minutes` |
+| `cursorSync.schedule.intervalMin` | `number` | `30` | **Deprecated** — use `interval` + `intervalUnit` |
+| `cursorSync.destination.type` | `string` | `"gist"` | Remote for Push/Pull/scheduler: `gist` or `repo` |
+| `cursorSync.destination.repo` | `string` | `""` | `owner/name` when type is `repo` |
+| `cursorSync.destination.branch` | `string` | `"main"` | Branch for repository sync |
+| `cursorSync.destination.path` | `string` | `"cursor-sync"` | Directory inside the repo for sync files |
 | `cursorSync.maxFileSizeKB` | `number` | `512` | Skip files larger than this size in KB |
 | `cursorSync.syncProfileName` | `string` | `"default"` | Profile name written to the sync manifest |
 | `cursorSync.safeMode` | `boolean` | `true` | Require confirmation before pull overwrites local files |
@@ -240,8 +248,8 @@ Extensions are installed at the latest available version; the synced list record
 ## Security
 
 - Your GitHub PAT is stored exclusively in VS Code SecretStorage. It never appears in settings files, logs, or telemetry.
-- Sync uses a single **private** Gist per token (identified by description "Cursor Sync - Settings Backup"). Export creates an additional **private** Gist when you explicitly run Export; anyone with that URL can open it.
-- No data is sent to any service other than the GitHub Gist API for sync and export operations.
+- Sync uses either a single **private** Gist per token (description "Cursor Sync - Settings Backup") or a folder in a **GitHub repository** you configure. Export one-shot commands still create additional **private** Gists; anyone with those URLs can open them.
+- No data is sent to any service other than the GitHub API for sync and export operations.
 - **Anonymous usage metrics**: The extension may send anonymous usage metrics (e.g. sync completed/failed, feature usage) to improve the extension. No sensitive data—tokens, gist IDs, file paths, or error messages—is included.
 
 ## Conflict Resolution
@@ -254,4 +262,4 @@ If a pull (or import) fails partway through writing files, all partially written
 
 ## Reset
 
-**Cursor Sync: Reset Extension State** clears your GitHub token, sync state (e.g. Gist ID, checksums), and resets the following settings to their defaults: `enabledPaths`, `excludeGlobs`, `schedule.enabled`, `schedule.intervalMin`, `maxFileSizeKB`, `syncProfileName`, `safeMode`. It does not change `syncExtensions.autoInstall` or `syncExtensions.autoUninstall`. Use this to start over or move to a new machine without reusing the previous Gist.
+**Cursor Sync: Reset Extension State** clears your GitHub token, sync state (e.g. Gist ID / repo destination, checksums), and resets the following settings to their defaults: `enabledPaths`, `excludeGlobs`, `schedule.enabled`, `schedule.interval`, `schedule.intervalUnit`, `schedule.intervalMin`, `destination.type`, `destination.repo`, `destination.branch`, `destination.path`, `maxFileSizeKB`, `syncProfileName`, `safeMode`. It does not change `syncExtensions.autoInstall` or `syncExtensions.autoUninstall`. Use this to start over or move to a new machine without reusing the previous remote.

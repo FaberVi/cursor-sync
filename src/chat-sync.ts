@@ -1,9 +1,8 @@
 import { Buffer } from "node:buffer";
 import * as vscode from "vscode";
-import { GistClient, fetchGistFileContent } from "./gist.js";
+import { fetchGistFileContent } from "./gist.js";
 import type { GistFile } from "./types.js";
-import { getLogger } from "./diagnostics.js";
-import { requireToken } from "./auth.js";
+import { getLogger, loadSyncState } from "./diagnostics.js";
 import { computeChecksum } from "./packaging.js";
 import {
   CHAT_BUNDLES_GIST_FILE_NAME,
@@ -28,6 +27,8 @@ import {
   isNativeChatJsonDocument,
   nativeCollectionFromBundles,
 } from "./native-chat-json/index.js";
+import { GistBackend } from "./remote/gist-backend.js";
+import { createRemoteBackend } from "./remote/factory.js";
 import {
   decryptChatGistPayload,
   encryptChatGistPayload,
@@ -48,11 +49,13 @@ import {
   type ChatSyncFidelityReport,
 } from "./chat-backup-eligibility.js";
 import { maybeActivateChatsAfterPull } from "./chat-pull-activation.js";
+import { shouldSkipChatPackaging } from "./chat-sync-skip.js";
 
 export {
   aggregateChatSyncFidelity,
   formatChatSyncFidelityToast,
 } from "./chat-backup-eligibility.js";
+export { shouldSkipChatPackaging } from "./chat-sync-skip.js";
 
 export const CHAT_BUNDLES_SYNC_KEY = "dot-cursor/chat-bundles.json";
 export const CURSOR_CHAT_SYNC_KEY = "dot-cursor/cursor-chat.json";
@@ -317,35 +320,25 @@ async function encryptCollectionForGist(
   return encryptChatGistPayload(plaintext, password, "cursor-chat-collection");
 }
 
-async function fetchSyncGistFile(
-  files: Record<string, GistFile | undefined>,
-  token: string
+async function fetchSyncChatRawFromFiles(
+  files: Record<string, string>
 ): Promise<{ raw: string; fileName: string } | null> {
-  const nativeFile = files[CURSOR_CHAT_GIST_FILE_NAME];
-  if (nativeFile) {
-    return { raw: await fetchGistFileContent(nativeFile, token), fileName: CURSOR_CHAT_GIST_FILE_NAME };
+  const nativeRaw = files[CURSOR_CHAT_GIST_FILE_NAME];
+  if (nativeRaw !== undefined) {
+    return { raw: nativeRaw, fileName: CURSOR_CHAT_GIST_FILE_NAME };
   }
-  const legacyFile = files[CHAT_BUNDLES_GIST_FILE_NAME];
-  if (legacyFile) {
-    return {
-      raw: await fetchGistFileContent(legacyFile, token),
-      fileName: CHAT_BUNDLES_GIST_FILE_NAME,
-    };
+  const legacyRaw = files[CHAT_BUNDLES_GIST_FILE_NAME];
+  if (legacyRaw !== undefined) {
+    return { raw: legacyRaw, fileName: CHAT_BUNDLES_GIST_FILE_NAME };
   }
   return null;
 }
 
-export async function fetchRemoteChatCollection(
+export async function fetchRemoteChatCollectionFromFiles(
   context: vscode.ExtensionContext,
-  gistId: string,
-  token: string
+  files: Record<string, string>
 ): Promise<ChatBundle[] | null> {
-  const client = new GistClient(token);
-  const gistResult = await client.getGist(gistId);
-  if (!gistResult.ok) {
-    throw new Error(gistResult.error.message);
-  }
-  const fetched = await fetchSyncGistFile(gistResult.data.files, token);
+  const fetched = await fetchSyncChatRawFromFiles(files);
   if (!fetched) {
     return null;
   }
@@ -357,6 +350,22 @@ export async function fetchRemoteChatCollection(
     );
   }
   return collection.bundles;
+}
+
+export async function fetchRemoteChatCollection(
+  context: vscode.ExtensionContext,
+  gistId: string,
+  token: string
+): Promise<ChatBundle[] | null> {
+  const syncState = await loadSyncState(context);
+  const backend =
+    createRemoteBackend(context, token, syncState) ??
+    new GistBackend(token, gistId);
+  const snap = await backend.getSnapshot();
+  if (!snap.ok) {
+    throw new Error(snap.error.message);
+  }
+  return fetchRemoteChatCollectionFromFiles(context, snap.data.files);
 }
 
 export async function buildChatCollectionForSync(
@@ -434,22 +443,46 @@ export interface ChatSyncPushPayload {
 
 export async function prepareChatSyncPushPayload(
   context: vscode.ExtensionContext,
-  gistId: string | undefined,
-  token: string,
+  fetchRemote:
+    | (() => Promise<ChatBundle[] | null>)
+    | string
+    | undefined,
+  tokenOrProgress?:
+    | string
+    | vscode.Progress<{ message?: string; increment?: number }>,
   progress: vscode.Progress<{ message?: string; increment?: number }> = noopProgress
 ): Promise<ChatSyncPushPayload | null> {
+  // Backward-compatible overload: (context, gistId, token, progress)
+  let remoteFetcher: (() => Promise<ChatBundle[] | null>) | undefined;
+  let resolvedProgress = progress;
+  if (typeof fetchRemote === "string" || fetchRemote === undefined) {
+    const gistId = fetchRemote;
+    const token = typeof tokenOrProgress === "string" ? tokenOrProgress : "";
+    if (typeof tokenOrProgress !== "string" && tokenOrProgress) {
+      resolvedProgress = tokenOrProgress;
+    }
+    if (gistId && token) {
+      remoteFetcher = () => fetchRemoteChatCollection(context, gistId, token);
+    }
+  } else {
+    remoteFetcher = fetchRemote;
+    if (tokenOrProgress && typeof tokenOrProgress !== "string") {
+      resolvedProgress = tokenOrProgress;
+    }
+  }
+
   const { bundles: localBundles, warnings } = await buildChatCollectionForSync(
     context,
-    progress
+    resolvedProgress
   );
   for (const w of warnings) {
     getLogger().appendLine(`[${new Date().toISOString()}] [chat-sync] ${w}`);
   }
 
   let remoteBundles: ChatBundle[] = [];
-  if (gistId) {
+  if (remoteFetcher) {
     try {
-      remoteBundles = (await fetchRemoteChatCollection(context, gistId, token)) ?? [];
+      remoteBundles = (await remoteFetcher()) ?? [];
     } catch (err) {
       getLogger().appendLine(
         `[${new Date().toISOString()}] [chat-sync] remote fetch warn: ${
@@ -486,20 +519,18 @@ export interface ChatSyncPullResult {
   warnings: string[];
 }
 
-export async function pullChatCollectionFromGist(
+export async function pullChatCollectionFromRemoteFiles(
   context: vscode.ExtensionContext,
-  gistFiles: Record<string, GistFile | undefined>,
-  token: string,
+  files: Record<string, string>,
   progress: vscode.Progress<{ message?: string; increment?: number }> = noopProgress
 ): Promise<ChatSyncPullResult> {
   const logger = getLogger();
-  const gistFile =
-    gistFiles[CURSOR_CHAT_GIST_FILE_NAME] ?? gistFiles[CHAT_BUNDLES_GIST_FILE_NAME];
-  if (!gistFile) {
+  const raw =
+    files[CURSOR_CHAT_GIST_FILE_NAME] ?? files[CHAT_BUNDLES_GIST_FILE_NAME];
+  if (raw === undefined) {
     return { imported: 0, skipped: 0, updated: 0, warnings: [] };
   }
 
-  const raw = await fetchGistFileContent(gistFile, token);
   const plaintext = await decryptGistChatContent(context, raw);
   const collection = parseSyncChatCollection(plaintext);
   const localIds = await collectLocalConversationIds();
@@ -567,17 +598,31 @@ export async function pullChatCollectionFromGist(
       `[${new Date().toISOString()}] [chat-sync] pull fail conversationId=${failure.bundle.conversationId}: ${failure.error}`
     );
   }
-
   logger.appendLine(
-    `[${new Date().toISOString()}] [chat-sync] pull: ${batch.successes.length} imported, ${skipped} skipped, ${updated} updated, ${batch.failures.length} failed`
+    `[${new Date().toISOString()}] [chat-sync] pull: ${batch.successes.length} imported, ${skipped} skipped, ${updated} updated`
   );
-
   return {
     imported: batch.successes.length,
     skipped,
     updated,
     warnings,
   };
+}
+
+export async function pullChatCollectionFromGist(
+  context: vscode.ExtensionContext,
+  gistFiles: Record<string, GistFile | undefined>,
+  token: string,
+  progress: vscode.Progress<{ message?: string; increment?: number }> = noopProgress
+): Promise<ChatSyncPullResult> {
+  const files: Record<string, string> = {};
+  for (const [name, file] of Object.entries(gistFiles)) {
+    if (!file) {
+      continue;
+    }
+    files[name] = await fetchGistFileContent(file, token);
+  }
+  return pullChatCollectionFromRemoteFiles(context, files, progress);
 }
 
 export async function computeLocalChatCollectionChecksum(
@@ -619,4 +664,26 @@ export async function storeChatSyncFingerprint(
   fingerprint: string
 ): Promise<void> {
   await context.globalState.update(CHAT_SYNC_FINGERPRINT_KEY, fingerprint);
+}
+
+/**
+ * True when local chat discovery metadata matches the last successful sync
+ * fingerprint and the remote still has the chat collection checksum we last
+ * pushed/pulled — so full chat packaging can be skipped.
+ */
+export async function canSkipChatPackaging(
+  context: vscode.ExtensionContext,
+  remoteChecksums: Record<string, string>,
+  syncState: { localChecksums: Record<string, string> } | undefined
+): Promise<boolean> {
+  if (!syncState) {
+    return false;
+  }
+  const current = await computeChatSyncLocalFingerprint();
+  return shouldSkipChatPackaging({
+    remoteChecksum: remoteChecksums[CURSOR_CHAT_SYNC_KEY],
+    lastLocalChecksum: syncState.localChecksums[CURSOR_CHAT_SYNC_KEY],
+    storedFingerprint: await readStoredChatSyncFingerprint(context),
+    currentFingerprint: current,
+  });
 }

@@ -1,8 +1,54 @@
 (function () {
   const vscode = acquireVsCodeApi();
 
+  function readI18n() {
+    var el = document.getElementById("ui-i18n");
+    if (!el || !el.textContent) return {};
+    try {
+      return JSON.parse(el.textContent);
+    } catch (e) {
+      return {};
+    }
+  }
+
+  var i18n = readI18n();
+
+  function tr(key, fallback) {
+    return i18n[key] || fallback || key;
+  }
+
+  function formatChatsCount(n) {
+    return tr("chatsCount", "{n} chats").replace("{n}", String(n));
+  }
+
   function post(command, extra) {
     vscode.postMessage(Object.assign({ command: command }, extra || {}));
+  }
+
+  var syncActionsLocked = false;
+  var SYNC_ACTION_COMMANDS = {
+    syncNow: true,
+    push: true,
+    pull: true,
+  };
+
+  function setSyncActionsLocked(locked) {
+    syncActionsLocked = Boolean(locked);
+    var selectors = [
+      '.sync-now-btn[data-command="syncNow"]',
+      '.action-btn[data-command="push"]',
+      '.action-btn[data-command="pull"]',
+    ];
+    selectors.forEach(function (sel) {
+      document.querySelectorAll(sel).forEach(function (btn) {
+        btn.disabled = syncActionsLocked;
+        if (syncActionsLocked) {
+          btn.setAttribute("aria-busy", "true");
+        } else {
+          btn.removeAttribute("aria-busy");
+        }
+      });
+    });
   }
 
   function onSettingChange(key, value) {
@@ -149,7 +195,7 @@
     if (!el) return;
     var groups = groupedChatsState.groups || [];
     if (groups.length === 0) {
-      el.innerHTML = '<div class="empty-state">No local chats found</div>';
+      el.innerHTML = '<div class="empty-state">' + escHtml(tr("noLocalChats", "No local chats found")) + '</div>';
       return;
     }
     var htmlParts = groups
@@ -174,12 +220,12 @@
         }
         var isLoading = Boolean(groupedChatsState.loadingGroups[g.projectKey]);
         var rowsHtml = isLoading
-          ? '<div class="chat-group-loading">Loading chats\u2026</div>'
+          ? '<div class="chat-group-loading">' + escHtml(tr("loading", "Loading…")) + '</div>'
           : pageRows.map(function (r) {
               return renderChatRow(r, g.projectKey);
             }).join("");
         if (!isLoading && expanded && rows.length === 0 && (g.conversationCount || 0) > 0) {
-          rowsHtml = '<div class="chat-group-loading">Loading chats\u2026</div>';
+          rowsHtml = '<div class="chat-group-loading">' + escHtml(tr("loading", "Loading…")) + '</div>';
         }
         var pagerHtml =
           rows.length > pageSize
@@ -220,9 +266,8 @@
           escHtml(labelLine) +
           "</span>" +
           '<span class="chat-group-count">' +
-          (g.conversationCount || rows.length) +
-          " chats</span>" +
-          "</div>" +
+          escHtml(formatChatsCount(g.conversationCount || rows.length)) +
+          "</span>" +          "</div>" +
           '<div class="' +
           bodyClass +
           '">' +
@@ -273,6 +318,9 @@
     if (cmdBtn.disabled) return;
     var cmd = cmdBtn.getAttribute("data-command");
     if (!cmd) return;
+    if (SYNC_ACTION_COMMANDS[cmd]) {
+      setSyncActionsLocked(true);
+    }
     var extra = {};
     var conversationId = cmdBtn.getAttribute("data-conversation-id");
     if (conversationId) extra.conversationId = conversationId;
@@ -320,6 +368,34 @@
       renderGroupedChats();
       return;
     }
+    if (cmd === "history:prev" || cmd === "history:next") {
+      var pager = document.querySelector(".history-pager");
+      var list = document.querySelector(".history-list");
+      var currentPage = 0;
+      if (pager && pager.getAttribute("data-history-page")) {
+        currentPage = Number(pager.getAttribute("data-history-page")) || 0;
+      } else if (list && list.getAttribute("data-history-page")) {
+        currentPage = Number(list.getAttribute("data-history-page")) || 0;
+      }
+      var nextPage = cmd === "history:next" ? currentPage + 1 : currentPage - 1;
+      post("history:page", { page: nextPage });
+      return;
+    }
+    if (cmd === "configure") {
+      function settingValue(id) {
+        var input = document.getElementById(id);
+        if (!input) return undefined;
+        if (input.type === "checkbox") return input.checked;
+        if (input.tagName === "SELECT") return input.value;
+        return input.value;
+      }
+      extra.destination = {
+        type: settingValue("destination.type"),
+        repo: settingValue("destination.repo"),
+        branch: settingValue("destination.branch"),
+        path: settingValue("destination.path"),
+      };
+    }
     post(cmd, extra);
   });
 
@@ -334,6 +410,22 @@
         : el.type === "number"
           ? Number(el.value)
           : el.value;
+    if (key === "destination.type") {
+      var repoFields = document.getElementById("destination-repo-fields");
+      if (repoFields) {
+        repoFields.style.display = value === "repo" ? "" : "none";
+      }
+      var connectBtnLive = document.querySelector(
+        ".settings-connect-btn[data-command='configure']"
+      );
+      if (connectBtnLive) {
+        connectBtnLive.innerHTML =
+          '<span class="codicon codicon-github-alt"></span> ' +
+          (value === "repo"
+            ? tr("connectRepository", "Connect repository")
+            : tr("connectGithub", "Connect GitHub"));
+      }
+    }
     onSettingChange(key, value);
   });
 
@@ -351,6 +443,53 @@
           var newSync = document.getElementById("sync-pane");
           if (newSync) newSync.style.display = "none";
         }
+        setSyncActionsLocked(syncActionsLocked);
+      }
+      return;
+    }
+
+    if (msg.type === "sync:progress") {
+      var syncSection = document.getElementById("sync-active-section");
+      var syncEl = document.getElementById("sync-active");
+      if (!syncSection || !syncEl) return;
+      var sev = msg.event || {};
+      if (sev.busy === false || sev.done) {
+        setSyncActionsLocked(false);
+      } else {
+        setSyncActionsLocked(true);
+      }
+      if (sev.done) {
+        syncSection.style.display = "none";
+        syncEl.innerHTML = "";
+        return;
+      }
+      syncSection.style.display = "";
+      var opLabel =
+        sev.operation === "pull"
+          ? tr("pull", "Pull")
+          : sev.operation === "syncNow"
+            ? tr("syncNow", "Sync Now")
+            : tr("push", "Push");
+      var spct = typeof sev.percent === "number" ? sev.percent : 0;
+      syncEl.innerHTML =
+        '<div class="progress-card">' +
+        '<div class="progress-phase">' +
+        escHtml(opLabel) +
+        "</div>" +
+        '<div class="progress-message">' +
+        escHtml(sev.message || "") +
+        "</div>" +
+        '<div class="progress-bar-track"><div class="progress-bar-fill" style="width:' +
+        Math.min(100, Math.max(4, spct)) +
+        '%"></div></div>' +
+        "</div>";
+      return;
+    }
+
+    if (msg.type === "history:update") {
+      var historyBody = document.getElementById("history-section-body");
+      if (historyBody && msg.html) {
+        historyBody.innerHTML = msg.html;
       }
       return;
     }
@@ -390,7 +529,7 @@
       var el2 = document.getElementById("chats-imports");
       if (!el2) return;
       if (!msg.rows || msg.rows.length === 0) {
-        el2.innerHTML = '<div class="empty-state">No import history</div>';
+        el2.innerHTML = '<div class="empty-state">' + escHtml(tr("noImportHistory", "No import history")) + '</div>';
         return;
       }
       el2.innerHTML = msg.rows
@@ -507,7 +646,7 @@
 
     if (msg.type === "chats:history-cleared") {
       var el5 = document.getElementById("chats-imports");
-      if (el5) el5.innerHTML = '<div class="empty-state">No import history</div>';
+      if (el5) el5.innerHTML = '<div class="empty-state">' + escHtml(tr("noImportHistory", "No import history")) + '</div>';
     }
 
     if (msg.type === "settings:current") {
@@ -519,6 +658,22 @@
         if (el6.type === "checkbox") el6.checked = Boolean(vals[key]);
         else el6.value = vals[key];
       });
+      var repoFields2 = document.getElementById("destination-repo-fields");
+      if (repoFields2 && vals["destination.type"]) {
+        repoFields2.style.display =
+          vals["destination.type"] === "repo" ? "" : "none";
+      }
+      var connectBtn = document.querySelector(
+        ".settings-connect-btn[data-command='configure']"
+      );
+      if (connectBtn && vals["destination.type"]) {
+        var isRepo = vals["destination.type"] === "repo";
+        connectBtn.innerHTML =
+          '<span class="codicon codicon-github-alt"></span> ' +
+          (isRepo
+            ? tr("connectRepository", "Connect repository")
+            : tr("connectGithub", "Connect GitHub"));
+      }
     }
   });
 })();

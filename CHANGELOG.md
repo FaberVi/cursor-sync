@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## v0.10.1
+
+### Added
+- Sync sidebar shows live Push/Pull progress under History (below the pager) instead of the IDE notification processing indicator.
+- Sync Now / Push / Pull buttons stay disabled while a sync operation is running (including nested Sync Now → Pull → Push).
+- Sync History shows `changed / total files` (e.g. `2 / 579 files`) for new push/pull entries.
+
+### Changed
+- **Incremental Push**: uploads only new/changed files (plus an updated `manifest.json` and remote deletes). Unchanged files are skipped; if nothing changed, Push reports already in sync without calling the remote write API.
+- Push fetches only `manifest.json` for the remote baseline (full chat/settings bodies are downloaded only when needed).
+- Push skips rebuilding the chat collection when the local chat fingerprint and remote chat checksum are unchanged — no-op pushes are much faster.
+- Scheduler treats chat as unchanged when the stored fingerprint still matches, avoiding unnecessary auto-pushes.
+- Scheduled auto-sync/push still runs **only** when `cursorSync.schedule.enabled` is on; each tick re-checks the flag and stops the timer if it was turned off.
+- Sync History shows at most 5 entries per page with Prev/Next pagination.
+- Sidebar Settings: language selector (English / Italiano) via `cursorSync.ui.language`.
+- Removed redundant **Configure GitHub** button under Sync History (connect remains under Destination in Settings).
+
+## v0.10.0
+
+### Added
+- **Dual remote destination**: sync Push/Pull/Sync Now/scheduler to a private **GitHub Gist** (default) or a classic **GitHub repository** (`cursorSync.destination.type`). Repo mode uses the Git Data API for atomic multi-file commits under `destination.path` (default `cursor-sync/`), avoiding the Gist ~300-file limit. Requires a PAT with `repo` scope (or fine-grained access to that repository).
+- **Sidebar Settings**: Auto-sync enable toggle, interval + unit (seconds/minutes, minimum 30s), and destination controls (type, `owner/name`, branch, path).
+- Settings: `cursorSync.schedule.interval`, `cursorSync.schedule.intervalUnit`, `cursorSync.destination.type|repo|branch|path`.
+
+### Changed
+- Scheduler reads the new interval settings; deprecated `schedule.intervalMin` still migrates when the new interval is unset.
+- Sync status / sidebar show the active remote label (Gist id or `owner/repo@branch`).
+
+### Deprecated
+- `cursorSync.schedule.intervalMin` — use `schedule.interval` + `schedule.intervalUnit`.
+
 ## v0.9.1
 
 ### Added

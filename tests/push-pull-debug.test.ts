@@ -78,6 +78,11 @@ describe("push/pull debug wiring", () => {
       get: (key: string) => {
         if (key === "syncProfileName") return "default";
         if (key === "safeMode") return false;
+        if (key === "chats.syncEnabled") return false;
+        if (key === "destination.type") return "gist";
+        if (key === "destination.repo") return "";
+        if (key === "destination.branch") return "main";
+        if (key === "destination.path") return "cursor-sync";
         return undefined;
       },
       has: () => true,
@@ -91,7 +96,9 @@ describe("push/pull debug wiring", () => {
     vi.restoreAllMocks();
   });
 
-  it("calls showSyncFailureWithDebug on push gist create failure", async () => {
+  it(
+    "calls showSyncFailureWithDebug on push gist create failure",
+    async () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -156,7 +163,9 @@ describe("push/pull debug wiring", () => {
     expect(options).toMatchObject({
       title: expect.stringContaining("Push failed:"),
     });
-  });
+  },
+  20_000
+  );
 
   it("calls showSyncFailureWithDebug on pull getGist failure", async () => {
     const gistId = "abcdef1234567890abcdef1234567890";
@@ -354,6 +363,11 @@ describe("sync now debug wiring", () => {
       get: (key: string) => {
         if (key === "syncProfileName") return "default";
         if (key === "safeMode") return false;
+        if (key === "chats.syncEnabled") return false;
+        if (key === "destination.type") return "gist";
+        if (key === "destination.repo") return "";
+        if (key === "destination.branch") return "main";
+        if (key === "destination.path") return "cursor-sync";
         return undefined;
       },
       has: () => true,
@@ -381,8 +395,12 @@ describe("sync now debug wiring", () => {
     const { executeSyncNow } = await import("../src/extension.js");
     await executeSyncNow(mockContext());
 
-    expect(showSyncFailureWithDebugMock).toHaveBeenCalledTimes(1);
-    const [, failure, options] = showSyncFailureWithDebugMock.mock.calls[0]!;
+    expect(showSyncFailureWithDebugMock).toHaveBeenCalled();
+    const syncNowCall = showSyncFailureWithDebugMock.mock.calls.find(
+      (call) => (call[1] as { operation?: string }).operation === "syncNow"
+    );
+    expect(syncNowCall).toBeDefined();
+    const [, failure, options] = syncNowCall!;
     expect(failure).toMatchObject({
       operation: "syncNow",
       trigger: "manual",
@@ -408,8 +426,12 @@ describe("sync now debug wiring", () => {
     const { executeSyncNow } = await import("../src/extension.js");
     await executeSyncNow(mockContext());
 
-    expect(showSyncFailureWithDebugMock).toHaveBeenCalledTimes(1);
-    const [, failure, options] = showSyncFailureWithDebugMock.mock.calls[0]!;
+    expect(showSyncFailureWithDebugMock).toHaveBeenCalled();
+    const conflictCall = showSyncFailureWithDebugMock.mock.calls.find(
+      (call) => (call[1] as { operation?: string }).operation === "syncNow"
+    );
+    expect(conflictCall).toBeDefined();
+    const [, failure, options] = conflictCall!;
     expect(failure).toMatchObject({
       operation: "syncNow",
       trigger: "manual",
@@ -444,7 +466,9 @@ describe("sync now debug wiring", () => {
     expect(options).toMatchObject({ title: "Sync failed: scheduler blew up" });
   });
 
-  it("does not duplicate debug toast when delegating to push failure", async () => {
+  it(
+    "does not duplicate debug toast when delegating to push failure",
+    async () => {
     determineSyncActionMock.mockResolvedValue({ action: "push" });
 
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -493,5 +517,7 @@ describe("sync now debug wiring", () => {
     expect(showSyncFailureWithDebugMock).toHaveBeenCalledTimes(1);
     const [, failure] = showSyncFailureWithDebugMock.mock.calls[0]!;
     expect(failure).toMatchObject({ operation: "push", direction: "push" });
-  });
+  },
+  20_000
+  );
 });

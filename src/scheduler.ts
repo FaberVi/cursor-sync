@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
 import { executePush, isPushLocked } from "./push.js";
 import { executePull, isPullLocked } from "./pull.js";
-import { GistClient } from "./gist.js";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { loadSyncState, getLogger } from "./diagnostics.js";
@@ -15,15 +14,18 @@ import {
   CURSOR_CHAT_SYNC_KEY,
   isChatSyncEnabled,
   computeChatSyncLocalFingerprint,
+  readStoredChatSyncFingerprint,
 } from "./chat-sync.js";
 import {
   computeLocalChecksums,
   findConflicts,
   registerPendingConflicts,
 } from "./conflicts.js";
+import { resolveScheduleInterval } from "./schedule-interval.js";
+import { createRemoteBackend } from "./remote/factory.js";
+import { hasRemoteDestination } from "./remote/destination.js";
 import type { Manifest } from "./types.js";
 
-const MIN_INTERVAL_MINUTES = 5;
 const MAX_JITTER_MS = 60_000;
 
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -39,27 +41,22 @@ export type SyncAction =
 
 export function startScheduler(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration("cursorSync");
-  const enabled = config.get<boolean>("schedule.enabled") ?? true;
+  const resolved = resolveScheduleInterval(config);
 
-  if (!enabled) {
+  if (!resolved.enabled) {
     return;
   }
 
-  const intervalMin = Math.max(
-    config.get<number>("schedule.intervalMin") ?? 30,
-    MIN_INTERVAL_MINUTES
-  );
-  const intervalMs = intervalMin * 60 * 1000;
   const jitter = Math.floor(Math.random() * MAX_JITTER_MS);
 
   const logger = getLogger();
   logger.appendLine(
-    `[${new Date().toISOString()}] Scheduler starting: interval=${intervalMin}min, jitter=${jitter}ms`
+    `[${new Date().toISOString()}] Scheduler starting: interval=${resolved.displayValue}${resolved.unit === "seconds" ? "s" : "min"} (${resolved.intervalSeconds}s), jitter=${jitter}ms`
   );
 
   jitterTimeout = setTimeout(() => {
     scheduledTick(context);
-    timer = setInterval(() => scheduledTick(context), intervalMs);
+    timer = setInterval(() => scheduledTick(context), resolved.intervalMs);
   }, jitter);
 }
 
@@ -79,7 +76,7 @@ export async function determineSyncAction(
 ): Promise<SyncAction> {
   let syncState = await loadSyncState(context);
 
-  if (!syncState || !syncState.gistId) {
+  if (!syncState || !hasRemoteDestination(syncState)) {
     return { action: "push" };
   }
 
@@ -88,20 +85,26 @@ export async function determineSyncAction(
     return { action: "error", reason: "no_token" };
   }
 
-  const client = new GistClient(token);
-  const gistResult = await withRetry(() => client.getGist(syncState!.gistId));
-  if (!gistResult.ok) {
-    return { action: "error", reason: gistResult.error.category };
+  const backend = createRemoteBackend(context, token, syncState);
+  if (!backend) {
+    return { action: "error", reason: "no_destination" };
   }
 
-  const manifestFile = gistResult.data.files["manifest.json"];
-  if (!manifestFile) {
+  const snapshotResult = await withRetry(() =>
+    backend.getSnapshot({ onlyFiles: ["manifest.json"] })
+  );
+  if (!snapshotResult.ok) {
+    return { action: "error", reason: snapshotResult.error.category };
+  }
+
+  const manifestContent = snapshotResult.data.files["manifest.json"];
+  if (!manifestContent) {
     return { action: "push" };
   }
 
   let manifest: Manifest;
   try {
-    manifest = JSON.parse(manifestFile.content) as Manifest;
+    manifest = JSON.parse(manifestContent) as Manifest;
   } catch {
     return { action: "push" };
   }
@@ -113,9 +116,17 @@ export async function determineSyncAction(
 
   const localChecksums = await computeLocalChecksums();
   if (isChatSyncEnabled()) {
-    const fingerprint = await computeChatSyncLocalFingerprint();
-    localChecksums[CURSOR_CHAT_SYNC_KEY] = fingerprint;
     delete localChecksums[CHAT_BUNDLES_SYNC_KEY];
+    const fingerprint = await computeChatSyncLocalFingerprint();
+    const stored = await readStoredChatSyncFingerprint(context);
+    const lastChatChecksum = syncState.localChecksums[CURSOR_CHAT_SYNC_KEY];
+    // Fingerprint is discovery metadata; sync state stores content checksum.
+    // When fingerprint matches the last push, treat chat as unchanged.
+    if (stored && fingerprint === stored && lastChatChecksum) {
+      localChecksums[CURSOR_CHAT_SYNC_KEY] = lastChatChecksum;
+    } else {
+      localChecksums[CURSOR_CHAT_SYNC_KEY] = fingerprint;
+    }
   }
 
   const conflicts = findConflicts(syncState, localChecksums, remoteChecksums);
@@ -174,6 +185,18 @@ export async function scheduledTick(
   context: vscode.ExtensionContext
 ): Promise<void> {
   const logger = getLogger();
+  const config = vscode.workspace.getConfiguration("cursorSync");
+  const resolved = resolveScheduleInterval(config);
+
+  // Never run scheduled push/pull unless periodic auto-sync is enabled.
+  if (!resolved.enabled) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Scheduled sync skipped: schedule.enabled is false`
+    );
+    sendEvent(context, "scheduled_sync_skipped", { reason: "disabled" });
+    stopScheduler();
+    return;
+  }
 
   if (isPushLocked() || isPullLocked()) {
     logger.appendLine(

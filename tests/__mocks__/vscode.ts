@@ -121,13 +121,21 @@ export const workspace = {
         syncProfileName: "default",
         safeMode: true,
         "schedule.enabled": false,
+        "schedule.interval": 30,
+        "schedule.intervalUnit": "minutes",
         "schedule.intervalMin": 30,
+        "destination.type": "gist",
+        "destination.repo": "",
+        "destination.branch": "main",
+        "destination.path": "cursor-sync",
       };
       return (defaults[key] as T) ?? defaultValue;
     },
     update: async (key: string, value: unknown) => {
       mockGlobalConfig[key] = value;
     },
+    inspect: () => undefined,
+    has: () => true,
   }),
   onDidChangeConfiguration: () => ({ dispose: () => {} }),
 };

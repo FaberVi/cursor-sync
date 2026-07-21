@@ -48,6 +48,7 @@ vi.mock("../src/chat-sync.js", async () => {
     ...actual,
     isChatSyncEnabled: vi.fn(() => false),
     computeChatSyncLocalFingerprint: vi.fn(async () => "chat-fingerprint"),
+    readStoredChatSyncFingerprint: vi.fn(async () => undefined),
   };
 });
 
@@ -92,7 +93,8 @@ describe("scheduler", () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: (key: string) => {
         if (key === "schedule.enabled") return false;
-        if (key === "schedule.intervalMin") return 30;
+        if (key === "schedule.interval") return 30;
+        if (key === "schedule.intervalUnit") return "minutes";
         return undefined;
       },
       has: () => true,
@@ -113,16 +115,22 @@ describe("scheduler", () => {
     stopScheduler();
   });
 
-  it("enforces minimum interval of 5 minutes", async () => {
+  it("enforces minimum interval of 30 seconds", async () => {
     const vscode = await import("vscode");
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: (key: string) => {
         if (key === "schedule.enabled") return true;
-        if (key === "schedule.intervalMin") return 1;
+        if (key === "schedule.interval") return 5;
+        if (key === "schedule.intervalUnit") return "seconds";
         return undefined;
       },
       has: () => true,
-      inspect: () => undefined,
+      inspect: (key: string) => {
+        if (key === "schedule.interval") {
+          return { globalValue: 5 };
+        }
+        return undefined;
+      },
       update: async () => {},
     } as ReturnType<typeof vscode.workspace.getConfiguration>);
 
@@ -146,10 +154,10 @@ describe("scheduler", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(pushSpy).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(20_000);
     expect(pushSpy).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(pushSpy).toHaveBeenCalledTimes(2);
 
     stopScheduler();
@@ -161,7 +169,8 @@ describe("scheduler", () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: (key: string) => {
         if (key === "schedule.enabled") return true;
-        if (key === "schedule.intervalMin") return 5;
+        if (key === "schedule.interval") return 5;
+        if (key === "schedule.intervalUnit") return "minutes";
         return undefined;
       },
       has: () => true,
@@ -189,6 +198,34 @@ describe("determineSyncAction", () => {
   beforeEach(() => {
     vi.resetModules();
   });
+
+  async function mockBackendWithManifest(files: Record<string, { checksum: string; sizeBytes: number }>) {
+    const remote = await import("../src/remote/factory.js");
+    vi.spyOn(remote, "createRemoteBackend").mockReturnValue({
+      type: "gist",
+      remoteLabel: () => "gist",
+      remoteUrl: () => undefined,
+      discover: async () => ({ ok: true, data: null }),
+      writeFiles: async () => ({ ok: true, data: { id: "abc123", htmlUrl: "", created: false } }),
+      getSnapshot: async () => ({
+        ok: true,
+        data: {
+          id: "abc123",
+          htmlUrl: "",
+          files: {
+            "manifest.json": JSON.stringify({
+              schemaVersion: 1,
+              syncProfileName: "default",
+              createdAt: new Date().toISOString(),
+              sourceMachineId: "machine1",
+              sourceOS: "linux",
+              files,
+            }),
+          },
+        },
+      }),
+    } as never);
+  }
 
   it("returns push when no sync state exists", async () => {
     const diagnostics = await import("../src/diagnostics.js");
@@ -265,16 +302,20 @@ describe("determineSyncAction", () => {
     const auth = await import("../src/auth.js");
     vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
 
-    const gist = await import("../src/gist.js");
-    vi.spyOn(gist.GistClient.prototype, "getGist").mockResolvedValue({
-      ok: true,
-      data: {
-        id: "abc123",
-        html_url: "",
-        description: "",
-        files: {
-          "manifest.json": {
-            content: JSON.stringify({
+    const remote = await import("../src/remote/factory.js");
+    vi.spyOn(remote, "createRemoteBackend").mockReturnValue({
+      type: "gist",
+      remoteLabel: () => "gist",
+      remoteUrl: () => undefined,
+      discover: async () => ({ ok: true, data: null }),
+      writeFiles: async () => ({ ok: true, data: { id: "abc123", htmlUrl: "", created: false } }),
+      getSnapshot: async () => ({
+        ok: true,
+        data: {
+          id: "abc123",
+          htmlUrl: "",
+          files: {
+            "manifest.json": JSON.stringify({
               schemaVersion: 1,
               syncProfileName: "default",
               createdAt: new Date().toISOString(),
@@ -284,10 +325,8 @@ describe("determineSyncAction", () => {
             }),
           },
         },
-        created_at: "",
-        updated_at: "",
-      },
-    });
+      }),
+    } as never);
 
     const retry = await import("../src/retry.js");
     vi.spyOn(retry, "withRetry").mockImplementation((fn: () => unknown) => fn());
@@ -327,28 +366,8 @@ describe("determineSyncAction", () => {
     const auth = await import("../src/auth.js");
     vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
 
-    const gist = await import("../src/gist.js");
-    vi.spyOn(gist.GistClient.prototype, "getGist").mockResolvedValue({
-      ok: true,
-      data: {
-        id: "abc123",
-        html_url: "",
-        description: "",
-        files: {
-          "manifest.json": {
-            content: JSON.stringify({
-              schemaVersion: 1,
-              syncProfileName: "default",
-              createdAt: new Date().toISOString(),
-              sourceMachineId: "machine2",
-              sourceOS: "linux",
-              files: { "cursor-user/settings.json": { checksum: "bbb222", sizeBytes: 120 } },
-            }),
-          },
-        },
-        created_at: "",
-        updated_at: "",
-      },
+    await mockBackendWithManifest({
+      "cursor-user/settings.json": { checksum: "bbb222", sizeBytes: 120 },
     });
 
     const retry = await import("../src/retry.js");
@@ -389,28 +408,8 @@ describe("determineSyncAction", () => {
     const auth = await import("../src/auth.js");
     vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
 
-    const gist = await import("../src/gist.js");
-    vi.spyOn(gist.GistClient.prototype, "getGist").mockResolvedValue({
-      ok: true,
-      data: {
-        id: "abc123",
-        html_url: "",
-        description: "",
-        files: {
-          "manifest.json": {
-            content: JSON.stringify({
-              schemaVersion: 1,
-              syncProfileName: "default",
-              createdAt: new Date().toISOString(),
-              sourceMachineId: "machine1",
-              sourceOS: "linux",
-              files: { "cursor-user/settings.json": { checksum: "aaa111", sizeBytes: 100 } },
-            }),
-          },
-        },
-        created_at: "",
-        updated_at: "",
-      },
+    await mockBackendWithManifest({
+      "cursor-user/settings.json": { checksum: "aaa111", sizeBytes: 100 },
     });
 
     const retry = await import("../src/retry.js");
@@ -457,31 +456,9 @@ describe("determineSyncAction", () => {
     const auth = await import("../src/auth.js");
     vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
 
-    const gist = await import("../src/gist.js");
-    vi.spyOn(gist.GistClient.prototype, "getGist").mockResolvedValue({
-      ok: true,
-      data: {
-        id: "abc123",
-        html_url: "",
-        description: "",
-        files: {
-          "manifest.json": {
-            content: JSON.stringify({
-              schemaVersion: 1,
-              syncProfileName: "default",
-              createdAt: new Date().toISOString(),
-              sourceMachineId: "machine2",
-              sourceOS: "linux",
-              files: {
-                "cursor-user/settings.json": { checksum: "aaa111", sizeBytes: 100 },
-                "cursor-user/keybindings.json": { checksum: "ddd444", sizeBytes: 200 },
-              },
-            }),
-          },
-        },
-        created_at: "",
-        updated_at: "",
-      },
+    await mockBackendWithManifest({
+      "cursor-user/settings.json": { checksum: "aaa111", sizeBytes: 100 },
+      "cursor-user/keybindings.json": { checksum: "ddd444", sizeBytes: 200 },
     });
 
     const retry = await import("../src/retry.js");
@@ -525,28 +502,8 @@ describe("determineSyncAction", () => {
     const auth = await import("../src/auth.js");
     vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
 
-    const gist = await import("../src/gist.js");
-    vi.spyOn(gist.GistClient.prototype, "getGist").mockResolvedValue({
-      ok: true,
-      data: {
-        id: "abc123",
-        html_url: "",
-        description: "",
-        files: {
-          "manifest.json": {
-            content: JSON.stringify({
-              schemaVersion: 1,
-              syncProfileName: "default",
-              createdAt: new Date().toISOString(),
-              sourceMachineId: "machine2",
-              sourceOS: "linux",
-              files: { "cursor-user/settings.json": { checksum: "bbb222", sizeBytes: 120 } },
-            }),
-          },
-        },
-        created_at: "",
-        updated_at: "",
-      },
+    await mockBackendWithManifest({
+      "cursor-user/settings.json": { checksum: "bbb222", sizeBytes: 120 },
     });
 
     const retry = await import("../src/retry.js");
@@ -581,6 +538,19 @@ describe("scheduled sync debug wiring", () => {
     isPushLockedMock.mockReset().mockReturnValue(false);
     isPullLockedMock.mockReset().mockReturnValue(false);
 
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: (key: string) => {
+        if (key === "schedule.enabled") return true;
+        if (key === "schedule.interval") return 30;
+        if (key === "schedule.intervalUnit") return "minutes";
+        return undefined;
+      },
+      has: () => true,
+      inspect: () => undefined,
+      update: async () => {},
+    } as ReturnType<typeof vscode.workspace.getConfiguration>);
+
     const diagnostics = await import("../src/diagnostics.js");
     vi.spyOn(diagnostics, "getLogger").mockReturnValue({
       appendLine: vi.fn(),
@@ -589,6 +559,32 @@ describe("scheduled sync debug wiring", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("skips scheduledTick entirely when schedule.enabled is false", async () => {
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: (key: string) => {
+        if (key === "schedule.enabled") return false;
+        if (key === "schedule.interval") return 30;
+        if (key === "schedule.intervalUnit") return "minutes";
+        return undefined;
+      },
+      has: () => true,
+      inspect: () => undefined,
+      update: async () => {},
+    } as ReturnType<typeof vscode.workspace.getConfiguration>);
+
+    const scheduler = await import("../src/scheduler.js");
+    const determineSpy = vi
+      .spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction")
+      .mockResolvedValue({ action: "push" });
+
+    await scheduler.scheduledTick(mockContext());
+
+    expect(determineSpy).not.toHaveBeenCalled();
+    expect(executePushMock).not.toHaveBeenCalled();
+    expect(executePullMock).not.toHaveBeenCalled();
   });
 
   it("calls showSyncFailureWithDebug on determineSyncAction error", async () => {

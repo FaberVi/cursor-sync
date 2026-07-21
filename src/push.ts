@@ -1,12 +1,11 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
-import { enumerateSyncFiles, syncKeyToGistFileName } from "./paths.js";
-import { packageFiles, computeChecksum } from "./packaging.js";
-import { GistClient } from "./gist.js";
+import { enumerateSyncFiles } from "./paths.js";
+import { packageFiles } from "./packaging.js";
 import { requireToken, validateStoredToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
-import { detectConflicts, clearConflicts, getPendingConflicts, getResolutionForKey } from "./conflicts.js";
+import { detectConflicts, clearConflicts, getResolutionForKey } from "./conflicts.js";
 import { generateExtensionsJson } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
@@ -16,7 +15,6 @@ import {
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
 import {
-  CHAT_BUNDLES_SYNC_KEY,
   CURSOR_CHAT_GIST_FILE_NAME,
   CURSOR_CHAT_SYNC_KEY,
   formatChatSyncFidelityToast,
@@ -24,9 +22,21 @@ import {
   prepareChatSyncPushPayload,
   storeChatSyncFingerprint,
   computeChatSyncLocalFingerprint,
+  fetchRemoteChatCollectionFromFiles,
+  canSkipChatPackaging,
 } from "./chat-sync.js";
 import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
-import type { SyncState } from "./types.js";
+import {
+  buildSyncStateAfterWrite,
+  createRemoteBackend,
+  readDestinationSettings,
+  remoteSnapshotFileNames,
+  RepoBackend,
+} from "./remote/index.js";
+import { ensureRepoExistsInteractive } from "./remote/ensure-repo.js";
+import { selectPushDelta } from "./push-delta.js";
+import { createSidebarSyncProgress } from "./sync-progress-events.js";
+import type { ManifestFileEntry, SyncState } from "./types.js";
 
 export type PushTrigger = "manual" | "scheduled";
 
@@ -41,7 +51,6 @@ export async function executePush(
   options?: { trigger?: PushTrigger }
 ): Promise<boolean> {
   const trigger = options?.trigger ?? "manual";
-  const logger = getLogger();
 
   if (pushLock) {
     vscode.window.showWarningMessage("A sync operation is already in progress.");
@@ -50,12 +59,16 @@ export async function executePush(
 
   pushLock = true;
   updateStatusBar("syncing");
+  const progress = createSidebarSyncProgress("push");
   try {
-    const success = await doPush(context, trigger);
+    progress.report({ message: "Starting push…" });
+    const success = await doPush(context, trigger, progress);
+    progress.complete(success);
     updateStatusBar(success ? "ok" : "error", new Date());
     refreshSidebar();
     return success;
   } catch (err) {
+    progress.complete(false);
     updateStatusBar("error", new Date());
     refreshSidebar();
     throw err;
@@ -66,7 +79,10 @@ export async function executePush(
 
 async function doPush(
   context: vscode.ExtensionContext,
-  trigger: PushTrigger = "manual"
+  trigger: PushTrigger = "manual",
+  progress: vscode.Progress<{ message?: string; increment?: number }> = {
+    report: () => {},
+  }
 ): Promise<boolean> {
   const logger = getLogger();
   logger.appendLine(`[${new Date().toISOString()}] Push started`);
@@ -74,6 +90,7 @@ async function doPush(
   const authFailedMessage =
     "GitHub token not configured. Configure your token to sync.";
 
+  progress.report({ message: "Checking GitHub token…" });
   if (!(await validateStoredToken(context))) {
     const token = await requireToken(context);
     if (!token) {
@@ -106,30 +123,96 @@ async function doPush(
     return false;
   }
 
-  const client = new GistClient(token);
   const syncState = await loadSyncState(context);
+  const destSettings = readDestinationSettings();
+  if (destSettings.type === "repo" && !destSettings.repo) {
+    const message =
+      "Repository destination selected but cursorSync.destination.repo is empty (owner/name).";
+    void showSyncFailureWithDebug(
+      context,
+      buildSyncDebugFailure("push", trigger, message, {
+        direction: "push",
+        category: "not_configured",
+      }),
+      { title: message }
+    );
+    return false;
+  }
 
-  if (syncState) {
-    let remoteChecksums = syncState.remoteChecksums;
-    if (syncState.gistId) {
-      const gistResult = await withRetry(() => client.getGist(syncState.gistId));
-      if (gistResult.ok) {
-        const manifestFile = gistResult.data.files["manifest.json"];
-        if (manifestFile) {
-          try {
-            const manifest = JSON.parse(manifestFile.content) as {
-              files: Record<string, { checksum: string }>;
-            };
-            remoteChecksums = {};
-            for (const [key, entry] of Object.entries(manifest.files)) {
-              remoteChecksums[key] = entry.checksum;
-            }
-          } catch {
-            // Fall back to last-known remote checksums.
-          }
+  progress.report({
+    message:
+      destSettings.type === "repo"
+        ? "Connecting to GitHub repository…"
+        : "Connecting to GitHub Gist…",
+  });
+  const backend = createRemoteBackend(context, token, syncState);
+  if (!backend) {
+    const message =
+      "Could not create remote sync backend. Check destination settings.";
+    void showSyncFailureWithDebug(
+      context,
+      buildSyncDebugFailure("push", trigger, message, {
+        direction: "push",
+        category: "not_configured",
+      }),
+      { title: message }
+    );
+    return false;
+  }
+
+  if (backend instanceof RepoBackend && trigger === "manual") {
+    progress.report({ message: "Verifying repository…" });
+    const ensured = await ensureRepoExistsInteractive(backend);
+    if (!ensured.ok) {
+      void showSyncFailureWithDebug(
+        context,
+        buildSyncDebugFailure("push", trigger, ensured.error.message, {
+          direction: "push",
+          category: ensured.error.category,
+          statusCode: ensured.error.statusCode,
+        }),
+        { title: `Push failed: ${ensured.error.message}` }
+      );
+      return false;
+    }
+  }
+
+  progress.report({ message: "Fetching remote manifest…" });
+  const snapshotResult = await withRetry(() =>
+    backend.getSnapshot({ onlyFiles: ["manifest.json"] })
+  );
+  let remoteChecksums: Record<string, string> = syncState?.remoteChecksums
+    ? { ...syncState.remoteChecksums }
+    : {};
+  let remoteManifestFiles: Record<string, ManifestFileEntry> = {};
+  let existingRemoteNames: string[] = [];
+  let forceFullUpload = !snapshotResult.ok;
+
+  if (snapshotResult.ok) {
+    existingRemoteNames = remoteSnapshotFileNames(snapshotResult.data);
+    forceFullUpload =
+      existingRemoteNames.length === 0 ||
+      snapshotResult.data.files["manifest.json"] === undefined;
+    const manifestContent = snapshotResult.data.files["manifest.json"];
+    if (manifestContent) {
+      try {
+        const remoteManifest = JSON.parse(manifestContent) as {
+          files: Record<string, ManifestFileEntry>;
+        };
+        remoteChecksums = {};
+        remoteManifestFiles = remoteManifest.files ?? {};
+        for (const [key, entry] of Object.entries(remoteManifestFiles)) {
+          remoteChecksums[key] = entry.checksum;
         }
+      } catch {
+        // Fall back to last-known remote checksums / full upload.
+        forceFullUpload = true;
       }
     }
+  }
+
+  if (syncState) {
+    progress.report({ message: "Checking for conflicts…" });
     const conflicts = await detectConflicts(context, remoteChecksums);
     if (conflicts.length > 0) {
       const unresolved = conflicts.filter((c) => {
@@ -157,6 +240,7 @@ async function doPush(
     }
   }
 
+  progress.report({ message: "Packaging local files…" });
   const extensionsJson = generateExtensionsJson();
   const cursorUserRoot = (await import("./paths.js")).resolveSyncRoots().cursorUser;
   await writeExtensionsFile(cursorUserRoot, extensionsJson);
@@ -174,188 +258,204 @@ async function doPush(
     }
   }
 
-  const gistFiles: Record<string, { content: string }> = {};
   let chatBundleCount = 0;
   let pushNativeChatFile = false;
+  let chatForDelta:
+    | {
+        syncKey: string;
+        gistFileName: string;
+        checksum: string;
+        content: string;
+      }
+    | undefined;
   if (isChatSyncEnabled()) {
-    try {
-      const chatPayload = await prepareChatSyncPushPayload(
-        context,
-        syncState?.gistId,
-        token,
-        { report: () => {} }
+    const skipChat = await canSkipChatPackaging(
+      context,
+      remoteChecksums,
+      syncState ?? undefined
+    );
+    if (skipChat) {
+      progress.report({ message: "Chat backup unchanged…" });
+      const remoteEntry = remoteManifestFiles[CURSOR_CHAT_SYNC_KEY];
+      const checksum = remoteChecksums[CURSOR_CHAT_SYNC_KEY]!;
+      manifest.files[CURSOR_CHAT_SYNC_KEY] = {
+        checksum,
+        sizeBytes: remoteEntry?.sizeBytes ?? 0,
+      };
+      chatForDelta = {
+        syncKey: CURSOR_CHAT_SYNC_KEY,
+        gistFileName: CURSOR_CHAT_GIST_FILE_NAME,
+        checksum,
+        content: "",
+      };
+      pushNativeChatFile = true;
+      logger.appendLine(
+        `[${new Date().toISOString()}] [chat-sync] skipped packaging (fingerprint unchanged)`
       );
-      if (chatPayload) {
-        manifest.files[chatPayload.syncKey] = {
-          checksum: chatPayload.checksum,
-          sizeBytes: chatPayload.sizeBytes,
-        };
-        chatBundleCount = chatPayload.bundleCount;
-        gistFiles[chatPayload.gistFileName] = { content: chatPayload.content };
-        pushNativeChatFile = chatPayload.gistFileName === CURSOR_CHAT_GIST_FILE_NAME;
-        pushNativeChatFile = chatPayload.gistFileName === CURSOR_CHAT_GIST_FILE_NAME;
-        const fidelity = chatPayload.fidelityReport;
-        const lowTier =
-          fidelity.byTier.archive + fidelity.byTier.partial;
-        if (lowTier > 0 || fidelity.textOnlyLayer4 > 0) {
-          const detail = formatChatSyncFidelityToast(fidelity);
-          logger.appendLine(
-            `[${new Date().toISOString()}] [chat-sync] push fidelity: ${detail}`
-          );
-          void vscode.window.showWarningMessage(
-            `Chat sync: ${detail}. See Output for details.`,
-            "Show Output"
-          ).then((choice) => {
-            if (choice === "Show Output") {
-              logger.show();
+    } else {
+      progress.report({ message: "Preparing chat backup…" });
+      try {
+        const chatPayload = await prepareChatSyncPushPayload(
+          context,
+          async () => {
+            const chatSnap = await withRetry(() =>
+              backend.getSnapshot({
+                onlyFiles: [
+                  CURSOR_CHAT_GIST_FILE_NAME,
+                  CHAT_BUNDLES_GIST_FILE_NAME,
+                ],
+              })
+            );
+            if (!chatSnap.ok) {
+              return null;
             }
-          });
+            return fetchRemoteChatCollectionFromFiles(
+              context,
+              chatSnap.data.files
+            );
+          },
+          { report: (value) => progress.report(value) }
+        );
+        if (chatPayload) {
+          manifest.files[chatPayload.syncKey] = {
+            checksum: chatPayload.checksum,
+            sizeBytes: chatPayload.sizeBytes,
+          };
+          chatBundleCount = chatPayload.bundleCount;
+          pushNativeChatFile =
+            chatPayload.gistFileName === CURSOR_CHAT_GIST_FILE_NAME;
+          chatForDelta = {
+            syncKey: chatPayload.syncKey,
+            gistFileName: chatPayload.gistFileName,
+            checksum: chatPayload.checksum,
+            content: chatPayload.content,
+          };
+          const fidelity = chatPayload.fidelityReport;
+          const lowTier =
+            fidelity.byTier.archive + fidelity.byTier.partial;
+          if (lowTier > 0 || fidelity.textOnlyLayer4 > 0) {
+            const detail = formatChatSyncFidelityToast(fidelity);
+            logger.appendLine(
+              `[${new Date().toISOString()}] [chat-sync] push fidelity: ${detail}`
+            );
+            void vscode.window
+              .showWarningMessage(
+                `Chat sync: ${detail}. See Output for details.`,
+                "Show Output"
+              )
+              .then((choice) => {
+                if (choice === "Show Output") {
+                  logger.show();
+                }
+              });
+          }
         }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.appendLine(
+          `[${new Date().toISOString()}] Push chat sync skipped: ${msg}`
+        );
+        vscode.window.showWarningMessage(
+          `Settings push continues; chat sync skipped: ${msg}`
+        );
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.appendLine(
-        `[${new Date().toISOString()}] Push chat sync skipped: ${msg}`
-      );
-      vscode.window.showWarningMessage(`Settings push continues; chat sync skipped: ${msg}`);
     }
   }
 
-  gistFiles["manifest.json"] = { content: JSON.stringify(manifest, null, 2) };
+  const delta = selectPushDelta({
+    packaged,
+    remoteChecksums,
+    existingRemoteNames,
+    forceFullUpload,
+    chat: chatForDelta,
+    pushNativeChatFile,
+    chatSyncEnabled: isChatSyncEnabled(),
+    legacyChatBundlesFileName: CHAT_BUNDLES_GIST_FILE_NAME,
+  });
 
-  for (const [key, value] of packaged) {
-    const gistFileName = syncKeyToGistFileName(key);
-    gistFiles[gistFileName] = { content: value.content };
-  }
-
-  let gistId = syncState?.gistId;
-  let isNewGist = false;
-
-  if (!gistId) {
-    const existingResult = await withRetry(() => client.findExistingGist());
-    if (existingResult.ok && existingResult.data) {
-      gistId = existingResult.data.id;
+  if (delta.isNoOp) {
+    progress.report({ message: "Already in sync" });
+    if (isChatSyncEnabled()) {
+      const fingerprint = await computeChatSyncLocalFingerprint();
+      await storeChatSyncFingerprint(context, fingerprint);
     }
-  }
-
-  if (!gistId) {
-    const result = await withRetry(() =>
-      client.createGist(gistFiles, "Cursor Sync - Settings Backup")
+    logger.appendLine(
+      `[${new Date().toISOString()}] Push skipped: already in sync (${delta.unchangedCount} unchanged) → ${backend.remoteLabel()}`
     );
-    if (!result.ok) {
-      void showSyncFailureWithDebug(
-        context,
-        buildSyncDebugFailure("push", trigger, result.error.message, {
-          direction: "push",
-          category: result.error.category,
-          statusCode: result.error.statusCode,
-        }),
-        { title: `Push failed: ${result.error.message}` }
+    if (trigger === "manual") {
+      vscode.window.showInformationMessage(
+        `Already in sync, nothing to push (${delta.unchangedCount} file(s) unchanged).`
       );
-      logger.appendLine(
-        `[${new Date().toISOString()}] Push failed: ${result.error.category} - ${result.error.message}`
-      );
-      await addSyncHistoryEntry(context, {
-        timestamp: new Date().toISOString(),
-        direction: "push",
-        trigger,
-        fileCount: 0,
-        success: false,
-        error: result.error.message,
-        files: [...packaged.keys()].sort(),
-      });
-      sendEvent(context, "sync_failed", {
-        direction: "push",
-        reason: result.error.category,
-        trigger,
-        status_code: result.error.statusCode,
-      });
-      return false;
     }
-    gistId = result.data.id;
-    isNewGist = true;
-  } else {
-    const existingResult = await withRetry(() => client.getGist(gistId!));
-    let filesToDelete: Record<string, null> = {};
-    if (existingResult.ok) {
-      const existingFiles = Object.keys(existingResult.data.files);
-      for (const existing of existingFiles) {
-        if (existing === "manifest.json" || gistFiles[existing]) {
-          continue;
-        }
-        if (existing === CHAT_BUNDLES_GIST_FILE_NAME && !isChatSyncEnabled()) {
-          continue;
-        }
-        filesToDelete[existing] = null;
-      }
-      if (pushNativeChatFile) {
-        filesToDelete[CHAT_BUNDLES_GIST_FILE_NAME] = null;
-      }
-    }
-
-    const updatePayload: Record<string, { content: string } | null> = {
-      ...gistFiles,
-      ...filesToDelete,
-    };
-
-    const result = await withRetry(() =>
-      client.updateGist(gistId!, updatePayload)
-    );
-    if (!result.ok) {
-      void showSyncFailureWithDebug(
-        context,
-        buildSyncDebugFailure("push", trigger, result.error.message, {
-          direction: "push",
-          category: result.error.category,
-          statusCode: result.error.statusCode,
-        }),
-        { title: `Push failed: ${result.error.message}` }
-      );
-      logger.appendLine(
-        `[${new Date().toISOString()}] Push failed: ${result.error.category} - ${result.error.message}`
-      );
-      await addSyncHistoryEntry(context, {
-        timestamp: new Date().toISOString(),
-        direction: "push",
-        trigger,
-        fileCount: 0,
-        success: false,
-        error: result.error.message,
-        files: [...packaged.keys()].sort(),
-      });
-      sendEvent(context, "sync_failed", {
-        direction: "push",
-        reason: result.error.category,
-        trigger,
-        status_code: result.error.statusCode,
-      });
-      return false;
-    }
+    sendEvent(context, "sync_completed", {
+      direction: "push",
+      file_count: 0,
+      trigger,
+      skipped_unchanged: delta.unchangedCount,
+      destination_type: backend.type,
+      noop: true,
+    });
+    return true;
   }
 
+  const remoteFiles: Record<string, string> = {
+    ...delta.filesToUpload,
+    "manifest.json": JSON.stringify(manifest, null, 2),
+  };
+
+  progress.report({
+    message: `Uploading ${delta.uploadedSyncKeys.length} changed file(s)…`,
+  });
+  const writeResult = await withRetry(() =>
+    backend.writeFiles(remoteFiles, { deleteNames: delta.deleteNames })
+  );
+  if (!writeResult.ok) {
+    void showSyncFailureWithDebug(
+      context,
+      buildSyncDebugFailure("push", trigger, writeResult.error.message, {
+        direction: "push",
+        category: writeResult.error.category,
+        statusCode: writeResult.error.statusCode,
+      }),
+      { title: `Push failed: ${writeResult.error.message}` }
+    );
+    logger.appendLine(
+      `[${new Date().toISOString()}] Push failed: ${writeResult.error.category} - ${writeResult.error.message}`
+    );
+    await addSyncHistoryEntry(context, {
+      timestamp: new Date().toISOString(),
+      direction: "push",
+      trigger,
+      fileCount: 0,
+      success: false,
+      error: writeResult.error.message,
+      files: delta.uploadedSyncKeys.sort(),
+    });
+    sendEvent(context, "sync_failed", {
+      direction: "push",
+      reason: writeResult.error.category,
+      trigger,
+      status_code: writeResult.error.statusCode,
+    });
+    return false;
+  }
+
+  progress.report({ message: "Saving sync state…" });
   const checksums: Record<string, string> = {};
   for (const [key, value] of packaged) {
     checksums[key] = value.checksum;
   }
-  if (gistFiles[CURSOR_CHAT_GIST_FILE_NAME]) {
-    const chatEntry = manifest.files[CURSOR_CHAT_SYNC_KEY];
-    if (chatEntry) {
-      checksums[CURSOR_CHAT_SYNC_KEY] = chatEntry.checksum;
-    }
-  } else if (gistFiles[CHAT_BUNDLES_GIST_FILE_NAME]) {
-    const chatEntry = manifest.files[CHAT_BUNDLES_SYNC_KEY];
-    if (chatEntry) {
-      checksums[CHAT_BUNDLES_SYNC_KEY] = chatEntry.checksum;
-    }
+  if (chatForDelta) {
+    checksums[chatForDelta.syncKey] = chatForDelta.checksum;
   }
 
-  const newState: SyncState = {
-    lastSyncTimestamp: new Date().toISOString(),
-    lastSyncDirection: "push",
-    gistId: gistId!,
-    localChecksums: checksums,
-    remoteChecksums: checksums,
-  };
+  const newState: SyncState = buildSyncStateAfterWrite(
+    syncState,
+    backend,
+    writeResult.data.id,
+    checksums,
+    "push"
+  );
   await saveSyncState(context, newState);
   if (isChatSyncEnabled()) {
     const fingerprint = await computeChatSyncLocalFingerprint();
@@ -363,15 +463,20 @@ async function doPush(
   }
   clearConflicts();
 
-  const historyFiles = [...packaged.keys()].sort();
+  const historyFiles = [...delta.uploadedSyncKeys].sort();
   const fileCount = historyFiles.length;
   const chatSuffix =
     chatBundleCount > 0 ? ` · ${chatBundleCount} chat(s)` : "";
+  const skipSuffix =
+    delta.unchangedCount > 0
+      ? ` (${delta.unchangedCount} unchanged skipped)`
+      : "";
   await addSyncHistoryEntry(context, {
     timestamp: new Date().toISOString(),
     direction: "push",
     trigger,
     fileCount,
+    totalFileCount: Object.keys(manifest.files).length,
     success: true,
     files: historyFiles,
   });
@@ -379,13 +484,18 @@ async function doPush(
     direction: "push",
     file_count: fileCount,
     trigger,
-    is_new_gist: isNewGist,
+    is_new_gist: writeResult.data.created,
+    destination_type: backend.type,
+    skipped_unchanged: delta.unchangedCount,
   });
-  vscode.window.showInformationMessage(
-    `Push complete: ${fileCount} file(s) synced${chatSuffix}.`
-  );
+  progress.report({ message: "Done" });
+  if (trigger === "manual") {
+    vscode.window.showInformationMessage(
+      `Push complete: ${fileCount} file(s) synced${skipSuffix}${chatSuffix}.`
+    );
+  }
   logger.appendLine(
-    `[${new Date().toISOString()}] Push succeeded: ${fileCount} files`
+    `[${new Date().toISOString()}] Push succeeded: ${fileCount} files uploaded, ${delta.unchangedCount} unchanged → ${backend.remoteLabel()}`
   );
   return true;
 }

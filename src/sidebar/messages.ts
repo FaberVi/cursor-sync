@@ -1,8 +1,17 @@
 import * as vscode from "vscode";
 import { clearImports } from "./import-history.js";
+import { emitSyncActionsIdle } from "../sync-progress-events.js";
 
 export type SidebarMessage =
-  | { command: "syncNow" | "push" | "pull" | "export" | "import" | "configure" }
+  | {
+      command: "syncNow" | "push" | "pull" | "export" | "import" | "configure";
+      destination?: {
+        type?: string;
+        repo?: string;
+        branch?: string;
+        path?: string;
+      };
+    }
   | { command: "chats:listLocal" }
   | { command: "chats:loadGroup"; projectKey: string }
   | { command: "chats:listImports" }
@@ -33,6 +42,7 @@ export type SidebarMessage =
   | { command: "chats:revealTranscripts"; conversationId: string; workspaceKey?: string; projectKey?: string }
   | { command: "chats:clearHistory" }
   | { command: "history:details"; timestamp: string }
+  | { command: "history:page"; page: number }
   | { command: "settings:get" }
   | { command: "settings:set"; key: string; value: unknown };
 
@@ -43,23 +53,29 @@ export async function dispatchSidebarMessage(
 ): Promise<void> {
   switch (msg.command) {
     case "syncNow":
-      await vscode.commands.executeCommand("cursorSync.syncNow");
-      break;
     case "push":
-      await vscode.commands.executeCommand("cursorSync.push");
+    case "pull": {
+      try {
+        await vscode.commands.executeCommand(`cursorSync.${msg.command}`);
+      } finally {
+        emitSyncActionsIdle();
+      }
       break;
-    case "pull":
-      await vscode.commands.executeCommand("cursorSync.pull");
-      break;
+    }
     case "export":
       await vscode.commands.executeCommand("cursorSync.export");
       break;
     case "import":
       await vscode.commands.executeCommand("cursorSync.import");
       break;
-    case "configure":
+    case "configure": {
+      if (msg.destination) {
+        const { persistDestinationSettings } = await import("../remote/destination.js");
+        await persistDestinationSettings(msg.destination);
+      }
       await vscode.commands.executeCommand("cursorSync.configureGithub");
       break;
+    }
     case "chats:listLocal": {
       const { listLocalConversationsGrouped } = await import("./chats-tab.js");
       const result = await listLocalConversationsGrouped();
@@ -169,13 +185,26 @@ export async function dispatchSidebarMessage(
         break;
       }
       const dirLabel = entry.direction === "push" ? "Push" : "Pull";
+      const countLabel =
+        typeof entry.totalFileCount === "number" && entry.totalFileCount > 0
+          ? `${files.length} / ${entry.totalFileCount} files`
+          : `${files.length} file${files.length !== 1 ? "s" : ""}`;
       await vscode.window.showQuickPick(
         files.map((label) => ({ label })),
         {
-          title: `${dirLabel} · ${files.length} file${files.length !== 1 ? "s" : ""}`,
+          title: `${dirLabel} · ${countLabel}`,
           placeHolder: "Files involved in this sync",
         }
       );
+      break;
+    }
+    case "history:page": {
+      const { loadSyncHistory } = await import("../diagnostics.js");
+      const { renderHistorySection, clampHistoryPage } = await import("./sync-tab.js");
+      const history = await loadSyncHistory(context);
+      const page = clampHistoryPage(Number(msg.page) || 0, history.length);
+      const html = renderHistorySection(history, page);
+      await webview.postMessage({ type: "history:update", html, page });
       break;
     }
     case "settings:get": {
@@ -187,8 +216,13 @@ export async function dispatchSidebarMessage(
     case "settings:set": {
       const { updateSettingValue, readSettingsValues } = await import("./settings-tab.js");
       await updateSettingValue(msg.key, msg.value);
+      if (msg.key === "ui.language") {
+        const { rebuildSidebar } = await import("./index.js");
+        rebuildSidebar();
+        break;
+      }
       await webview.postMessage({ type: "settings:current", values: readSettingsValues() });
-      if (msg.key === "chats.syncEnabled") {
+      if (msg.key === "chats.syncEnabled" || msg.key.startsWith("destination.")) {
         const { refreshSidebar } = await import("./index.js");
         refreshSidebar();
       }

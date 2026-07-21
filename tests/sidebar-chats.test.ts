@@ -116,6 +116,9 @@ describe("dispatchSidebarMessage - settings:get", () => {
     expect(typeof call.values["transcripts.autoReloadAfterImport"]).toBe("boolean");
     expect(typeof call.values["chatImport.pythonPath"]).toBe("string");
     expect(typeof call.values["chats.syncEnabled"]).toBe("boolean");
+    expect(typeof call.values["schedule.enabled"]).toBe("boolean");
+    expect(typeof call.values["schedule.interval"]).toBe("number");
+    expect(typeof call.values["destination.type"]).toBe("string");
   });
 });
 

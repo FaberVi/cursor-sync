@@ -1,7 +1,7 @@
 import type { ChatBundle } from "../chat-persistence.js";
 import {
   mergeSidebarIntoStateDb,
-  type WorkspaceIdentifier,
+  type WorkspaceIdentifier as MergeWorkspaceIdentifier,
 } from "../chat-import-merge.js";
 import type { WorkspaceContext } from "../chat-workspace-context.js";
 import { stateDbPathForWorkspaceStorageId } from "../chat-workspace-context.js";
@@ -22,7 +22,8 @@ export async function syncImportedComposerSidebar(
   workspaceCtx: WorkspaceContext,
   options: { dryRun?: boolean; pinRecent?: boolean } = {}
 ): Promise<SyncImportedComposerSidebarResult> {
-  const workspaceIdentifier = workspaceCtx.workspaceIdentifier as WorkspaceIdentifier;
+  const workspaceIdentifier =
+    workspaceCtx.workspaceIdentifier as unknown as MergeWorkspaceIdentifier;
   const workspaceDb = stateDbPathForWorkspaceStorageId(workspaceCtx.workspaceStorageId);
   const globalDb = path.join(resolveSyncRoots().cursorUser, "globalStorage", "state.vscdb");
 

@@ -18,10 +18,23 @@ export interface Manifest {
   files: Record<string, ManifestFileEntry>;
 }
 
+export type SyncDestinationType = "gist" | "repo";
+
+export interface SyncDestination {
+  type: SyncDestinationType;
+  gistId?: string;
+  owner?: string;
+  repo?: string;
+  branch?: string;
+  basePath?: string;
+}
+
 export interface SyncState {
   lastSyncTimestamp: string;
   lastSyncDirection: "push" | "pull";
+  /** @deprecated Prefer destination; kept for backward compatibility with gist sync. */
   gistId: string;
+  destination?: SyncDestination;
   localChecksums: Record<string, string>;
   remoteChecksums: Record<string, string>;
 }
@@ -86,7 +99,13 @@ export interface SyncHistoryEntry {
   timestamp: string;
   direction: "push" | "pull";
   trigger: "manual" | "scheduled";
+  /** Files uploaded (push) or written (pull) in this operation. */
   fileCount: number;
+  /**
+   * Total tracked sync files in the remote/manifest after (or for) this op.
+   * Absent on older history entries.
+   */
+  totalFileCount?: number;
   success: boolean;
   error?: string;
   /** Sync keys involved in this operation (absent on older history entries). */

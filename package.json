@@ -1,8 +1,8 @@
 {
   "name": "cursor-sync",
   "displayName": "Cursor Sync",
-  "description": "Sync user-level Cursor settings and assets to a private GitHub Gist",
-  "version": "0.9.1",
+  "description": "Sync user-level Cursor settings and assets to a private GitHub Gist or repository",
+  "version": "0.10.1",
   "icon": "assets/icon.png",
   "publisher": "MarceloBarella",
   "repository": {
@@ -17,8 +17,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onView:cursorSync.sidebar"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -252,11 +251,60 @@
           "default": true,
           "description": "Enable periodic auto-sync (pull and push)"
         },
+        "cursorSync.schedule.interval": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "description": "Interval between scheduled syncs (see schedule.intervalUnit)"
+        },
+        "cursorSync.schedule.intervalUnit": {
+          "type": "string",
+          "enum": [
+            "seconds",
+            "minutes"
+          ],
+          "default": "minutes",
+          "description": "Unit for schedule.interval (seconds or minutes)"
+        },
         "cursorSync.schedule.intervalMin": {
           "type": "number",
           "default": 30,
           "minimum": 5,
-          "description": "Minutes between scheduled syncs"
+          "description": "Deprecated: use schedule.interval and schedule.intervalUnit",
+          "deprecationMessage": "Use cursorSync.schedule.interval and cursorSync.schedule.intervalUnit instead"
+        },
+        "cursorSync.destination.type": {
+          "type": "string",
+          "enum": [
+            "gist",
+            "repo"
+          ],
+          "default": "gist",
+          "description": "Remote sync destination: private Gist or classic GitHub repository"
+        },
+        "cursorSync.destination.repo": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub repository as owner/name (required when destination.type is repo)"
+        },
+        "cursorSync.destination.branch": {
+          "type": "string",
+          "default": "main",
+          "description": "Branch used when syncing to a GitHub repository"
+        },
+        "cursorSync.destination.path": {
+          "type": "string",
+          "default": "cursor-sync",
+          "description": "Directory inside the repository where sync files are stored"
+        },
+        "cursorSync.ui.language": {
+          "type": "string",
+          "enum": [
+            "en",
+            "it"
+          ],
+          "default": "en",
+          "description": "Sidebar UI language (English or Italian)"
         },
         "cursorSync.maxFileSizeKB": {
           "type": "number",
@@ -377,7 +425,12 @@
         },
         "cursorSync.chats.pullUpdatePolicy": {
           "type": "string",
-          "enum": ["skip", "remoteWins", "newerWins", "ask"],
+          "enum": [
+            "skip",
+            "remoteWins",
+            "newerWins",
+            "ask"
+          ],
           "default": "newerWins",
           "description": "How to handle remote chat bundles for conversation IDs already on this machine when pullUpdates is enabled."
         }

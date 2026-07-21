@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { renderSidebarHtml, renderSyncPaneHtml } from "./html.js";
 import { dispatchSidebarMessage, type SidebarMessage } from "./messages.js";
 import { onChatImportProgress } from "../chat-progress-events.js";
+import { onSyncProgress } from "../sync-progress-events.js";
 let sidebarProviderInstance: SidebarProvider | undefined;
 
 export function initializeSidebar(context: vscode.ExtensionContext): SidebarProvider {
@@ -13,9 +14,15 @@ export function refreshSidebar(): void {
   sidebarProviderInstance?.refresh();
 }
 
+/** Force a full sidebar HTML rebuild (e.g. after UI language change). */
+export function rebuildSidebar(): void {
+  sidebarProviderInstance?.rebuild();
+}
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view: vscode.WebviewView | undefined;
   private _progressSub: vscode.Disposable | undefined;
+  private _syncProgressSub: vscode.Disposable | undefined;
   private _htmlInitialized = false;
 
   constructor(private context: vscode.ExtensionContext) {}
@@ -29,14 +36,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._progressSub = onChatImportProgress((event) => {
       void webviewView.webview.postMessage({ type: "chats:progress", event });
     });
+    this._syncProgressSub = onSyncProgress((event) => {
+      void webviewView.webview.postMessage({ type: "sync:progress", event });
+    });
     webviewView.onDidDispose(() => {
       this._progressSub?.dispose();
+      this._syncProgressSub?.dispose();
       this._htmlInitialized = false;
     });
     void this._update();
   }
 
   refresh(): void { void this._update(); }
+
+  rebuild(): void {
+    this._htmlInitialized = false;
+    void this._update();
+  }
 
   private async _update(): Promise<void> {
     if (!this._view) return;

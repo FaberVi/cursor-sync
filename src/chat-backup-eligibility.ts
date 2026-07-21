@@ -81,7 +81,10 @@ export function classifyDiscoveredTier(
 }
 
 export function summarizeDiscoveredBackupTier(
-  item: Pick<BackupDiscoverable, "hasStore" | "jsonlCount" | "conversationId">,
+  item: Pick<
+    BackupDiscoverable,
+    "hasStore" | "jsonlCount" | "subagentJsonlCount" | "conversationId"
+  >,
   diskKv?: LocalDiskKvProbe | null
 ): BackupTierSummary {
   const tier = classifyDiscoveredTier(item, diskKv);

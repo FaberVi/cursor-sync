@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { SyncState, SyncHistoryEntry } from "./types.js";
+import { remoteUrlForState, syncStateIdentity } from "./remote/destination.js";
 
 const MAX_HISTORY_ENTRIES = 50;
 
@@ -34,14 +35,18 @@ export async function showStatus(
     label: "Direction",
     description: syncState.lastSyncDirection,
   });
+  const identity = syncStateIdentity(syncState);
+  const url = remoteUrlForState(syncState);
   items.push({
-    label: "Gist ID",
-    description: syncState.gistId,
+    label: syncState.destination?.type === "repo" ? "Repository" : "Gist ID",
+    description: identity || syncState.gistId,
   });
-  items.push({
-    label: "Gist URL",
-    description: `https://gist.github.com/${syncState.gistId}`,
-  });
+  if (url) {
+    items.push({
+      label: "Remote URL",
+      description: url,
+    });
+  }
   items.push({
     label: "Files Synced",
     description: String(Object.keys(syncState.localChecksums).length),
