@@ -6,7 +6,7 @@
 
 ### Fixed
 - Stop syncing skill-creator / skill-forge workspace artifacts (`skill-snapshot/`, `skill-*-backup/`, `iteration-*` / `eval-*` under `*-workspace/`). Cursor names skills after the parent folder of `SKILL.md`, so restoring those snapshots registered bogus skills named `skill-snapshot`. Pull and import also skip these keys if they are still present on the remote. Legitimate skills whose folder name ends with `-workspace` remain synced.
-- **Automatic migration (safe recovery)**: on activate (and after push/pull/import), merge-missing from artifact sources into the live skill (never overwrite, never delete a rich snapshot because a minimal `SKILL.md` already exists), preserve active skill-forge workspaces (`iteration-*` / root files), relocate top-level `skills/skill-snapshot/` under `skills/_orphaned-snapshots/recovered-<ts>/`, and publish recovered skill files in the **same** remote write that deletes artifact keys (never a full settings push, never purge-before-publish).
+- **Automatic migration (safe recovery)**: on activate (and after push/pull/import), merge-missing from artifact sources into the live skill (never overwrite, never delete a rich snapshot because a minimal `SKILL.md` already exists), preserve active skill-forge workspaces (`iteration-*` / root files), always strip `skill-snapshot` / `skill-*-backup` from those workspaces so Cursor no longer lists bogus `skill-snapshot` skills, relocate top-level `skills/skill-snapshot/` under `skills/_orphaned-snapshots/recovered-<ts>/`, and publish recovered skill files in the **same** remote write that deletes artifact keys (never a full settings push, never purge-before-publish).
 
 ## v0.10.2
 

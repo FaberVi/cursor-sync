@@ -28,8 +28,11 @@ export interface SkillArtifactMigrationResult {
  *
  * Safety rules:
  * - Always merge-missing from artifact sources into the real skill before any rm.
- * - Only delete disposable workspaces (artifact dirs only; no files at root,
- *   no iteration/eval/outputs/other dirs).
+ * - Always remove `skill-snapshot` / `skill-*-backup` dirs (Cursor names skills
+ *   after the parent of SKILL.md — leaving those dirs registers "skill-snapshot").
+ * - Only delete whole workspaces when disposable (artifact dirs only; no files
+ *   at root, no iteration/eval/outputs/other dirs). Active forge workspaces keep
+ *   iteration/eval trees and root files.
  * - Top-level `skills/skill-snapshot/` is relocated under
  *   `skills/_orphaned-snapshots/recovered-<ts>/`, never destroyed.
  */
@@ -89,6 +92,10 @@ export async function migrateSkillSyncArtifacts(
       if (await isDisposableSkillWorkspace(dirPath)) {
         await fs.rm(dirPath, { recursive: true, force: true });
         removed.push(relDir);
+      } else {
+        // Keep active forge workspaces (iteration-*, root files, fixtures), but
+        // always strip snapshot/backup dirs so Cursor stops listing skill-snapshot.
+        await removeArtifactSegmentDirs(dirPath, relDir, removed);
       }
       continue;
     }
@@ -434,6 +441,28 @@ export async function mergeMissingFromSnapshot(
   return copied;
 }
 
+async function removeArtifactSegmentDirs(
+  parentDir: string,
+  relParentDir: string,
+  removed: string[]
+): Promise<void> {
+  let children: import("node:fs").Dirent[];
+  try {
+    children = await fs.readdir(parentDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const child of children) {
+    if (!child.isDirectory() || !isSkillArtifactSegment(child.name)) {
+      continue;
+    }
+    const abs = path.join(parentDir, child.name);
+    await fs.rm(abs, { recursive: true, force: true });
+    removed.push(path.posix.join(relParentDir, child.name));
+  }
+}
+
 async function removeNestedArtifactDirs(
   skillDir: string,
   relSkillDir: string,
@@ -457,9 +486,8 @@ async function removeNestedArtifactDirs(
     if (copied > 0) {
       mergedAny = true;
     }
-    await fs.rm(abs, { recursive: true, force: true });
-    removed.push(path.posix.join(relSkillDir, child.name));
   }
+  await removeArtifactSegmentDirs(skillDir, relSkillDir, removed);
   if (mergedAny) {
     recoveredSkillDirs.push(relSkillDir);
   }

@@ -185,6 +185,7 @@ describe("migrateSkillSyncArtifacts", () => {
       },
     ]);
     expect(result.removed).not.toContain("skills/forge-workspace");
+    expect(result.removed).toContain("skills/forge-workspace/skill-snapshot");
     expect(
       await fs.readFile(path.join(skillsRoot, "forge", "SKILL.md"), "utf-8")
     ).toBe("# snapshot\n");
@@ -194,6 +195,9 @@ describe("migrateSkillSyncArtifacts", () => {
         "utf-8"
       )
     ).toBe("run");
+    await expect(
+      fs.access(path.join(workspace, "skill-snapshot"))
+    ).rejects.toThrow();
   });
 
   it("does not delete workspace with loose files at root", async () => {
@@ -211,12 +215,16 @@ describe("migrateSkillSyncArtifacts", () => {
     const result = await migrateSkillSyncArtifacts(tmpDir);
 
     expect(result.removed).not.toContain("skills/meta-workspace");
+    expect(result.removed).toContain("skills/meta-workspace/skill-snapshot");
     expect(
       await fs.readFile(path.join(workspace, "eval_metadata.json"), "utf-8")
     ).toBe("{}\n");
     expect(
       await fs.readFile(path.join(skillsRoot, "meta", "SKILL.md"), "utf-8")
     ).toBe("# snap\n");
+    await expect(
+      fs.access(path.join(workspace, "skill-snapshot"))
+    ).rejects.toThrow();
   });
 
   it("does not touch a legitimate skill named *-workspace", async () => {
