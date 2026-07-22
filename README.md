@@ -97,6 +97,8 @@ Files included from this root:
 - `commands/**/*.md`
 - `rules/*.mdc`
 
+Skill-creator / skill-forge eval artifacts (`skill-snapshot/`, `skill-*-backup/`, and `iteration-*` / `eval-*` / `outputs` under `*-workspace/`) are never synced. Cursor treats each `SKILL.md` parent folder as the skill name, so syncing those snapshots would register skills named `skill-snapshot`. A real skill whose folder merely ends with `-workspace` is still synced. On activate (and after push/pull/import), Cursor Sync merges missing files from snapshots/backups into the live skill (never overwrites live files), only deletes disposable artifact-only workspaces, relocates orphan top-level `skill-snapshot` folders, and publishes recovered skills in the same remote write that removes artifact keys — never a full settings push and never purge-before-publish.
+
 ### Always Excluded
 
 The following are always excluded from sync:
@@ -105,6 +107,7 @@ The following are always excluded from sync:
 - `.cursor/blob_storage/`, `.cursor/Local Storage/`, `.cursor/Session Storage/`
 - `.cursor/Network/`, `.cursor/shared_proto_db/`, `.cursor/databases/`
 - `.cursor/TransportSecurity`, `.cursor/Cookies*`, `.cursor/*.db`, `.cursor/*.log`
+- skill-creator artifacts under `.cursor/skills/` (`skill-snapshot/`, `skill-*-backup/`, and `iteration-*` / `eval-*` / `outputs` under `*-workspace/`)
 - Any file exceeding the configurable size limit (default 512 KB)
 
 ## Setup

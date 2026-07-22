@@ -41,7 +41,96 @@ const DENYLIST_GLOBS = [
 /** Path segments that must never be synced (matched anywhere in the relative path). */
 const DENYLIST_PATH_SEGMENTS = ["__pycache__"];
 
+/** skill-creator / skill-forge backup folder names (matched as path segments). */
+const SKILL_BACKUP_SEGMENT_RE = /^skill-.+-backup$/;
+
 const MAX_SYNC_VSIX_BYTES = 50 * 1024 * 1024;
+
+/** True for skill-creator snapshot/backup directory names. */
+export function isSkillArtifactSegment(name: string): boolean {
+  return (
+    name === "skill-snapshot" ||
+    name.startsWith("skill-snapshot-") ||
+    SKILL_BACKUP_SEGMENT_RE.test(name)
+  );
+}
+
+function isSkillCreatorActivitySegment(name: string): boolean {
+  return (
+    name.startsWith("iteration-") ||
+    name.startsWith("eval-") ||
+    name === "outputs"
+  );
+}
+
+/**
+ * skill-creator/skill-forge eval workspaces nest SKILL.md under skill-snapshot/
+ * (or skill-*-backup/). Cursor names skills after the immediate parent folder, so
+ * syncing those artifacts registers bogus skills named "skill-snapshot".
+ *
+ * A legitimate skill whose folder name ends with `-workspace` (e.g.
+ * `skills/my-agent-workspace/SKILL.md`) is still synced — only skill-creator
+ * layouts (artifact / iteration / eval / outputs segments) are excluded.
+ */
+export function isSkillSyncArtifact(relativePath: string): boolean {
+  const parts = relativePath.split("/").filter(Boolean);
+  if (parts[0] !== "skills" || parts.length < 2) {
+    return false;
+  }
+
+  if (parts.some((part) => isSkillArtifactSegment(part))) {
+    return true;
+  }
+
+  // Top-level directory is itself an artifact name (bogus skill folder).
+  if (isSkillArtifactSegment(parts[1]!)) {
+    return true;
+  }
+
+  if (parts[1]!.endsWith("-workspace")) {
+    return parts.some((part) => isSkillCreatorActivitySegment(part));
+  }
+
+  return false;
+}
+
+/**
+ * True when a sync key must not be pushed or restored (hard denylist + user excludeGlobs).
+ * Accepts full keys (`dot-cursor/skills/...`) or root-relative paths (`skills/...`).
+ */
+export function isExcludedSyncKey(
+  syncKey: string,
+  excludeGlobs?: string[]
+): boolean {
+  let rel = syncKey;
+  if (rel.startsWith("dot-cursor/")) {
+    rel = rel.slice("dot-cursor/".length);
+  } else if (rel.startsWith("cursor-user/")) {
+    rel = rel.slice("cursor-user/".length);
+  }
+
+  if (isDenylisted(rel) || isSkillSyncArtifact(rel)) {
+    return true;
+  }
+
+  const globs =
+    excludeGlobs ??
+    vscode.workspace.getConfiguration("cursorSync").get<string[]>("excludeGlobs") ??
+    [];
+  return globs.some((g) => minimatch(rel, g));
+}
+
+/** Sync keys under `dot-cursor/skills/` that are skill-creator artifacts. */
+export function listSkillArtifactSyncKeys(
+  manifestFiles: Record<string, unknown>
+): string[] {
+  return Object.keys(manifestFiles).filter((key) => {
+    if (!key.startsWith("dot-cursor/")) {
+      return false;
+    }
+    return isSkillSyncArtifact(key.slice("dot-cursor/".length));
+  });
+}
 
 export function resolveSyncRoots(
   platform: NodeJS.Platform = process.platform
@@ -176,6 +265,10 @@ function isDenylisted(relativePath: string): boolean {
   }
 
   if (parts.some((part) => DENYLIST_PATH_SEGMENTS.includes(part))) {
+    return true;
+  }
+
+  if (isSkillSyncArtifact(relativePath)) {
     return true;
   }
 

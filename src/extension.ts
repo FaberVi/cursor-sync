@@ -29,6 +29,10 @@ import { startScheduler, stopScheduler } from "./scheduler.js";
 import { determineSyncAction } from "./scheduler.js";
 import { getLogger, loadSyncState } from "./diagnostics.js";
 import {
+  migrateAndLogSkillArtifacts,
+  purgeRemoteSkillArtifacts,
+} from "./skill-artifacts-migrate.js";
+import {
   buildSyncDebugFailure,
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
@@ -277,6 +281,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   registerActivationWatcher(context);
+
+  void (async () => {
+    try {
+      const migrated = await migrateAndLogSkillArtifacts();
+      // Publish recovered skills and delete artifact keys in one remote write.
+      const purged = await purgeRemoteSkillArtifacts(context, migrated);
+      if (purged > 0) {
+        logger.appendLine(
+          `[${new Date().toISOString()}] Skill artifact migrate: remote write touched ${purged} file(s)`
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.appendLine(
+        `[${new Date().toISOString()}] Skill artifact migrate failed: ${msg}`
+      );
+    }
+  })();
 
   logger.appendLine(`[${new Date().toISOString()}] Cursor Sync activated`);
 }

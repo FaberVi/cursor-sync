@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import { enumerateSyncFiles, syncKeyToGistFileName, resolveSyncRoots } from "./paths.js";
+import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
 import { packageFiles } from "./packaging.js";
 import { requireToken, validateStoredToken } from "./auth.js";
 import { withRetry } from "./retry.js";
@@ -320,6 +321,8 @@ async function doPush(
     const cursorUserRoot = resolveSyncRoots().cursorUser;
     await writeExtensionsFile(cursorUserRoot, extensionsJson);
   }
+
+  await migrateAndLogSkillArtifacts();
 
   const files = await enumerateSyncFiles();
   const config = vscode.workspace.getConfiguration("cursorSync");

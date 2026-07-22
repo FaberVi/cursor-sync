@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync",
   "description": "Sync user-level Cursor settings and assets to a private GitHub Gist or repository",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "icon": "assets/icon.png",
   "publisher": "MarceloBarella",
   "repository": {

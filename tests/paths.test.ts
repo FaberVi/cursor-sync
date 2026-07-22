@@ -203,5 +203,125 @@ describe("paths", () => {
 
       expect(keys).toContain("cursor-user/vsix/big.vsix");
     });
+
+    it("excludes skill-creator workspace snapshots and backups", async () => {
+      const workspaceRoot = path.join(tmpDir, "dotCursor", "skills");
+      await fs.mkdir(
+        path.join(workspaceRoot, "my-skill-workspace", "skill-snapshot"),
+        { recursive: true }
+      );
+      await fs.mkdir(
+        path.join(workspaceRoot, "foo-workspace", "skill-snapshot-grilling"),
+        { recursive: true }
+      );
+      await fs.mkdir(
+        path.join(workspaceRoot, "bar-workspace", "skill-postedit-backup"),
+        { recursive: true }
+      );
+      await fs.mkdir(
+        path.join(workspaceRoot, "my-agent-workspace", "scripts"),
+        { recursive: true }
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "my-skill-workspace", "skill-snapshot", "SKILL.md"),
+        "snapshot"
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "foo-workspace", "skill-snapshot-grilling", "SKILL.md"),
+        "grilling"
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "bar-workspace", "skill-postedit-backup", "SKILL.md"),
+        "backup"
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "my-agent-workspace", "SKILL.md"),
+        "agent"
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "my-agent-workspace", "scripts", "run.py"),
+        "print(1)\n"
+      );
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const files = await enumerateSyncFiles(roots);
+      const keys = files.map((f) => f.relativeSyncKey);
+
+      expect(keys).toContain("dot-cursor/skills/coding/SKILL.md");
+      expect(keys).toContain("dot-cursor/skills/my-agent-workspace/SKILL.md");
+      expect(keys).toContain("dot-cursor/skills/my-agent-workspace/scripts/run.py");
+      expect(keys).not.toContain(
+        "dot-cursor/skills/my-skill-workspace/skill-snapshot/SKILL.md"
+      );
+      expect(keys).not.toContain(
+        "dot-cursor/skills/foo-workspace/skill-snapshot-grilling/SKILL.md"
+      );
+      expect(keys).not.toContain(
+        "dot-cursor/skills/bar-workspace/skill-postedit-backup/SKILL.md"
+      );
+    });
+  });
+
+  describe("isSkillSyncArtifact / isExcludedSyncKey", () => {
+    it("detects workspace and snapshot artifact paths", async () => {
+      const { isSkillSyncArtifact } = await import("../src/paths.js");
+      expect(isSkillSyncArtifact("skills/coding/SKILL.md")).toBe(false);
+      expect(
+        isSkillSyncArtifact("skills/my-skill-workspace/skill-snapshot/SKILL.md")
+      ).toBe(true);
+      expect(
+        isSkillSyncArtifact("skills/foo-workspace/skill-snapshot-grilling/SKILL.md")
+      ).toBe(true);
+      expect(
+        isSkillSyncArtifact("skills/bar-workspace/skill-postedit-backup/SKILL.md")
+      ).toBe(true);
+      expect(
+        isSkillSyncArtifact("skills/coding/skill-snapshot/SKILL.md")
+      ).toBe(true);
+      expect(
+        isSkillSyncArtifact("skills/foo-workspace/iteration-1/out.txt")
+      ).toBe(true);
+      expect(isSkillSyncArtifact("skills/my-agent-workspace/SKILL.md")).toBe(
+        false
+      );
+      expect(
+        isSkillSyncArtifact("skills/my-agent-workspace/scripts/run.py")
+      ).toBe(false);
+      expect(isSkillSyncArtifact("skills/skill-snapshot/SKILL.md")).toBe(true);
+    });
+
+    it("excludes skill artifact sync keys from pull/import restore", async () => {
+      const { isExcludedSyncKey } = await import("../src/paths.js");
+      expect(isExcludedSyncKey("dot-cursor/skills/coding/SKILL.md", [])).toBe(false);
+      expect(
+        isExcludedSyncKey(
+          "dot-cursor/skills/my-skill-workspace/skill-snapshot/SKILL.md",
+          []
+        )
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey(
+          "dot-cursor/skills/foo-workspace/skill-snapshot-grilling/SKILL.md",
+          []
+        )
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey(
+          "dot-cursor/skills/bar-workspace/skill-postedit-backup/SKILL.md",
+          []
+        )
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey("dot-cursor/skills/my-agent-workspace/SKILL.md", [])
+      ).toBe(false);
+      expect(isExcludedSyncKey("cursor-user/settings.json", [])).toBe(false);
+      expect(
+        isExcludedSyncKey("dot-cursor/skills/coding/notes.md", ["skills/**/notes.md"])
+      ).toBe(true);
+    });
   });
 });

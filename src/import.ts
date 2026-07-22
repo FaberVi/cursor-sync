@@ -5,7 +5,8 @@ import { GistClient } from "./gist.js";
 import { getToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { getLogger } from "./diagnostics.js";
-import { resolveSyncRoots, gistFileNameToSyncKey } from "./paths.js";
+import { resolveSyncRoots, gistFileNameToSyncKey, isExcludedSyncKey } from "./paths.js";
+import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
 import { createBackup, rollbackFromBackup, pruneOldBackups, ensureParentDirectory } from "./rollback.js";
 import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
 import type { Manifest } from "./types.js";
@@ -85,6 +86,10 @@ export async function executeImport(context: vscode.ExtensionContext): Promise<v
     const syncKey = gistFileNameToSyncKey(gistFileName);
     const manifestEntry = manifest.files[syncKey];
     if (!manifestEntry) {
+      continue;
+    }
+
+    if (isExcludedSyncKey(syncKey)) {
       continue;
     }
 
@@ -170,6 +175,7 @@ export async function executeImport(context: vscode.ExtensionContext): Promise<v
   logger.appendLine(
     `[${new Date().toISOString()}] Import succeeded: ${filesToWrite.length} files`
   );
+  await migrateAndLogSkillArtifacts();
 }
 
 function extractGistId(input: string): string | null {

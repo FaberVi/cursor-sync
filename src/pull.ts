@@ -4,7 +4,8 @@ import * as path from "node:path";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
-import { resolveSyncRoots, gistFileNameToSyncKey } from "./paths.js";
+import { resolveSyncRoots, gistFileNameToSyncKey, isExcludedSyncKey } from "./paths.js";
+import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
 import { computeChecksum } from "./packaging.js";
 import { detectConflicts, clearConflicts, getResolutionForKey, getUnresolvedConflicts } from "./conflicts.js";
 import { createBackup, rollbackFromBackup, pruneOldBackups, ensureParentDirectory } from "./rollback.js";
@@ -330,6 +331,10 @@ async function doPull(
       continue;
     }
 
+    if (isExcludedSyncKey(syncKey)) {
+      continue;
+    }
+
     if (conflicts.length > 0) {
       const resolution = getResolutionForKey(syncKey);
       if (resolution === "keepLocal") {
@@ -410,6 +415,7 @@ async function doPull(
     await clearConflicts();
     sendEvent(context, "sync_completed", { direction: "pull", file_count: 0, trigger });
     progress.report({ message: "Done" });
+    await migrateAndLogSkillArtifacts();
     return true;
   }
 
@@ -601,6 +607,7 @@ async function doPull(
   logger.appendLine(
     `[${new Date().toISOString()}] Pull succeeded: ${filesToWrite.length} files ← ${backend!.remoteLabel()}`
   );
+  await migrateAndLogSkillArtifacts();
   return true;
 }
 
