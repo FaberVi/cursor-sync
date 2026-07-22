@@ -127,4 +127,32 @@ describe("selectPushDelta", () => {
     expect(result.isNoOp).toBe(false);
     expect(result.filesToUpload).toEqual({});
   });
+
+  it("preserveSyncKeys skips upload and protects remote deletes", () => {
+    const packaged = new Map<string, PackagedFile>([
+      ["cursor-user/settings.json", pkg("local", "hash-local")],
+      ["cursor-user/keybindings.json", pkg("kb", "hash-kb")],
+    ]);
+    const result = selectPushDelta({
+      packaged,
+      remoteChecksums: {
+        "cursor-user/settings.json": "hash-remote",
+        "cursor-user/keybindings.json": "hash-kb-old",
+      },
+      existingRemoteNames: [
+        "manifest.json",
+        "cursor-user--settings.json",
+        "cursor-user--keybindings.json",
+      ],
+      forceFullUpload: false,
+      preserveSyncKeys: ["cursor-user/settings.json"],
+    });
+
+    expect(Object.keys(result.filesToUpload)).toEqual([
+      "cursor-user--keybindings.json",
+    ]);
+    expect(result.uploadedSyncKeys).toEqual(["cursor-user/keybindings.json"]);
+    expect(result.deleteNames).toEqual([]);
+    expect(result.unchangedCount).toBe(1);
+  });
 });

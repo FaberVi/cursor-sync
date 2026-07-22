@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- Sync conflict resolutions (Keep Local / Keep Remote) now persist across reloads and are respected by Sync Now, so the conflict dialog no longer loops after a choice.
+- Push honors Keep Remote (preserves remote file, applies it locally, and skips uploading the local version).
+- Sync History records pull with zero file changes, unresolved-conflict blocks, and push auth failures.
+- After resolving all conflicts, sync continues automatically without a second manual click.
+
 ## v0.10.1
 
 ### Added

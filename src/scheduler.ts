@@ -19,6 +19,7 @@ import {
 import {
   computeLocalChecksums,
   findConflicts,
+  getUnresolvedConflicts,
   registerPendingConflicts,
 } from "./conflicts.js";
 import { resolveScheduleInterval } from "./schedule-interval.js";
@@ -130,12 +131,16 @@ export async function determineSyncAction(
   }
 
   const conflicts = findConflicts(syncState, localChecksums, remoteChecksums);
-  if (conflicts.length > 0) {
-    await registerPendingConflicts(conflicts);
+  const unresolved = getUnresolvedConflicts(conflicts);
+  if (unresolved.length > 0) {
+    await registerPendingConflicts(unresolved);
     return {
       action: "conflict",
-      keys: conflicts.map((c) => c.relativeSyncKey),
+      keys: unresolved.map((c) => c.relativeSyncKey),
     };
+  }
+  if (conflicts.length > 0) {
+    await registerPendingConflicts([]);
   }
 
   const allKeys = new Set([

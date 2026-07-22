@@ -6,9 +6,9 @@ import { withRetry } from "./retry.js";
 import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
 import { resolveSyncRoots, gistFileNameToSyncKey } from "./paths.js";
 import { computeChecksum } from "./packaging.js";
-import { detectConflicts, clearConflicts, getResolutionForKey } from "./conflicts.js";
+import { detectConflicts, clearConflicts, getResolutionForKey, getUnresolvedConflicts } from "./conflicts.js";
 import { createBackup, rollbackFromBackup, pruneOldBackups, ensureParentDirectory } from "./rollback.js";
-import { findMissingExtensions, findExtraExtensions } from "./extensions.js";
+import { findMissingExtensions, findExtraExtensions, ensureExtensionsJsonOnDisk } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
@@ -279,10 +279,7 @@ async function doPull(
   progress.report({ message: "Checking for conflicts…" });
   const conflicts = await detectConflicts(context, remoteChecksums);
   if (conflicts.length > 0) {
-    const unresolved = conflicts.filter((c) => {
-      const resolution = getResolutionForKey(c.relativeSyncKey);
-      return !resolution || resolution === "skip";
-    });
+    const unresolved = getUnresolvedConflicts(conflicts);
     if (unresolved.length > 0) {
       const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pulling.`;
       void showSyncFailureWithDebug(
@@ -295,6 +292,15 @@ async function doPull(
         { level: "warning", title: conflictMessage }
       );
       logger.appendLine(`[${new Date().toISOString()}] Pull blocked: CONFLICT`);
+      await addSyncHistoryEntry(context, {
+        timestamp: new Date().toISOString(),
+        direction: "pull",
+        trigger,
+        fileCount: 0,
+        success: false,
+        error: "Unresolved conflicts",
+        files: unresolved.map((c) => c.relativeSyncKey).sort(),
+      });
       sendEvent(context, "sync_failed", { direction: "pull", reason: "CONFLICT", trigger });
       if (trigger === "manual") {
         await vscode.commands.executeCommand("cursorSync.resolveConflicts");
@@ -302,6 +308,10 @@ async function doPull(
       return false;
     }
   }
+
+  const extensionsKey = "cursor-user/extensions.json";
+  const keepLocalExtensions =
+    getResolutionForKey(extensionsKey) === "keepLocal";
 
   const roots = resolveSyncRoots();
   const filesToWrite: Array<{ absolutePath: string; syncKey: string; content: Buffer }> = [];
@@ -370,6 +380,34 @@ async function doPull(
     if (trigger === "manual") {
       vscode.window.showInformationMessage("Pull complete: no files to update.");
     }
+    await addSyncHistoryEntry(context, {
+      timestamp: new Date().toISOString(),
+      direction: "pull",
+      trigger,
+      fileCount: 0,
+      totalFileCount: Object.keys(manifest.files).length,
+      success: true,
+      files: [],
+    });
+    const localChecksums = { ...(syncState?.localChecksums || {}) };
+    for (const conflict of conflicts) {
+      if (getResolutionForKey(conflict.relativeSyncKey) === "keepLocal") {
+        localChecksums[conflict.relativeSyncKey] = conflict.localChecksum;
+      }
+    }
+    let alignedState: SyncState = buildSyncStateAfterWrite(
+      syncState,
+      backend!,
+      snapshotResult.data.id,
+      localChecksums,
+      "pull"
+    );
+    alignedState = normalizeSyncStateDestination({
+      ...alignedState,
+      remoteChecksums,
+    });
+    await saveSyncState(context, alignedState);
+    await clearConflicts();
     sendEvent(context, "sync_completed", { direction: "pull", file_count: 0, trigger });
     progress.report({ message: "Done" });
     return true;
@@ -447,6 +485,11 @@ async function doPull(
   for (const file of filesToWrite) {
     newLocalChecksums[file.syncKey] = computeChecksum(file.content);
   }
+  for (const conflict of conflicts) {
+    if (getResolutionForKey(conflict.relativeSyncKey) === "keepLocal") {
+      newLocalChecksums[conflict.relativeSyncKey] = conflict.localChecksum;
+    }
+  }
 
   let newState: SyncState = buildSyncStateAfterWrite(
     syncState,
@@ -460,7 +503,6 @@ async function doPull(
     remoteChecksums,
   });
   await saveSyncState(context, newState);
-  clearConflicts();
 
   const historyFiles = filesToWrite.map((f) => f.syncKey).sort();
   await addSyncHistoryEntry(context, {
@@ -472,13 +514,34 @@ async function doPull(
     success: true,
     files: historyFiles,
   });
+  await clearConflicts();
   sendEvent(context, "sync_completed", {
     direction: "pull",
     file_count: filesToWrite.length,
     trigger,
     destination_type: backend!.type,
   });
-  await syncExtensionsAfterPull(remoteFiles, logger);
+
+  if (!keepLocalExtensions) {
+    await syncExtensionsAfterPull(remoteFiles, logger);
+    await ensureExtensionsJsonOnDisk();
+    try {
+      const rootsAfter = resolveSyncRoots();
+      const extPath = path.join(rootsAfter.cursorUser, "extensions.json");
+      const extBuf = await fs.readFile(extPath);
+      const extChecksum = computeChecksum(extBuf);
+      newState = {
+        ...newState,
+        localChecksums: {
+          ...newState.localChecksums,
+          [extensionsKey]: extChecksum,
+        },
+      };
+      await saveSyncState(context, newState);
+    } catch {
+      // Best-effort; next sync will recompute.
+    }
+  }
 
   let chatImported = 0;
   let chatSkipped = 0;

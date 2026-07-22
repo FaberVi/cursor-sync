@@ -527,6 +527,51 @@ describe("determineSyncAction", () => {
       expect(result.keys).toEqual(["cursor-user/settings.json"]);
     }
   });
+
+  it("does not return conflict when all conflicts are already resolved", async () => {
+    const diagnostics = await import("../src/diagnostics.js");
+    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
+      lastSyncTimestamp: new Date().toISOString(),
+      lastSyncDirection: "push",
+      gistId: "abc123",
+      localChecksums: { "cursor-user/settings.json": "aaa111" },
+      remoteChecksums: { "cursor-user/settings.json": "aaa111" },
+    });
+
+    const auth = await import("../src/auth.js");
+    vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
+
+    await mockBackendWithManifest({
+      "cursor-user/settings.json": { checksum: "bbb222", sizeBytes: 120 },
+    });
+
+    const retry = await import("../src/retry.js");
+    vi.spyOn(retry, "withRetry").mockImplementation((fn: () => unknown) => fn());
+
+    const conflictsMod = await import("../src/conflicts.js");
+    vi.spyOn(conflictsMod, "computeLocalChecksums").mockResolvedValue({
+      "cursor-user/settings.json": "ccc333",
+    });
+    conflictsMod.setPendingResolutionsForTests([
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        resolution: "keepLocal",
+      },
+    ]);
+
+    const { determineSyncAction } = await import("../src/scheduler.js");
+    const context = {
+      globalStorageUri: { fsPath: "/tmp/test" },
+      secrets: { get: async () => "fake-token", store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
+      subscriptions: [],
+    } as unknown as import("vscode").ExtensionContext;
+
+    const result = await determineSyncAction(context);
+    expect(result.action).not.toBe("conflict");
+    expect(result.action).toBe("pull-push");
+
+    await conflictsMod.clearConflicts();
+  });
 });
 
 describe("scheduled sync debug wiring", () => {

@@ -1,11 +1,16 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
-import { enumerateSyncFiles } from "./paths.js";
+import { enumerateSyncFiles, syncKeyToGistFileName, resolveSyncRoots } from "./paths.js";
 import { packageFiles } from "./packaging.js";
 import { requireToken, validateStoredToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
-import { detectConflicts, clearConflicts, getResolutionForKey } from "./conflicts.js";
+import {
+  detectConflicts,
+  clearConflicts,
+  getUnresolvedConflicts,
+  getResolutionForKey,
+} from "./conflicts.js";
 import { generateExtensionsJson } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
@@ -36,7 +41,9 @@ import {
 import { ensureRepoExistsInteractive } from "./remote/ensure-repo.js";
 import { selectPushDelta } from "./push-delta.js";
 import { createSidebarSyncProgress } from "./sync-progress-events.js";
+import { ensureParentDirectory } from "./rollback.js";
 import type { ManifestFileEntry, SyncState } from "./types.js";
+import * as path from "node:path";
 
 export type PushTrigger = "manual" | "scheduled";
 
@@ -103,6 +110,14 @@ async function doPush(
         { title: authFailedMessage }
       );
       logger.appendLine(`[${new Date().toISOString()}] Push failed: AUTH_FAILED`);
+      await addSyncHistoryEntry(context, {
+        timestamp: new Date().toISOString(),
+        direction: "push",
+        trigger,
+        fileCount: 0,
+        success: false,
+        error: authFailedMessage,
+      });
       sendEvent(context, "sync_failed", { direction: "push", reason: "AUTH_FAILED", trigger });
       return false;
     }
@@ -119,6 +134,14 @@ async function doPush(
       { title: authFailedMessage }
     );
     logger.appendLine(`[${new Date().toISOString()}] Push failed: AUTH_FAILED`);
+    await addSyncHistoryEntry(context, {
+      timestamp: new Date().toISOString(),
+      direction: "push",
+      trigger,
+      fileCount: 0,
+      success: false,
+      error: authFailedMessage,
+    });
     sendEvent(context, "sync_failed", { direction: "push", reason: "AUTH_FAILED", trigger });
     return false;
   }
@@ -211,14 +234,12 @@ async function doPush(
     }
   }
 
+  let keepRemoteKeys = new Set<string>();
   if (syncState) {
     progress.report({ message: "Checking for conflicts…" });
     const conflicts = await detectConflicts(context, remoteChecksums);
     if (conflicts.length > 0) {
-      const unresolved = conflicts.filter((c) => {
-        const resolution = getResolutionForKey(c.relativeSyncKey);
-        return !resolution || resolution === "skip";
-      });
+      const unresolved = getUnresolvedConflicts(conflicts);
       if (unresolved.length > 0) {
         const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pushing.`;
         void showSyncFailureWithDebug(
@@ -231,19 +252,74 @@ async function doPush(
           { level: "warning", title: conflictMessage }
         );
         logger.appendLine(`[${new Date().toISOString()}] Push blocked: CONFLICT`);
+        await addSyncHistoryEntry(context, {
+          timestamp: new Date().toISOString(),
+          direction: "push",
+          trigger,
+          fileCount: 0,
+          success: false,
+          error: "Unresolved conflicts",
+          files: unresolved.map((c) => c.relativeSyncKey).sort(),
+        });
         sendEvent(context, "sync_failed", { direction: "push", reason: "CONFLICT", trigger });
         if (trigger === "manual") {
           await vscode.commands.executeCommand("cursorSync.resolveConflicts");
         }
         return false;
       }
+      for (const conflict of conflicts) {
+        if (getResolutionForKey(conflict.relativeSyncKey) === "keepRemote") {
+          keepRemoteKeys.add(conflict.relativeSyncKey);
+        }
+      }
+    }
+  }
+
+  if (keepRemoteKeys.size > 0) {
+    progress.report({ message: "Applying keep-remote resolutions…" });
+    const onlyFiles = [...keepRemoteKeys].map(syncKeyToGistFileName);
+    const keepSnap = await withRetry(() =>
+      backend.getSnapshot({ onlyFiles })
+    );
+    if (keepSnap.ok) {
+      const roots = resolveSyncRoots();
+      for (const key of keepRemoteKeys) {
+        const remoteName = syncKeyToGistFileName(key);
+        const remoteContent = keepSnap.data.files[remoteName];
+        if (remoteContent === undefined) {
+          logger.appendLine(
+            `[${new Date().toISOString()}] keepRemote skipped (missing remotely): ${key}`
+          );
+          continue;
+        }
+        const absolutePath = syncKeyToAbsolutePath(key, roots);
+        if (!absolutePath) {
+          continue;
+        }
+        const entry = remoteManifestFiles[key];
+        const buf =
+          entry?.encoding === "base64"
+            ? Buffer.from(remoteContent, "base64")
+            : Buffer.from(remoteContent, "utf-8");
+        await ensureParentDirectory(absolutePath);
+        const tmpPath = absolutePath + ".tmp";
+        await fs.writeFile(tmpPath, buf);
+        await fs.rename(tmpPath, absolutePath);
+      }
+    } else {
+      logger.appendLine(
+        `[${new Date().toISOString()}] keepRemote fetch failed: ${keepSnap.error.message}`
+      );
     }
   }
 
   progress.report({ message: "Packaging local files…" });
-  const extensionsJson = generateExtensionsJson();
-  const cursorUserRoot = (await import("./paths.js")).resolveSyncRoots().cursorUser;
-  await writeExtensionsFile(cursorUserRoot, extensionsJson);
+  const extensionsKey = "cursor-user/extensions.json";
+  if (!keepRemoteKeys.has(extensionsKey)) {
+    const extensionsJson = generateExtensionsJson();
+    const cursorUserRoot = resolveSyncRoots().cursorUser;
+    await writeExtensionsFile(cursorUserRoot, extensionsJson);
+  }
 
   const files = await enumerateSyncFiles();
   const config = vscode.workspace.getConfiguration("cursorSync");
@@ -255,6 +331,20 @@ async function doPush(
     );
     for (const item of skipped) {
       logger.appendLine(`  - ${item.relativeSyncKey} (${item.reason})`);
+    }
+  }
+
+  for (const key of keepRemoteKeys) {
+    packaged.delete(key);
+    const remoteChecksum = remoteChecksums[key];
+    if (remoteChecksum) {
+      const remoteEntry = remoteManifestFiles[key];
+      manifest.files[key] = {
+        checksum: remoteChecksum,
+        sizeBytes: remoteEntry?.sizeBytes ?? 0,
+      };
+    } else {
+      delete manifest.files[key];
     }
   }
 
@@ -371,13 +461,61 @@ async function doPush(
     pushNativeChatFile,
     chatSyncEnabled: isChatSyncEnabled(),
     legacyChatBundlesFileName: CHAT_BUNDLES_GIST_FILE_NAME,
+    preserveSyncKeys: keepRemoteKeys,
   });
 
   if (delta.isNoOp) {
     progress.report({ message: "Already in sync" });
+    if (syncState) {
+      const checksums: Record<string, string> = {
+        ...syncState.localChecksums,
+      };
+      for (const key of keepRemoteKeys) {
+        const remoteChecksum = remoteChecksums[key];
+        if (remoteChecksum) {
+          checksums[key] = remoteChecksum;
+        }
+      }
+      if (chatForDelta) {
+        checksums[chatForDelta.syncKey] = chatForDelta.checksum;
+      }
+      const remoteId =
+        (snapshotResult.ok && snapshotResult.data.id) ||
+        syncState.gistId ||
+        "";
+      if (remoteId) {
+        const alignedState: SyncState = {
+          ...buildSyncStateAfterWrite(
+            syncState,
+            backend,
+            remoteId,
+            checksums,
+            "push"
+          ),
+          remoteChecksums: {
+            ...syncState.remoteChecksums,
+            ...remoteChecksums,
+            ...Object.fromEntries(
+              [...keepRemoteKeys]
+                .filter((key) => remoteChecksums[key])
+                .map((key) => [key, remoteChecksums[key]!])
+            ),
+          },
+        };
+        await saveSyncState(context, alignedState);
+      }
+    }
+    await clearConflicts();
     if (isChatSyncEnabled()) {
-      const fingerprint = await computeChatSyncLocalFingerprint();
-      await storeChatSyncFingerprint(context, fingerprint);
+      try {
+        const fingerprint = await computeChatSyncLocalFingerprint();
+        await storeChatSyncFingerprint(context, fingerprint);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.appendLine(
+          `[${new Date().toISOString()}] Push chat fingerprint skipped: ${msg}`
+        );
+      }
     }
     logger.appendLine(
       `[${new Date().toISOString()}] Push skipped: already in sync (${delta.unchangedCount} unchanged) → ${backend.remoteLabel()}`
@@ -445,25 +583,17 @@ async function doPush(
   for (const [key, value] of packaged) {
     checksums[key] = value.checksum;
   }
+  for (const key of keepRemoteKeys) {
+    const remoteChecksum = remoteChecksums[key];
+    if (remoteChecksum) {
+      checksums[key] = remoteChecksum;
+    }
+  }
   if (chatForDelta) {
     checksums[chatForDelta.syncKey] = chatForDelta.checksum;
   }
 
-  const newState: SyncState = buildSyncStateAfterWrite(
-    syncState,
-    backend,
-    writeResult.data.id,
-    checksums,
-    "push"
-  );
-  await saveSyncState(context, newState);
-  if (isChatSyncEnabled()) {
-    const fingerprint = await computeChatSyncLocalFingerprint();
-    await storeChatSyncFingerprint(context, fingerprint);
-  }
-  clearConflicts();
-
-  const historyFiles = [...delta.uploadedSyncKeys].sort();
+  const historyFiles = [...delta.uploadedSyncKeys, ...keepRemoteKeys].sort();
   const fileCount = historyFiles.length;
   const chatSuffix =
     chatBundleCount > 0 ? ` · ${chatBundleCount} chat(s)` : "";
@@ -480,6 +610,28 @@ async function doPush(
     success: true,
     files: historyFiles,
   });
+
+  const newState: SyncState = buildSyncStateAfterWrite(
+    syncState,
+    backend,
+    writeResult.data.id,
+    checksums,
+    "push"
+  );
+  await saveSyncState(context, newState);
+  await clearConflicts();
+  if (isChatSyncEnabled()) {
+    try {
+      const fingerprint = await computeChatSyncLocalFingerprint();
+      await storeChatSyncFingerprint(context, fingerprint);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.appendLine(
+        `[${new Date().toISOString()}] Push chat fingerprint skipped: ${msg}`
+      );
+    }
+  }
+
   sendEvent(context, "sync_completed", {
     direction: "push",
     file_count: fileCount,
@@ -504,12 +656,24 @@ async function writeExtensionsFile(
   cursorUserRoot: string,
   content: string
 ): Promise<string> {
-  const filePath = (await import("node:path")).join(
-    cursorUserRoot,
-    "extensions.json"
-  );
-  const dir = (await import("node:path")).dirname(filePath);
+  const filePath = path.join(cursorUserRoot, "extensions.json");
+  const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(filePath, content, "utf-8");
   return filePath;
+}
+
+function syncKeyToAbsolutePath(
+  syncKey: string,
+  roots: { cursorUser: string; dotCursor: string }
+): string | undefined {
+  if (syncKey.startsWith("cursor-user/")) {
+    const rel = syncKey.slice("cursor-user/".length);
+    return path.join(roots.cursorUser, ...rel.split("/"));
+  }
+  if (syncKey.startsWith("dot-cursor/")) {
+    const rel = syncKey.slice("dot-cursor/".length);
+    return path.join(roots.dotCursor, ...rel.split("/"));
+  }
+  return undefined;
 }

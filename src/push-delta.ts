@@ -19,6 +19,11 @@ export interface PushDeltaInput {
   pushNativeChatFile?: boolean;
   chatSyncEnabled?: boolean;
   legacyChatBundlesFileName?: string;
+  /**
+   * Sync keys resolved as keepRemote: never upload local content and never
+   * delete the existing remote file.
+   */
+  preserveSyncKeys?: Iterable<string>;
 }
 
 export interface PushDeltaResult {
@@ -46,13 +51,19 @@ export function selectPushDelta(input: PushDeltaInput): PushDeltaResult {
     pushNativeChatFile = false,
     chatSyncEnabled = false,
     legacyChatBundlesFileName,
+    preserveSyncKeys,
   } = input;
 
+  const preserved = new Set(preserveSyncKeys ?? []);
   const filesToUpload: Record<string, string> = {};
   const uploadedSyncKeys: string[] = [];
   let unchangedCount = 0;
 
   for (const [syncKey, packagedFile] of packaged) {
+    if (preserved.has(syncKey)) {
+      unchangedCount += 1;
+      continue;
+    }
     const remoteChecksum = remoteChecksums[syncKey];
     const changed =
       forceFullUpload ||
@@ -83,6 +94,7 @@ export function selectPushDelta(input: PushDeltaInput): PushDeltaResult {
   const localRemoteNames = new Set<string>([
     "manifest.json",
     ...[...packaged.keys()].map(syncKeyToGistFileName),
+    ...[...preserved].map(syncKeyToGistFileName),
   ]);
   if (chat) {
     localRemoteNames.add(chat.gistFileName);

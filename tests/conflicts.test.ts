@@ -15,8 +15,20 @@ describe("conflicts", () => {
   const storageDir = path.join(tmpDir, "storage");
 
   function makeContext() {
+    const state = new Map<string, unknown>();
     return {
       globalStorageUri: { fsPath: storageDir },
+      globalState: {
+        get: (key: string) => state.get(key),
+        update: async (key: string, value: unknown) => {
+          if (value === undefined) {
+            state.delete(key);
+          } else {
+            state.set(key, value);
+          }
+        },
+        keys: () => [...state.keys()],
+      },
       secrets: {
         get: async () => undefined,
         store: async () => {},
@@ -205,5 +217,109 @@ describe("conflicts", () => {
 
     const conflicts = await detectConflicts(context, remoteChecksums);
     expect(conflicts.length).toBe(0);
+  });
+
+  it("getUnresolvedConflicts filters resolved and skip entries", async () => {
+    const {
+      getUnresolvedConflicts,
+      setPendingResolutionsForTests,
+      clearConflicts,
+    } = await import("../src/conflicts.js");
+
+    const conflicts = [
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        localChecksum: "a",
+        remoteChecksum: "b",
+        baseChecksum: "c",
+      },
+      {
+        relativeSyncKey: "cursor-user/keybindings.json",
+        localChecksum: "d",
+        remoteChecksum: "e",
+        baseChecksum: "f",
+      },
+      {
+        relativeSyncKey: "cursor-user/extensions.json",
+        localChecksum: "g",
+        remoteChecksum: "h",
+        baseChecksum: "i",
+      },
+    ];
+
+    setPendingResolutionsForTests([
+      { relativeSyncKey: "cursor-user/settings.json", resolution: "keepLocal" },
+      { relativeSyncKey: "cursor-user/keybindings.json", resolution: "skip" },
+    ]);
+
+    const unresolved = getUnresolvedConflicts(conflicts);
+    expect(unresolved.map((c) => c.relativeSyncKey)).toEqual([
+      "cursor-user/keybindings.json",
+      "cursor-user/extensions.json",
+    ]);
+
+    setPendingResolutionsForTests([
+      { relativeSyncKey: "cursor-user/settings.json", resolution: "keepRemote" },
+      { relativeSyncKey: "cursor-user/keybindings.json", resolution: "keepLocal" },
+      { relativeSyncKey: "cursor-user/extensions.json", resolution: "keepRemote" },
+    ]);
+    expect(getUnresolvedConflicts(conflicts)).toEqual([]);
+
+    await clearConflicts();
+  });
+
+  it("loadPendingResolutions restores from globalState", async () => {
+    const stored = [
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        resolution: "keepLocal" as const,
+      },
+    ];
+    const context = {
+      ...makeContext(),
+      globalState: {
+        get: vi.fn().mockReturnValue(stored),
+        update: vi.fn().mockResolvedValue(undefined),
+        keys: vi.fn().mockReturnValue([]),
+      },
+    } as unknown as import("vscode").ExtensionContext;
+
+    const {
+      loadPendingResolutions,
+      getResolutionForKey,
+      clearConflicts,
+    } = await import("../src/conflicts.js");
+
+    await loadPendingResolutions(context);
+    expect(getResolutionForKey("cursor-user/settings.json")).toBe("keepLocal");
+    await clearConflicts();
+  });
+
+  it("registerPendingConflicts clears context when empty", async () => {
+    const vscode = await import("vscode");
+    const executeCommand = vi
+      .spyOn(vscode.commands, "executeCommand")
+      .mockResolvedValue(undefined);
+
+    const { registerPendingConflicts, getPendingConflicts } = await import(
+      "../src/conflicts.js"
+    );
+    await registerPendingConflicts([
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        localChecksum: "a",
+        remoteChecksum: "b",
+        baseChecksum: "c",
+      },
+    ]);
+    expect(getPendingConflicts()).toHaveLength(1);
+
+    await registerPendingConflicts([]);
+    expect(getPendingConflicts()).toHaveLength(0);
+    expect(executeCommand).toHaveBeenCalledWith(
+      "setContext",
+      "cursorSync.hasConflicts",
+      false
+    );
   });
 });

@@ -23,7 +23,7 @@ import { executeImportChatFromGist } from "./import-gist-chat.js";
 import { executeSetChatEncryptionPassword } from "./chat-encryption-auth.js";
 import { executeImportTranscriptsFromGist } from "./import-gist-transcripts.js";
 import { showStatus } from "./diagnostics.js";
-import { resolveConflictsCommand } from "./conflicts.js";
+import { resolveConflictsCommand, loadPendingResolutions } from "./conflicts.js";
 import { executeReset } from "./reset.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { determineSyncAction } from "./scheduler.js";
@@ -50,8 +50,10 @@ import { flushPendingSidebarWriteback } from "./chat-import-sidebar-writeback.js
 import { executeInstallSkillTransportChat } from "./install-skill-transport-chat.js";
 let configListener: vscode.Disposable | undefined;
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const logger = getLogger();
+
+  await loadPendingResolutions(context);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.refreshImportedTranscripts", () => {
