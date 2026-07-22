@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## v0.10.2
+
 ### Fixed
 - Sync conflict resolutions (Keep Local / Keep Remote) now persist across reloads and are respected by Sync Now, so the conflict dialog no longer loops after a choice.
 - Push honors Keep Remote (preserves remote file, applies it locally, and skips uploading the local version).
