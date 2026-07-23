@@ -4,11 +4,17 @@ import * as path from "node:path";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
-import { resolveSyncRoots, gistFileNameToSyncKey, isExcludedSyncKey } from "./paths.js";
+import { resolveSyncRoots, gistFileNameToSyncKey, isExcludedSyncKey, enumerateSyncFiles } from "./paths.js";
 import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
 import { computeChecksum } from "./packaging.js";
 import { detectConflicts, clearConflicts, getResolutionForKey, getUnresolvedConflicts } from "./conflicts.js";
 import { createBackup, rollbackFromBackup, pruneOldBackups, ensureParentDirectory } from "./rollback.js";
+import {
+  applyLocalDeletes,
+  planLocalDeletes,
+  syncKeyToAbsolutePath,
+  PartialLocalDeleteError,
+} from "./sync-local-deletes.js";
 import { findMissingExtensions, findExtraExtensions, ensureExtensionsJsonOnDisk } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
@@ -38,7 +44,13 @@ import {
 import { createSidebarSyncProgress } from "./sync-progress-events.js";
 import type { SyncState, Manifest } from "./types.js";
 
-export type PullTrigger = "manual" | "scheduled";
+export type PullTrigger = "manual" | "scheduled" | "syncNow";
+
+export type PullOptions = {
+  trigger?: PullTrigger;
+  /** Full mirror: delete all local-only sync files (Pull command only). */
+  mirror?: boolean;
+};
 
 let pullLock = false;
 
@@ -48,9 +60,10 @@ export function isPullLocked(): boolean {
 
 export async function executePull(
   context: vscode.ExtensionContext,
-  options?: { trigger?: PullTrigger }
+  options?: PullOptions
 ): Promise<boolean> {
   const trigger = options?.trigger ?? "manual";
+  const mirror = options?.mirror === true;
 
   if (pullLock) {
     vscode.window.showWarningMessage("A sync operation is already in progress.");
@@ -61,8 +74,8 @@ export async function executePull(
   updateStatusBar("syncing");
   const progress = createSidebarSyncProgress("pull");
   try {
-    progress.report({ message: "Starting pull…" });
-    const success = await doPull(context, trigger, progress);
+    progress.report({ message: mirror ? "Starting mirror pull…" : "Starting pull…" });
+    const success = await doPull(context, trigger, progress, mirror);
     progress.complete(success);
     updateStatusBar(success ? "ok" : "error", new Date());
     refreshSidebar();
@@ -82,10 +95,13 @@ async function doPull(
   trigger: PullTrigger = "manual",
   progress: vscode.Progress<{ message?: string; increment?: number }> = {
     report: () => {},
-  }
+  },
+  mirror = false
 ): Promise<boolean> {
   const logger = getLogger();
-  logger.appendLine(`[${new Date().toISOString()}] Pull started (trigger=${trigger})`);
+  logger.appendLine(
+    `[${new Date().toISOString()}] Pull started (trigger=${trigger}, mirror=${mirror})`
+  );
 
   let syncState = await loadSyncState(context);
   const destSettings = readDestinationSettings();
@@ -324,6 +340,9 @@ async function doPull(
     if (gistFileName === CHAT_BUNDLES_GIST_FILE_NAME) {
       continue;
     }
+    if (gistFileName === CURSOR_CHAT_GIST_FILE_NAME) {
+      continue;
+    }
 
     const syncKey = gistFileNameToSyncKey(gistFileName);
     const manifestEntry = manifest.files[syncKey];
@@ -335,11 +354,8 @@ async function doPull(
       continue;
     }
 
-    if (conflicts.length > 0) {
-      const resolution = getResolutionForKey(syncKey);
-      if (resolution === "keepLocal") {
-        continue;
-      }
+    if (getResolutionForKey(syncKey) === "keepLocal") {
+      continue;
     }
 
     const absolutePath = syncKeyToAbsolutePath(syncKey, roots);
@@ -352,13 +368,94 @@ async function doPull(
         ? Buffer.from(fileContent, "base64")
         : Buffer.from(fileContent, "utf-8");
 
+    const remoteChecksum = computeChecksum(content);
+    const localChecksum = syncState?.localChecksums?.[syncKey];
+    if (localChecksum && localChecksum === remoteChecksum) {
+      continue;
+    }
+
     filesToWrite.push({ absolutePath, syncKey, content });
   }
+
+  const localEntries = await enumerateSyncFiles(roots);
+  const localSyncKeys = localEntries.map((e) => e.relativeSyncKey);
+  const keepLocalKeys = new Set<string>();
+  for (const key of new Set([...localSyncKeys, ...Object.keys(remoteChecksums)])) {
+    if (getResolutionForKey(key) === "keepLocal") {
+      keepLocalKeys.add(key);
+    }
+  }
+
+  const deleteMode = mirror ? "mirror" : "remoteRemoved";
+  const keysToDelete = planLocalDeletes({
+    mode: deleteMode,
+    localSyncKeys,
+    remoteChecksums,
+    previousRemoteChecksums: syncState?.remoteChecksums ?? {},
+    keepLocalKeys,
+  });
 
   const config = vscode.workspace.getConfiguration("cursorSync");
   const safeMode = config.get<boolean>("safeMode") ?? true;
 
-  if (trigger === "manual" && safeMode && filesToWrite.length > 0) {
+  if (mirror) {
+    const n = filesToWrite.length;
+    const m = keysToDelete.length;
+    if (n === 0 && m === 0) {
+      if (trigger === "manual" || trigger === "syncNow") {
+        vscode.window.showInformationMessage("Pull complete: already in sync.");
+      }
+      await addSyncHistoryEntry(context, {
+        timestamp: new Date().toISOString(),
+        direction: "pull",
+        trigger,
+        fileCount: 0,
+        totalFileCount: Object.keys(manifest.files).length,
+        success: true,
+        files: [],
+      });
+      const localChecksums = { ...(syncState?.localChecksums || {}) };
+      for (const key of keepLocalKeys) {
+        const conflict = conflicts.find((c) => c.relativeSyncKey === key);
+        if (conflict) {
+          localChecksums[key] = conflict.localChecksum;
+        }
+      }
+      let alignedState: SyncState = buildSyncStateAfterWrite(
+        syncState,
+        backend!,
+        snapshotResult.data.id,
+        localChecksums,
+        "pull"
+      );
+      alignedState = normalizeSyncStateDestination({
+        ...alignedState,
+        remoteChecksums,
+      });
+      await saveSyncState(context, alignedState);
+      await clearConflicts();
+      sendEvent(context, "sync_completed", { direction: "pull", file_count: 0, trigger });
+      progress.report({ message: "Done" });
+      await migrateAndLogSkillArtifacts();
+      return true;
+    }
+
+    const keepNote =
+      keepLocalKeys.size > 0
+        ? ` Files marked Keep Local (${keepLocalKeys.size}) will be preserved.`
+        : "";
+    const choice = await vscode.window.showWarningMessage(
+      `Pull will align this machine to the remote: update ${n} file(s) and delete ${m} file(s) present only locally (settings, skills, rules, …).${keepNote} Continue?`,
+      { modal: true },
+      "Proceed",
+      "Cancel"
+    );
+    if (choice !== "Proceed") {
+      logger.appendLine(`[${new Date().toISOString()}] Mirror pull cancelled by user`);
+      sendEvent(context, "sync_failed", { direction: "pull", reason: "cancelled", trigger });
+      return false;
+    }
+  } else if (!mirror && trigger === "manual" && safeMode && filesToWrite.length > 0) {
     const items = filesToWrite.map((f) => ({
       label: f.syncKey,
       picked: true,
@@ -381,7 +478,7 @@ async function doPull(
     filesToWrite.push(...filtered);
   }
 
-  if (filesToWrite.length === 0) {
+  if (filesToWrite.length === 0 && keysToDelete.length === 0) {
     if (trigger === "manual") {
       vscode.window.showInformationMessage("Pull complete: no files to update.");
     }
@@ -419,11 +516,15 @@ async function doPull(
     return true;
   }
 
+  const deleteAbsPaths = keysToDelete
+    .map((key) => syncKeyToAbsolutePath(key, roots))
+    .filter((p): p is string => Boolean(p));
+
   progress.report({ message: "Creating local backup…" });
-  const { entries: backupEntries } = await createBackup(
-    context,
-    filesToWrite.map((f) => f.absolutePath)
-  );
+  const { entries: backupEntries } = await createBackup(context, [
+    ...filesToWrite.map((f) => f.absolutePath),
+    ...deleteAbsPaths,
+  ]);
 
   const writtenBackups: typeof backupEntries = [];
   let writeError = false;
@@ -455,11 +556,42 @@ async function doPull(
     }
   }
 
+  let deletedKeys: string[] = [];
+  if (!writeError && keysToDelete.length > 0) {
+    progress.report({ message: `Removing ${keysToDelete.length} local file(s)…` });
+    try {
+      const applied = await applyLocalDeletes(context, keysToDelete, roots, {
+        backupEntries,
+      });
+      deletedKeys = applied.deletedKeys;
+      for (const b of applied.backupEntries) {
+        if (!writtenBackups.some((w) => w.absolutePath === b.absolutePath)) {
+          writtenBackups.push(b);
+        }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      if (err instanceof PartialLocalDeleteError) {
+        deletedKeys = err.deletedKeys;
+        failedSyncKey = err.failedKey;
+        for (const b of err.backupEntries) {
+          if (!writtenBackups.some((w) => w.absolutePath === b.absolutePath)) {
+            writtenBackups.push(b);
+          }
+        }
+      } else {
+        failedSyncKey = keysToDelete[0];
+      }
+      failedErrorDetail = errMessage;
+      writeError = true;
+    }
+  }
+
   if (writeError) {
     logger.appendLine(`[${new Date().toISOString()}] Rolling back partial writes`);
     await rollbackFromBackup(writtenBackups);
     const failureDetail = failedSyncKey
-      ? `Could not write ${failedSyncKey}${failedErrorDetail ? ` (${failedErrorDetail})` : ""}.`
+      ? `Could not write/delete ${failedSyncKey}${failedErrorDetail ? ` (${failedErrorDetail})` : ""}.`
       : "file write error.";
     const writeErrorMessage = `Pull failed: ${failureDetail} Changes have been rolled back.`;
     void showSyncFailureWithDebug(
@@ -478,7 +610,7 @@ async function doPull(
       fileCount: 0,
       success: false,
       error: "File write error",
-      files: filesToWrite.map((f) => f.syncKey).sort(),
+      files: [...filesToWrite.map((f) => f.syncKey), ...keysToDelete].sort(),
     });
     sendEvent(context, "sync_failed", { direction: "pull", reason: "FILE_SYSTEM_ERROR", trigger });
     return false;
@@ -487,9 +619,14 @@ async function doPull(
   progress.report({ message: "Saving sync state…" });
   await pruneOldBackups(context);
 
-  const newLocalChecksums: Record<string, string> = {};
+  const newLocalChecksums: Record<string, string> = {
+    ...(syncState?.localChecksums || {}),
+  };
   for (const file of filesToWrite) {
     newLocalChecksums[file.syncKey] = computeChecksum(file.content);
+  }
+  for (const key of deletedKeys) {
+    delete newLocalChecksums[key];
   }
   for (const conflict of conflicts) {
     if (getResolutionForKey(conflict.relativeSyncKey) === "keepLocal") {
@@ -501,7 +638,7 @@ async function doPull(
     syncState,
     backend!,
     snapshotResult.data.id,
-    { ...(syncState?.localChecksums || {}), ...newLocalChecksums },
+    newLocalChecksums,
     "pull"
   );
   newState = normalizeSyncStateDestination({
@@ -510,12 +647,15 @@ async function doPull(
   });
   await saveSyncState(context, newState);
 
-  const historyFiles = filesToWrite.map((f) => f.syncKey).sort();
+  const historyFiles = [
+    ...filesToWrite.map((f) => f.syncKey),
+    ...deletedKeys.map((k) => `-${k}`),
+  ].sort();
   await addSyncHistoryEntry(context, {
     timestamp: new Date().toISOString(),
     direction: "pull",
     trigger,
-    fileCount: historyFiles.length,
+    fileCount: filesToWrite.length + deletedKeys.length,
     totalFileCount: Object.keys(manifest.files).length,
     success: true,
     files: historyFiles,
@@ -523,7 +663,7 @@ async function doPull(
   await clearConflicts();
   sendEvent(context, "sync_completed", {
     direction: "pull",
-    file_count: filesToWrite.length,
+    file_count: filesToWrite.length + deletedKeys.length,
     trigger,
     destination_type: backend!.type,
   });
@@ -600,32 +740,17 @@ async function doPull(
     chatImported > 0 || chatSkipped > 0 || chatUpdated > 0
       ? ` · Chats: ${chatImported} imported, ${chatSkipped} skipped${chatUpdated > 0 ? `, ${chatUpdated} updated` : ""}`
       : "";
+  const deleteSuffix =
+    deletedKeys.length > 0 ? `, ${deletedKeys.length} deleted` : "";
   progress.report({ message: "Done" });
   vscode.window.showInformationMessage(
-    `Pull complete: ${filesToWrite.length} file(s) updated${chatSuffix}.`
+    `Pull complete: ${filesToWrite.length} file(s) updated${deleteSuffix}${chatSuffix}.`
   );
   logger.appendLine(
-    `[${new Date().toISOString()}] Pull succeeded: ${filesToWrite.length} files ← ${backend!.remoteLabel()}`
+    `[${new Date().toISOString()}] Pull succeeded: ${filesToWrite.length} written, ${deletedKeys.length} deleted ← ${backend!.remoteLabel()}`
   );
   await migrateAndLogSkillArtifacts();
   return true;
-}
-
-function syncKeyToAbsolutePath(
-  syncKey: string,
-  roots: { cursorUser: string; dotCursor: string }
-): string | undefined {
-  if (syncKey.startsWith("cursor-user/")) {
-    const rel = syncKey.slice("cursor-user/".length);
-    return path.join(roots.cursorUser, ...rel.split("/"));
-  }
-
-  if (syncKey.startsWith("dot-cursor/")) {
-    const rel = syncKey.slice("dot-cursor/".length);
-    return path.join(roots.dotCursor, ...rel.split("/"));
-  }
-
-  return undefined;
 }
 
 const CONCURRENT_INSTALLS = 2;

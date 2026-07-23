@@ -14,7 +14,7 @@ import { getLogger } from "./diagnostics.js";
 
 export type SyncDebugOperation = "syncNow" | "push" | "pull" | "scheduler";
 export type SyncDebugDirection = "push" | "pull";
-export type SyncDebugTrigger = "manual" | "scheduled";
+export type SyncDebugTrigger = "manual" | "scheduled" | "syncNow";
 
 export type SyncDebugFailure = {
   operation: SyncDebugOperation;

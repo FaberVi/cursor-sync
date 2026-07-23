@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## v0.10.4
+
+### Changed
+- **Pull Now** fully mirrors the remote for synced paths (`settings`, skills, rules, commands, …): after conflict resolution it shows a confirmation with counts of files to update/delete, then overwrites remote files and removes local-only synced files (Keep Local preserved). `safeMode` multi-select does not apply to mirror Pull.
+- **Sync Now / scheduler** soft-pull still merges remote updates, and now also deletes local files that were **removed on the remote** (based on the last known remote checksums). Brand-new local-only files are kept and pushed. Keep Local always wins over a remote delete.
+- Pull/Sync delete paths are backed up before removal; empty parent directories under the sync roots are pruned.
+
 ## v0.10.3
 
 ### Fixed

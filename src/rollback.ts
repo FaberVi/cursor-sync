@@ -80,6 +80,7 @@ export async function rollbackFromBackup(entries: BackupEntry[]): Promise<void> 
   const logger = getLogger();
   for (const entry of entries) {
     try {
+      await ensureParentDirectory(entry.absolutePath);
       await fs.copyFile(entry.backupPath, entry.absolutePath);
     } catch (err) {
       logger.appendLine(

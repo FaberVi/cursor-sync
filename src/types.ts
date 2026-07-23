@@ -98,7 +98,7 @@ export interface ResolvedConflict {
 export interface SyncHistoryEntry {
   timestamp: string;
   direction: "push" | "pull";
-  trigger: "manual" | "scheduled";
+  trigger: "manual" | "scheduled" | "syncNow";
   /** Files uploaded (push) or written (pull) in this operation. */
   fileCount: number;
   /**

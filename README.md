@@ -143,10 +143,10 @@ The following are always excluded from sync:
 
 | Command | Description |
 |---------|-------------|
-| `Cursor Sync: Sync Now` | Automatically determine and execute the right sync action (push, pull, or both) |
+| `Cursor Sync: Sync Now` | Merge both ways: pull remote changes (including remote deletions), push local new/changed files; ask Keep Local / Keep Remote on conflicts |
 | `Cursor Sync: Configure GitHub` | Set or update your GitHub Personal Access Token |
 | `Cursor Sync: Push Now` | Upload local settings to the configured remote (Gist or repository) |
-| `Cursor Sync: Pull Now` | Download settings from the remote and apply locally |
+| `Cursor Sync: Pull Now` | Replace local synced files with the remote (mirror). Confirms before deleting local-only synced files |
 | `Cursor Sync: Show Status` | Display last sync time, direction, file count, and remote URL |
 | `Cursor Sync: Resolve Conflicts` | Resolve files that changed both locally and remotely (shown when conflicts exist) |
 | `Cursor Sync: Reset Extension State` | Clear token, sync state, and reset extension settings to defaults |
@@ -192,7 +192,7 @@ Commands such as Resolve Conflicts and Reset are available from the Command Pale
 | `cursorSync.destination.path` | `string` | `"cursor-sync"` | Directory inside the repo for sync files |
 | `cursorSync.maxFileSizeKB` | `number` | `512` | Skip files larger than this size in KB |
 | `cursorSync.syncProfileName` | `string` | `"default"` | Profile name written to the sync manifest |
-| `cursorSync.safeMode` | `boolean` | `true` | Require confirmation before pull overwrites local files |
+| `cursorSync.safeMode` | `boolean` | `true` | On **soft** pull (not mirror Pull Now), require multi-select confirmation before overwriting local files |
 | `cursorSync.syncExtensions.autoInstall` | `boolean` | `true` | On pull, auto-install extensions that are in the synced list but not installed locally |
 | `cursorSync.syncExtensions.autoUninstall` | `boolean` | `false` | On pull, auto-uninstall extensions that are installed locally but not in the synced list (use with caution) |
 

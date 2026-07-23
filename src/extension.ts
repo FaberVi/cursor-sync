@@ -97,7 +97,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.pull", () =>
-      executePull(context)
+      executePull(context, { mirror: true })
     )
   );
 
@@ -325,7 +325,7 @@ export async function executeSyncNow(
         break;
       case "pull":
         progress.report({ message: "Pulling…" });
-        progress.complete(await executePull(context));
+        progress.complete(await executePull(context, { trigger: "syncNow" }));
         break;
       case "push":
         progress.report({ message: "Pushing…" });
@@ -333,7 +333,7 @@ export async function executeSyncNow(
         break;
       case "pull-push": {
         progress.report({ message: "Pulling…" });
-        const pullOk = await executePull(context);
+        const pullOk = await executePull(context, { trigger: "syncNow" });
         if (pullOk) {
           progress.report({ message: "Pushing…" });
           progress.complete(await executePush(context));

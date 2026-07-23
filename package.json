@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync",
   "description": "Sync user-level Cursor settings and assets to a private GitHub Gist or repository",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "icon": "assets/icon.png",
   "publisher": "MarceloBarella",
   "repository": {
@@ -319,7 +319,7 @@
         "cursorSync.safeMode": {
           "type": "boolean",
           "default": true,
-          "description": "Require confirmation before pull overwrites local files"
+          "description": "On soft pull (not mirror Pull Now), require confirmation before overwriting local files"
         },
         "cursorSync.syncExtensions.autoInstall": {
           "type": "boolean",
