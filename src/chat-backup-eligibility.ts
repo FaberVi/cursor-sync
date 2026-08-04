@@ -4,6 +4,7 @@ import {
   summarizeBundleFidelity,
   type ChatBundleFidelitySummary,
 } from "./chat-bundle-fidelity.js";
+import { localizedBackupTierLabel, t } from "./sidebar/i18n.js";
 
 /** Cross-machine backup quality tier. */
 export type BackupTier = "full" | "resume" | "partial" | "archive";
@@ -27,15 +28,9 @@ export interface BackupTierSummary {
   warnings: string[];
 }
 
-const TIER_LABELS: Record<BackupTier, string> = {
-  full: "Full backup",
-  resume: "Resumable",
-  partial: "Partial",
-  archive: "Archive only",
-};
 
 export function backupTierLabel(tier: BackupTier): string {
-  return TIER_LABELS[tier];
+  return localizedBackupTierLabel(tier);
 }
 
 export function classifyBundleTier(bundle: ChatBundle): BackupTier {
@@ -91,25 +86,23 @@ export function summarizeDiscoveredBackupTier(
   const warnings: string[] = [];
   const parts = [
     backupTierLabel(tier),
-    item.jsonlCount > 0 ? `${item.jsonlCount} jsonl` : "no jsonl",
-    item.hasStore ? "store.db" : "no store.db",
+    item.jsonlCount > 0
+      ? t("backupDetailJsonl", { n: item.jsonlCount })
+      : t("backupDetailNoJsonl"),
+    item.hasStore ? t("backupDetailStore") : t("backupDetailNoStore"),
   ];
   const subagentCount = item.subagentJsonlCount ?? 0;
   if (subagentCount > 0) {
-    parts.push(`${subagentCount} subagent jsonl`);
+    parts.push(t("backupDetailSubagentJsonl", { n: subagentCount }));
   }
   if (diskKv && diskKv.rowCount > 0) {
-    parts.push(`diskKv ${diskKv.rowCount} rows`);
-    parts.push(`${diskKv.toolBubbleCount} tool bubbles`);
+    parts.push(t("backupDetailDiskKvRows", { n: diskKv.rowCount }));
+    parts.push(t("backupDetailToolBubbles", { n: diskKv.toolBubbleCount }));
   }
   if (tier === "archive") {
-    warnings.push(
-      "Transcript-only: open in Composer on source machine before sync for tool/MCP fidelity."
-    );
+    warnings.push(t("tierWarningArchive"));
   } else if (tier === "partial") {
-    warnings.push(
-      "store.db present but Layer 4 tool bubbles missing; tool/MCP UI may differ on import."
-    );
+    warnings.push(t("tierWarningPartial"));
   }
   return {
     tier,
@@ -151,15 +144,9 @@ export function shouldWarnBeforeOpeningChat(tier: BackupTier | undefined): boole
 
 export function openChatTierWarningMessage(tier: BackupTier): string {
   if (tier === "archive") {
-    return (
-      "This chat is transcript-only (Archive). Composer may open empty or show only JSONL. " +
-      "Open it in Composer on the source machine and sync again for full fidelity."
-    );
+    return t("openTierWarningArchive");
   }
-  return (
-    "This chat has partial backup fidelity (store without Layer 4 tool bubbles). " +
-    "Tool/MCP cards may differ after open."
-  );
+  return t("openTierWarningPartial");
 }
 
 export function isBundleSyncEligible(

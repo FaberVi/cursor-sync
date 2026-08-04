@@ -13,42 +13,78 @@ import {
   readDestinationSettings,
   normalizeSyncStateDestination,
 } from "../remote/index.js";
-import { readExtensionVersion } from "../sync-debug.js";
+import { readExtensionVersion as readExtensionVersionFallback } from "../sync-debug.js";
 import type { SyncTabState } from "./sync-tab.js";
 import { renderSyncPane } from "./sync-tab.js";
 import { renderSettingsPane, readSettingsValues } from "./settings-tab.js";
 import { t, webviewI18nPayload } from "./i18n.js";
 import { escapeHtml } from "./sync-tab.js";
 
+export interface BuildSyncTabStateOptions {
+  /** Skip filesystem chat discovery and remote gist/repo fetch (slow). */
+  deferHeavyMetrics?: boolean;
+}
+
+function extensionVersionForContext(context: vscode.ExtensionContext): string {
+  return (
+    (context.extension?.packageJSON as { version?: string } | undefined)?.version ??
+    readExtensionVersionFallback()
+  );
+}
+
+function buildSyncTabStateShell(context: vscode.ExtensionContext): SyncTabState {
+  const destSettings = readDestinationSettings();
+  return {
+    status: "syncing",
+    lastSyncTime: undefined,
+    lastSyncDirection: undefined,
+    fileCount: 0,
+    gistId: undefined,
+    remoteLabel: undefined,
+    remoteUrl: undefined,
+    destinationKind: destSettings.type,
+    extensionVersion: extensionVersionForContext(context),
+    history: [],
+    chatsSyncEnabled: isChatSyncEnabled(),
+    localChatCount: 0,
+    remoteChatCount: undefined,
+    chatCountsLoading: true,
+  };
+}
+
 export async function buildSyncTabState(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
+  options: BuildSyncTabStateOptions = {}
 ): Promise<SyncTabState> {
+  const deferHeavyMetrics = options.deferHeavyMetrics === true;
   const syncState = await loadSyncState(context);
   const history = await loadSyncHistory(context);
   const chatsSyncEnabled = isChatSyncEnabled();
-  const localChatCount = await countLocalDiscoveredChats();
-  const extensionVersion =
-    (context.extension?.packageJSON as { version?: string } | undefined)?.version ??
-    readExtensionVersion();
+  const extensionVersion = extensionVersionForContext(context);
   const destSettings = readDestinationSettings();
   const destinationKind =
     (syncState
       ? normalizeSyncStateDestination(syncState, destSettings).destination?.type
       : undefined) ?? destSettings.type;
+  let localChatCount = 0;
   let remoteChatCount: number | undefined;
+  let chatCountsLoading = deferHeavyMetrics;
 
-  if (chatsSyncEnabled && hasRemoteDestination(syncState)) {
-    const token = await requireToken(context);
-    if (token && syncState) {
-      try {
-        const remote = await fetchRemoteChatCollection(
-          context,
-          syncState.gistId || syncStateIdentity(syncState),
-          token
-        );
-        remoteChatCount = remote?.length ?? 0;
-      } catch {
-        remoteChatCount = undefined;
+  if (!deferHeavyMetrics) {
+    localChatCount = await countLocalDiscoveredChats();
+    if (chatsSyncEnabled && hasRemoteDestination(syncState)) {
+      const token = await requireToken(context);
+      if (token && syncState) {
+        try {
+          const remote = await fetchRemoteChatCollection(
+            context,
+            syncState.gistId || syncStateIdentity(syncState),
+            token
+          );
+          remoteChatCount = remote?.length ?? 0;
+        } catch {
+          remoteChatCount = undefined;
+        }
       }
     }
   }
@@ -68,6 +104,7 @@ export async function buildSyncTabState(
       chatsSyncEnabled,
       localChatCount,
       remoteChatCount,
+      chatCountsLoading,
     };
   }
 
@@ -85,28 +122,21 @@ export async function buildSyncTabState(
     chatsSyncEnabled,
     localChatCount,
     remoteChatCount,
+    chatCountsLoading,
   };
 }
 
-export async function renderSyncPaneHtml(
-  context: vscode.ExtensionContext
-): Promise<string> {
-  const state = await buildSyncTabState(context);
-  return renderSyncPane(state);
-}
-
-export async function renderSidebarHtml(
-  context: vscode.ExtensionContext,
-  webview: vscode.Webview
-): Promise<string> {
-  const state = await buildSyncTabState(context);
-  const settingsValues = readSettingsValues();
-  const syncPaneHtml = renderSyncPane(state);
-  const settingsPaneHtml = renderSettingsPane(settingsValues);
+function assembleSidebarDocument(params: {
+  webview: vscode.Webview;
+  context: vscode.ExtensionContext;
+  syncPaneHtml: string;
+  settingsPaneHtml: string;
+  htmlLang: string;
+}): string {
+  const { webview, context, syncPaneHtml, settingsPaneHtml, htmlLang } = params;
   const scriptUri = webview.asWebviewUri(
     vscode.Uri.joinPath(context.extensionUri, "resources", "sidebar", "webview.js")
   );
-  const htmlLang = settingsValues["ui.language"] === "it" ? "it" : "en";
   const csp = [
     `default-src 'none'`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
@@ -348,6 +378,7 @@ export async function renderSidebarHtml(
 
     /* ── Sync Now Button ── */
     .sync-now-btn {
+      position: relative;
       width: 100%;
       padding: 10px 16px;
       border: none;
@@ -358,13 +389,22 @@ export async function renderSidebarHtml(
       background: #ededec;
       color: #0c0c0a;
       margin-bottom: 16px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
+      text-align: center;
       letter-spacing: -0.01em;
       transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+    .sync-now-btn .codicon {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 14px;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .sync-now-btn .sync-now-label {
+      display: inline-block;
     }
     .sync-now-btn:hover {
       transform: translateY(-1px);
@@ -839,6 +879,11 @@ export async function renderSidebarHtml(
 
     /* ── Settings Tab ── */
     .settings-list { display: flex; flex-direction: column; gap: 8px; }
+    #destination-repo-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
     .settings-row {
       display: flex;
       align-items: center;
@@ -846,18 +891,35 @@ export async function renderSidebarHtml(
       gap: 8px;
       padding: 6px 4px;
     }
-    .settings-row-inline {
-      flex-wrap: wrap;
+    .settings-row-check {
       justify-content: flex-start;
     }
-    .settings-row-inline .settings-input {
-      width: 72px;
-      flex: 0 0 auto;
+    .settings-row-check .settings-label {
+      flex: 1;
+      min-width: 0;
+      align-items: flex-start;
     }
-    .settings-row-inline .settings-input-text {
-      width: auto;
-      min-width: 100px;
+    .settings-row-check .settings-label input[type="checkbox"] {
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    /* Narrow sidebar (default): label above full-width field */
+    .settings-row-field {
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      gap: 4px;
+    }
+    .settings-row-field .settings-label {
       flex: 0 0 auto;
+      cursor: default;
+    }
+    .settings-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      width: 100%;
     }
     .settings-label {
       font-size: 12px;
@@ -866,31 +928,37 @@ export async function renderSidebarHtml(
       align-items: center;
       gap: 8px;
       cursor: pointer;
-      flex: 1;
     }
     .settings-input {
-      width: 64px;
+      width: 100%;
+      max-width: none;
       padding: 4px 8px;
       border: 1px solid rgba(237, 236, 236, 0.1);
       border-radius: 4px;
       background: #1c1a13;
       color: #edecec;
       font-size: 12px;
+      text-align: left;
+      min-width: 0;
+    }
+    .settings-input[type="number"] {
       text-align: right;
     }
-    .settings-input-text {
-      width: 120px;
-      text-align: left;
+    .settings-controls .settings-input[type="number"] {
+      width: 72px;
+      flex: 0 0 auto;
     }
-    .settings-input-wide {
-      width: min(160px, 42vw);
+    .settings-controls .settings-input-text {
       flex: 1 1 auto;
-      max-width: 200px;
-    }
-    select.settings-input-text {
       width: auto;
-      min-width: 140px;
-      max-width: 180px;
+      min-width: 0;
+    }
+    .settings-input-text,
+    .settings-input-wide,
+    select.settings-input-text {
+      width: 100%;
+      max-width: none;
+      text-align: left;
     }
     .settings-connect-btn {
       width: 100%;
@@ -906,11 +974,49 @@ export async function renderSidebarHtml(
       padding: 0 4px 4px;
       line-height: 1.4;
     }
+    /* Wide enough sidebar: label and field on one row */
+    @media (min-width: 380px) {
+      .settings-row-field {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .settings-row-field .settings-label {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .settings-row-field > .settings-input,
+      .settings-row-field > .settings-input-text,
+      .settings-row-field > .settings-input-wide,
+      .settings-row-field > select.settings-input-text {
+        width: auto;
+        flex: 0 1 auto;
+        max-width: 58%;
+      }
+      .settings-row-field > .settings-input[type="number"] {
+        width: 72px;
+        flex: 0 0 auto;
+        max-width: none;
+      }
+      .settings-row-field > .settings-controls {
+        width: auto;
+        flex: 0 1 auto;
+        max-width: 58%;
+      }
+      .settings-row-inline {
+        flex-wrap: nowrap;
+      }
+    }
     .chat-sync-disabled {
       color: rgba(237, 236, 236, 0.32);
     }
     .chat-sync-status {
       margin-bottom: 12px;
+    }
+    .chat-sync-loading {
+      color: rgba(237, 236, 236, 0.45);
+      font-style: italic;
     }
     input[type="checkbox"] {
       accent-color: #34d399;
@@ -956,9 +1062,9 @@ export async function renderSidebarHtml(
     </div>
 
     <div class="chats-section">
-      <div class="chats-section-header">Bundle files</div>
+      <div class="chats-section-header">${escapeHtml(t("bundleFiles"))}</div>
       <div id="chats-bundles" class="chats-list">
-        <div class="empty-state">Loading\u2026</div>
+        <div class="empty-state">${escapeHtml(t("loading"))}</div>
       </div>
     </div>
   </div>
@@ -968,4 +1074,41 @@ export async function renderSidebarHtml(
   <script src="${scriptUri}"></script>
 </body>
 </html>`;
+}
+
+export function renderSidebarShellHtml(
+  context: vscode.ExtensionContext,
+  webview: vscode.Webview
+): string {
+  const settingsValues = readSettingsValues();
+  return assembleSidebarDocument({
+    webview,
+    context,
+    syncPaneHtml: renderSyncPane(buildSyncTabStateShell(context)),
+    settingsPaneHtml: renderSettingsPane(settingsValues),
+    htmlLang: settingsValues["ui.language"] === "it" ? "it" : "en",
+  });
+}
+
+export async function renderSyncPaneHtml(
+  context: vscode.ExtensionContext,
+  options: BuildSyncTabStateOptions = {}
+): Promise<string> {
+  const state = await buildSyncTabState(context, options);
+  return renderSyncPane(state);
+}
+
+export async function renderSidebarHtml(
+  context: vscode.ExtensionContext,
+  webview: vscode.Webview
+): Promise<string> {
+  const state = await buildSyncTabState(context, { deferHeavyMetrics: true });
+  const settingsValues = readSettingsValues();
+  return assembleSidebarDocument({
+    webview,
+    context,
+    syncPaneHtml: renderSyncPane(state),
+    settingsPaneHtml: renderSettingsPane(settingsValues),
+    htmlLang: settingsValues["ui.language"] === "it" ? "it" : "en",
+  });
 }

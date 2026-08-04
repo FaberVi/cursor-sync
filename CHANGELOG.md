@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- Sidebar opens instantly with a shell UI instead of staying blank while chat discovery and remote gist/repo fetches complete.
+- Clicking a file in sync history opens it in the editor (when it still exists on disk).
+- Settings tab stacks label above field when the sidebar is narrower than ~380px, so destination/interval controls are no longer cramped or truncated.
+
+### Changed
+- Expanded Italian UI strings across the sidebar webview: chat actions, relative times, bundle/import lists, backup tier labels, pull policy options, and toast messages.
+
 ## v0.11.0
 
 ### Added

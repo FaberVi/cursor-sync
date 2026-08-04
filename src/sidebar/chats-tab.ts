@@ -3,6 +3,7 @@ import type { BundleDiscoveryEntry } from "./bundle-discovery.js";
 import { listLocalBundles } from "./bundle-discovery.js";
 import { listImports } from "./import-history.js";
 import type { ChatImportHistoryEntry } from "./import-history.js";
+import { t } from "./i18n.js";
 import {
   discoverConversationsGroupedByProject,
   discoveredToExportRows,
@@ -113,7 +114,7 @@ export async function openConversation(
 ): Promise<void> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
-    void vscode.window.showWarningMessage("Open a workspace folder first.");
+    void vscode.window.showWarningMessage(t("openWorkspaceFirst"));
     return;
   }
   const folder = folders[0];
@@ -129,12 +130,13 @@ export async function openConversation(
     openChatTierWarningMessage,
   } = await import("../chat-backup-eligibility.js");
   if (shouldWarnBeforeOpeningChat(tier)) {
+    const openAnyway = t("openAnyway");
     const proceed = await vscode.window.showWarningMessage(
       openChatTierWarningMessage(tier!),
-      "Open anyway",
-      "Cancel"
+      openAnyway,
+      t("cancel")
     );
-    if (proceed !== "Open anyway") {
+    if (proceed !== openAnyway) {
       return;
     }
   }
@@ -160,14 +162,12 @@ export async function openConversation(
     options.projectKey
   );
   if (opened) {
-    void vscode.window.showInformationMessage(
-      "Opened transcript file. Reload Window if the native composer view stays empty."
-    );
+    void vscode.window.showInformationMessage(t("openedTranscriptReload"));
     return;
   }
 
   void vscode.window.showWarningMessage(
-    `Could not open chat ${conversationId}. No composer handle or transcript file found on disk.`
+    t("couldNotOpenChatDisk", { id: conversationId })
   );
 }
 

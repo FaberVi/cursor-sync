@@ -1,10 +1,14 @@
 import * as vscode from "vscode";
+import * as fs from "node:fs/promises";
 import { clearImports } from "./import-history.js";
 import { emitSyncActionsIdle } from "../sync-progress-events.js";
 import {
   isComposerConversationId,
   isSafePathSegment,
 } from "../composer-id.js";
+import { t } from "./i18n.js";
+import { resolveSyncRoots } from "../paths.js";
+import { syncKeyToAbsolutePath } from "../sync-local-deletes.js";
 
 export type SidebarMessage =
   | {
@@ -82,17 +86,17 @@ function assertSafeChatIds(msg: {
 }): string | undefined {
   if (msg.conversationId !== undefined && msg.conversationId !== "") {
     if (!isComposerConversationId(msg.conversationId)) {
-      return "Invalid conversation id";
+      return t("invalidConversationId");
     }
   }
   if (msg.workspaceKey !== undefined && msg.workspaceKey !== "") {
     if (!isSafePathSegment(msg.workspaceKey)) {
-      return "Invalid workspace key";
+      return t("invalidWorkspaceKey");
     }
   }
   if (msg.projectKey !== undefined && msg.projectKey !== "") {
     if (!isSafePathSegment(msg.projectKey)) {
-      return "Invalid project key";
+      return t("invalidProjectKey");
     }
   }
   return undefined;
@@ -151,7 +155,7 @@ export async function dispatchSidebarMessage(
     }
     case "chats:loadGroup": {
       if (typeof msg.projectKey !== "string" || !isSafePathSegment(msg.projectKey)) {
-        void vscode.window.showWarningMessage("Invalid project key.");
+        void vscode.window.showWarningMessage(t("invalidProjectKey"));
         break;
       }
       const { loadConversationGroupRows } = await import("./chats-tab.js");
@@ -198,9 +202,9 @@ export async function dispatchSidebarMessage(
       try {
         const folders = vscode.workspace.workspaceFolders;
         if (!conversationId) {
-          void vscode.window.showWarningMessage("Missing conversation id for Open.");
+          void vscode.window.showWarningMessage(t("missingConversationIdOpen"));
         } else if (!folders || folders.length === 0) {
-          void vscode.window.showWarningMessage("Open a workspace folder first.");
+          void vscode.window.showWarningMessage(t("openWorkspaceFirst"));
         } else {
           try {
             const { openConversation } = await import("./chats-tab.js");
@@ -210,7 +214,7 @@ export async function dispatchSidebarMessage(
               backupTier: msg.backupTier,
             });
           } catch (err) {
-            void vscode.window.showErrorMessage(`Could not open chat: ${String(err)}`);
+            void vscode.window.showErrorMessage(t("couldNotOpenChat", { error: String(err) }));
           }
         }
       } finally {
@@ -226,7 +230,7 @@ export async function dispatchSidebarMessage(
     case "chats:revealFiles":
     case "chats:revealTranscripts": {
       if (!msg.conversationId) {
-        void vscode.window.showWarningMessage("Missing conversation id for Files.");
+        void vscode.window.showWarningMessage(t("missingConversationIdFiles"));
         break;
       }
       const idError = assertSafeChatIds(msg);
@@ -238,7 +242,7 @@ export async function dispatchSidebarMessage(
         const { revealConversationFiles } = await import("./chats-tab.js");
         await revealConversationFiles(msg.conversationId, msg.workspaceKey, msg.projectKey);
       } catch (err) {
-        void vscode.window.showErrorMessage(`Could not reveal files: ${String(err)}`);
+        void vscode.window.showErrorMessage(t("couldNotRevealFiles", { error: String(err) }));
       }
       break;
     }
@@ -251,28 +255,59 @@ export async function dispatchSidebarMessage(
       const history = await loadSyncHistory(context);
       const entry = history.find((e) => e.timestamp === msg.timestamp);
       if (!entry) {
-        void vscode.window.showWarningMessage("History entry not found.");
+        void vscode.window.showWarningMessage(t("historyEntryNotFound"));
         break;
       }
       const files = entry.files ?? [];
       if (files.length === 0) {
-        void vscode.window.showInformationMessage(
-          "File list was not recorded for this entry. New syncs will keep the list."
+        void vscode.window.showInformationMessage(t("historyNoFileListRecorded"));
+        break;
+      }
+      const dirLabel = entry.direction === "push" ? t("push") : t("pull");
+      const countLabel =
+        typeof entry.totalFileCount === "number" && entry.totalFileCount > 0
+          ? t("historyFilesCountRatio", {
+              changed: files.length,
+              total: entry.totalFileCount,
+            })
+          : t("historyFiles", { n: files.length });
+      const roots = resolveSyncRoots();
+      const picked = await vscode.window.showQuickPick(
+        files.map((syncKey) => {
+          const absolutePath = syncKeyToAbsolutePath(syncKey, roots);
+          return {
+            label: syncKey,
+            description: absolutePath ?? syncKey,
+            syncKey,
+            absolutePath,
+          };
+        }),
+        {
+          title: `${dirLabel} · ${countLabel}`,
+          placeHolder: t("historyFilesPlaceholder"),
+          matchOnDescription: true,
+        }
+      );
+      if (!picked) {
+        break;
+      }
+      if (!picked.absolutePath) {
+        void vscode.window.showWarningMessage(
+          t("historyFileNotFound", { path: picked.syncKey })
         );
         break;
       }
-      const dirLabel = entry.direction === "push" ? "Push" : "Pull";
-      const countLabel =
-        typeof entry.totalFileCount === "number" && entry.totalFileCount > 0
-          ? `${files.length} / ${entry.totalFileCount} files`
-          : `${files.length} file${files.length !== 1 ? "s" : ""}`;
-      await vscode.window.showQuickPick(
-        files.map((label) => ({ label })),
-        {
-          title: `${dirLabel} · ${countLabel}`,
-          placeHolder: "Files involved in this sync",
-        }
-      );
+      try {
+        await fs.access(picked.absolutePath);
+        await vscode.commands.executeCommand(
+          "vscode.open",
+          vscode.Uri.file(picked.absolutePath)
+        );
+      } catch {
+        void vscode.window.showWarningMessage(
+          t("historyFileNotFound", { path: picked.syncKey })
+        );
+      }
       break;
     }
     case "history:page": {

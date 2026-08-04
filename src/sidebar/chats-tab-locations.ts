@@ -16,6 +16,7 @@ import {
   isComposerConversationId,
   isSafePathSegment,
 } from "../composer-id.js";
+import { t } from "./i18n.js";
 
 export interface ConversationFileTargets {
   transcriptDir?: string;
@@ -238,15 +239,15 @@ export async function revealConversationFiles(
   projectKeyHint?: string
 ): Promise<void> {
   if (!isComposerConversationId(conversationId)) {
-    void vscode.window.showWarningMessage("Invalid conversation id.");
+    void vscode.window.showWarningMessage(t("invalidConversationId"));
     return;
   }
   if (workspaceKeyHint && !isSafePathSegment(workspaceKeyHint)) {
-    void vscode.window.showWarningMessage("Invalid workspace key.");
+    void vscode.window.showWarningMessage(t("invalidWorkspaceKey"));
     return;
   }
   if (projectKeyHint && !isSafePathSegment(projectKeyHint)) {
-    void vscode.window.showWarningMessage("Invalid project key.");
+    void vscode.window.showWarningMessage(t("invalidProjectKey"));
     return;
   }
 
@@ -274,17 +275,13 @@ export async function revealConversationFiles(
 
   if (targets.agentTranscriptsDir && (await pathExists(targets.agentTranscriptsDir))) {
     await revealFsPath(targets.agentTranscriptsDir);
-    void vscode.window.showInformationMessage(
-      "This chat has no per-conversation folder yet (header-only in Composer state). Opened the project agent-transcripts folder."
-    );
+    void vscode.window.showInformationMessage(t("revealHeaderOnlyAgentTranscripts"));
     return;
   }
 
   if (targets.projectDir && (await pathExists(targets.projectDir))) {
     await revealFsPath(targets.projectDir);
-    void vscode.window.showInformationMessage(
-      "This chat has no transcript files on disk yet. Opened the Cursor project folder."
-    );
+    void vscode.window.showInformationMessage(t("revealNoTranscriptProject"));
     return;
   }
 
@@ -292,16 +289,12 @@ export async function revealConversationFiles(
     const paths = projectPaths(projectKeyHint);
     if (await pathExists(paths.agentTranscriptsDir)) {
       await revealFsPath(paths.agentTranscriptsDir);
-      void vscode.window.showInformationMessage(
-        "This chat exists only in Composer state (no jsonl on disk). Opened agent-transcripts for this project."
-      );
+      void vscode.window.showInformationMessage(t("revealComposerOnlyAgentTranscripts"));
       return;
     }
     if (await pathExists(paths.projectDir)) {
       await revealFsPath(paths.projectDir);
-      void vscode.window.showInformationMessage(
-        "This chat exists only in Composer state (no jsonl on disk). Opened the Cursor project folder."
-      );
+      void vscode.window.showInformationMessage(t("revealComposerOnlyProject"));
       return;
     }
   }
@@ -323,6 +316,6 @@ export async function revealConversationFiles(
   }
 
   void vscode.window.showWarningMessage(
-    `No on-disk folder found for conversation ${conversationId}. It may exist only in Composer state (header) without transcript files.`
+    t("revealNoDiskFolder", { id: conversationId })
   );
 }

@@ -1,5 +1,5 @@
 import type { SyncHistoryEntry } from "../types.js";
-import { t } from "./i18n.js";
+import { formatRelativeTime, t } from "./i18n.js";
 
 /** Visible sync-history rows per page in the sidebar. */
 export const HISTORY_PAGE_SIZE = 5;
@@ -21,38 +21,12 @@ export interface SyncTabState {
   chatsSyncEnabled: boolean;
   localChatCount: number;
   remoteChatCount: number | undefined;
+  /** True while local/remote chat counts are still being computed. */
+  chatCountsLoading?: boolean;
 }
 
 export function relativeTime(isoString: string): string {
-  const now = Date.now();
-  const then = new Date(isoString).getTime();
-  const diffMs = now - then;
-
-  if (diffMs < 0) {
-    return "just now";
-  }
-
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) {
-    return "just now";
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours}h ago`;
-  }
-
-  const days = Math.floor(hours / 24);
-  if (days < 30) {
-    return `${days}d ago`;
-  }
-
-  return new Date(isoString).toLocaleDateString();
+  return formatRelativeTime(isoString);
 }
 
 export function escapeHtml(text: string): string {
@@ -98,7 +72,7 @@ export function formatHistoryFileDetail(entry: {
   error?: string;
 }): string {
   if (!entry.success) {
-    return escapeHtml(entry.error ?? "Failed");
+    return escapeHtml(entry.error ?? t("syncFailed"));
   }
   if (
     typeof entry.totalFileCount === "number" &&
@@ -219,7 +193,9 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
 
   const historyHtml = renderHistorySection(state.history, historyPage);
 
-  const chatStatusLine = state.chatsSyncEnabled
+  const chatStatusLine = state.chatCountsLoading
+    ? `<span class="chat-sync-loading">${escapeHtml(t("loading"))}</span>`
+    : state.chatsSyncEnabled
     ? state.remoteChatCount !== undefined
       ? escapeHtml(
           t("chatsInBackup", {
@@ -238,7 +214,7 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
     <div class="status-info">
       <div class="status-header">
         <span class="status-label">${escapeHtml(statusLabel)}</span>
-        <span class="status-version" title="Extension version">v${escapeHtml(state.extensionVersion)}</span>
+        <span class="status-version" title="${escapeHtml(t("extensionVersionTitle"))}">v${escapeHtml(state.extensionVersion)}</span>
       </div>
       <div class="status-meta">
         <span>${escapeHtml(lastSyncText)}</span>
@@ -260,7 +236,7 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
         ${
           state.destinationKind
             ? `<span class="dest-badge dest-badge-${state.destinationKind}">${
-                state.destinationKind === "repo" ? "Repo" : "Gist"
+                state.destinationKind === "repo" ? t("destBadgeRepo") : t("destBadgeGist")
               }</span>`
             : ""
         }
@@ -273,8 +249,8 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
   <div class="file-count chat-sync-status">${chatStatusLine}</div>
 
   <button class="sync-now-btn" data-command="syncNow">
-    <span class="codicon codicon-sync"></span>
-    ${escapeHtml(t("syncNow"))}
+    <span class="codicon codicon-sync" aria-hidden="true"></span>
+    <span class="sync-now-label">${escapeHtml(t("syncNow"))}</span>
   </button>
 
   <div class="section">

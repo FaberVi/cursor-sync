@@ -13,8 +13,14 @@
 
   var i18n = readI18n();
 
-  function tr(key, fallback) {
-    return i18n[key] || fallback || key;
+  function tr(key, fallback, vars) {
+    var text = i18n[key] || fallback || key;
+    if (vars) {
+      Object.keys(vars).forEach(function (name) {
+        text = text.replace(new RegExp("\\{" + name + "\\}", "g"), String(vars[name]));
+      });
+    }
+    return text;
   }
 
   function formatChatsCount(n) {
@@ -88,15 +94,15 @@
 
   function relTime(iso) {
     var diffMs = Date.now() - new Date(iso).getTime();
-    if (diffMs < 0) return "just now";
+    if (diffMs < 0) return tr("timeJustNow", "just now");
     var s = Math.floor(diffMs / 1000);
-    if (s < 60) return "just now";
+    if (s < 60) return tr("timeJustNow", "just now");
     var m = Math.floor(s / 60);
-    if (m < 60) return m + "m ago";
+    if (m < 60) return tr("timeMinutesAgo", "{n}m ago", { n: m });
     var h = Math.floor(m / 60);
-    if (h < 24) return h + "h ago";
+    if (h < 24) return tr("timeHoursAgo", "{n}h ago", { n: h });
     var d = Math.floor(h / 24);
-    if (d < 30) return d + "d ago";
+    if (d < 30) return tr("timeDaysAgo", "{n}d ago", { n: d });
     return new Date(iso).toLocaleDateString();
   }
 
@@ -141,7 +147,7 @@
     var isOpening = groupedChatsState.openingConversationId === r.conversationId;
     var openBtnClass = "chat-action-btn" + (isOpening ? " is-loading" : "");
     var openDisabled = isOpening ? " disabled" : "";
-    var openLabel = isOpening ? "Opening\u2026" : "Open";
+    var openLabel = isOpening ? tr("opening", "Opening\u2026") : tr("open", "Open");
     var tierAttr = r.backupTier
       ? ' data-backup-tier="' + escHtml(r.backupTier) + '"'
       : "";
@@ -183,7 +189,9 @@
           '"' +
           wsAttr +
           projAttr +
-          ">Files</button>"
+          ">" +
+          escHtml(tr("files", "Files")) +
+          "</button>"
         : "") +
       "</div>" +
       "</div>"
@@ -213,7 +221,7 @@
         var currentClass = g.isCurrentWorkspace ? " current" : "";
         var bodyClass = expanded ? "chat-group-body" : "chat-group-body collapsed";
         var chevron = expanded ? "\u25BE" : "\u25B8";
-        var groupLabel = g.label || g.projectKey || "Unknown project";
+        var groupLabel = g.label || g.projectKey || tr("unknownProject", "Unknown project");
         var labelLine = groupLabel;
         if (g.pathHint && g.pathHint !== groupLabel) {
           labelLine = groupLabel + " \u00b7 " + g.pathHint;
@@ -235,7 +243,9 @@
               escHtml(g.projectKey) +
               '"' +
               (page <= 0 ? " disabled" : "") +
-              ">Prev</button>" +
+              ">" +
+              escHtml(tr("prev", "Prev")) +
+              "</button>" +
               '<span class="pager-label">' +
               (page + 1) +
               " / " +
@@ -245,7 +255,9 @@
               escHtml(g.projectKey) +
               '"' +
               (page >= totalPages - 1 ? " disabled" : "") +
-              ">Next</button>" +
+              ">" +
+              escHtml(tr("next", "Next")) +
+              "</button>" +
               "</div></div>"
             : "";
         return (
@@ -535,17 +547,19 @@
       el2.innerHTML = msg.rows
         .map(function (r) {
           var warnings =
-            r.warnings > 0 ? " \u00b7 " + r.warnings + " warn" : "";
+            r.warnings > 0
+              ? " \u00b7 " + tr("warnCount", "{n} warn", { n: r.warnings })
+              : "";
           var fidelity =
             typeof r.schemaVersion === "number"
               ? " \u00b7 v" + r.schemaVersion
               : "";
           var tools =
             typeof r.toolBubbleCount === "number"
-              ? " \u00b7 " + r.toolBubbleCount + " tool bubbles"
+              ? " \u00b7 " + tr("toolBubblesCount", "{n} tool bubbles", { n: r.toolBubbleCount })
               : "";
           var layer4 = r.textOnlyLayer4
-            ? ' <span class="fidelity-warn">text-only L4</span>'
+            ? ' <span class="fidelity-warn">' + escHtml(tr("textOnlyL4Badge", "text-only L4")) + "</span>"
             : "";
           return (
             '<div class="chat-row">' +
@@ -556,8 +570,7 @@
             '<div class="chat-row-meta">' +
             relTime(r.timestamp) +
             " \u00b7 " +
-            r.transcriptsWritten +
-            " transcripts" +
+            tr("transcriptsWritten", "{n} transcripts", { n: r.transcriptsWritten }) +
             fidelity +
             tools +
             layer4 +
@@ -574,7 +587,7 @@
       var el3 = document.getElementById("chats-bundles");
       if (!el3) return;
       if (!msg.entries || msg.entries.length === 0) {
-        el3.innerHTML = '<div class="empty-state">No bundle files found</div>';
+        el3.innerHTML = '<div class="empty-state">' + escHtml(tr("noBundleFiles", "No bundle files found")) + '</div>';
         return;
       }
       el3.innerHTML = msg.entries
@@ -597,7 +610,9 @@
             '<div class="chat-row-actions">' +
             '<button class="chat-action-btn" data-command="chats:importBundle" data-bundle-path="' +
             escHtml(e.bundlePath) +
-            '">Import</button>' +
+            '">' +
+            escHtml(tr("import", "Import")) +
+            "</button>" +
             "</div>" +
             "</div>"
           );
@@ -621,16 +636,23 @@
         if (ev2.fidelity && ev2.fidelity.textOnlyLayer4) {
           detail =
             detail ||
-            "text-only Layer 4 (no diskKvSnapshot); tool/MCP UI may not match source";
+            tr(
+              "textOnlyL4Detail",
+              "text-only Layer 4 (no diskKvSnapshot); tool/MCP UI may not match source"
+            );
         }
         var warnClass =
           ev2.fidelity && ev2.fidelity.textOnlyLayer4 ? " fidelity-warn" : "";
+        var phaseText = tr("phasePrefix", "Phase {phase}", { phase: ev2.phase || "" });
+        if (stepLabel) {
+          phaseText += " \u00b7 " + stepLabel;
+        }
         el4.innerHTML =
           '<div class="progress-card' +
           warnClass +
           '">' +
           '<div class="progress-phase">' +
-          escHtml("Phase " + (ev2.phase || "") + (stepLabel ? " · " + stepLabel : "")) +
+          escHtml(phaseText) +
           "</div>" +
           '<div class="progress-message">' +
           escHtml(detail) +
@@ -650,7 +672,7 @@
     }
 
     if (msg.type === "settings:error") {
-      var errText = msg.message ? String(msg.message) : "Invalid setting";
+      var errText = msg.message ? String(msg.message) : tr("invalidSetting", "Invalid setting");
       if (typeof console !== "undefined" && console.warn) {
         console.warn("[cursor-sync settings]", errText);
       }
