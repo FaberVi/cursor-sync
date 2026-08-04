@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { renderSidebarHtml, renderSyncPaneHtml } from "./html.js";
-import { dispatchSidebarMessage, type SidebarMessage } from "./messages.js";
+import { dispatchSidebarMessage } from "./messages.js";
 import { onChatImportProgress } from "../chat-progress-events.js";
 import { onSyncProgress } from "../sync-progress-events.js";
 let sidebarProviderInstance: SidebarProvider | undefined;
@@ -30,7 +30,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this._view = webviewView;
     webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.onDidReceiveMessage((message: SidebarMessage) => {
+    webviewView.webview.onDidReceiveMessage((message: unknown) => {
       void dispatchSidebarMessage(this.context, webviewView.webview, message);
     });
     this._progressSub = onChatImportProgress((event) => {

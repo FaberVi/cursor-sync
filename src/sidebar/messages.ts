@@ -1,6 +1,10 @@
 import * as vscode from "vscode";
 import { clearImports } from "./import-history.js";
 import { emitSyncActionsIdle } from "../sync-progress-events.js";
+import {
+  isComposerConversationId,
+  isSafePathSegment,
+} from "../composer-id.js";
 
 export type SidebarMessage =
   | {
@@ -46,11 +50,70 @@ export type SidebarMessage =
   | { command: "settings:get" }
   | { command: "settings:set"; key: string; value: unknown };
 
+const KNOWN_COMMANDS = new Set<string>([
+  "syncNow",
+  "push",
+  "pull",
+  "export",
+  "import",
+  "configure",
+  "chats:listLocal",
+  "chats:loadGroup",
+  "chats:listImports",
+  "chats:listBundles",
+  "chats:export",
+  "chats:exportGist",
+  "chats:importBundle",
+  "chats:open",
+  "chats:revealFiles",
+  "chats:reactivate",
+  "chats:revealTranscripts",
+  "chats:clearHistory",
+  "history:details",
+  "history:page",
+  "settings:get",
+  "settings:set",
+]);
+
+function assertSafeChatIds(msg: {
+  conversationId?: string;
+  workspaceKey?: string;
+  projectKey?: string;
+}): string | undefined {
+  if (msg.conversationId !== undefined && msg.conversationId !== "") {
+    if (!isComposerConversationId(msg.conversationId)) {
+      return "Invalid conversation id";
+    }
+  }
+  if (msg.workspaceKey !== undefined && msg.workspaceKey !== "") {
+    if (!isSafePathSegment(msg.workspaceKey)) {
+      return "Invalid workspace key";
+    }
+  }
+  if (msg.projectKey !== undefined && msg.projectKey !== "") {
+    if (!isSafePathSegment(msg.projectKey)) {
+      return "Invalid project key";
+    }
+  }
+  return undefined;
+}
+
 export async function dispatchSidebarMessage(
   context: vscode.ExtensionContext,
   webview: vscode.Webview,
-  msg: SidebarMessage
+  raw: unknown
 ): Promise<void> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return;
+  }
+  const msg = raw as SidebarMessage;
+  if (typeof (msg as { command?: unknown }).command !== "string") {
+    return;
+  }
+  if (!KNOWN_COMMANDS.has(msg.command)) {
+    return;
+  }
+
   switch (msg.command) {
     case "syncNow":
     case "push":
@@ -87,6 +150,10 @@ export async function dispatchSidebarMessage(
       break;
     }
     case "chats:loadGroup": {
+      if (typeof msg.projectKey !== "string" || !isSafePathSegment(msg.projectKey)) {
+        void vscode.window.showWarningMessage("Invalid project key.");
+        break;
+      }
       const { loadConversationGroupRows } = await import("./chats-tab.js");
       const rows = await loadConversationGroupRows(msg.projectKey);
       await webview.postMessage({
@@ -123,6 +190,11 @@ export async function dispatchSidebarMessage(
     case "chats:open":
     case "chats:reactivate": {
       const conversationId = msg.conversationId;
+      const idError = assertSafeChatIds(msg);
+      if (idError) {
+        void vscode.window.showWarningMessage(idError);
+        break;
+      }
       try {
         const folders = vscode.workspace.workspaceFolders;
         if (!conversationId) {
@@ -142,7 +214,7 @@ export async function dispatchSidebarMessage(
           }
         }
       } finally {
-        if (conversationId) {
+        if (conversationId && isComposerConversationId(conversationId)) {
           await webview.postMessage({
             type: "chats:openComplete",
             conversationId,
@@ -155,6 +227,11 @@ export async function dispatchSidebarMessage(
     case "chats:revealTranscripts": {
       if (!msg.conversationId) {
         void vscode.window.showWarningMessage("Missing conversation id for Files.");
+        break;
+      }
+      const idError = assertSafeChatIds(msg);
+      if (idError) {
+        void vscode.window.showWarningMessage(idError);
         break;
       }
       try {
@@ -215,7 +292,14 @@ export async function dispatchSidebarMessage(
     }
     case "settings:set": {
       const { updateSettingValue, readSettingsValues } = await import("./settings-tab.js");
-      await updateSettingValue(msg.key, msg.value);
+      try {
+        await updateSettingValue(msg.key, msg.value);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await webview.postMessage({ type: "settings:error", message });
+        await webview.postMessage({ type: "settings:current", values: readSettingsValues() });
+        break;
+      }
       if (msg.key === "ui.language") {
         const { rebuildSidebar } = await import("./index.js");
         rebuildSidebar();

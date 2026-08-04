@@ -75,12 +75,88 @@ export async function updateSettingValue(
   key: string,
   value: unknown
 ): Promise<void> {
-  const cfg = vscode.workspace.getConfiguration("cursorSync");
-  if (key === "destination.path" && typeof value === "string") {
-    const { normalizeBasePath } = await import("../remote/destination.js");
-    value = normalizeBasePath(value);
+  if (!(SIDEBAR_SETTING_KEYS as readonly string[]).includes(key)) {
+    throw new Error(`Setting key not allowed from sidebar: ${key}`);
   }
-  await cfg.update(key, value, vscode.ConfigurationTarget.Global);
+  const settingKey = key as SidebarSettingKey;
+  const cfg = vscode.workspace.getConfiguration("cursorSync");
+
+  let next: boolean | number | string = value as boolean | number | string;
+  switch (settingKey) {
+    case "ui.language":
+      if (value !== "en" && value !== "it") {
+        throw new Error("ui.language must be en or it");
+      }
+      next = value;
+      break;
+    case "schedule.enabled":
+    case "chats.syncEnabled":
+    case "chats.syncOnlyFullBackups":
+    case "chats.pullUpdates":
+    case "chatImport.activateDefault":
+    case "chatImport.activateStrict":
+    case "chatImport.useProtobufHydration":
+    case "chatImport.useIdeHydration":
+    case "chatImport.strictDiskGates":
+    case "transcripts.autoReloadAfterImport":
+      if (typeof value !== "boolean") {
+        throw new Error(`${settingKey} must be a boolean`);
+      }
+      next = value;
+      break;
+    case "schedule.interval":
+    case "chatImport.bridgeWaitResultSeconds":
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        throw new Error(`${settingKey} must be a non-negative number`);
+      }
+      next = value;
+      break;
+    case "schedule.intervalUnit":
+      if (value !== "seconds" && value !== "minutes") {
+        throw new Error("schedule.intervalUnit must be seconds or minutes");
+      }
+      next = value;
+      break;
+    case "destination.type":
+      if (value !== "gist" && value !== "repo") {
+        throw new Error("destination.type must be gist or repo");
+      }
+      next = value;
+      break;
+    case "destination.repo":
+    case "destination.branch":
+    case "destination.path":
+      if (typeof value !== "string") {
+        throw new Error(`${settingKey} must be a string`);
+      }
+      next = value;
+      if (settingKey === "destination.path") {
+        const { normalizeBasePath } = await import("../remote/destination.js");
+        next = normalizeBasePath(value);
+      }
+      break;
+    case "chatImport.pythonPath":
+      throw new Error(
+        "chatImport.pythonPath cannot be changed from the sidebar; set it in Cursor Settings (cursorSync.chatImport.pythonPath)"
+      );
+    case "chats.pullUpdatePolicy":
+      if (
+        value !== "skip" &&
+        value !== "remoteWins" &&
+        value !== "newerWins" &&
+        value !== "ask"
+      ) {
+        throw new Error("chats.pullUpdatePolicy must be skip|remoteWins|newerWins|ask");
+      }
+      next = value;
+      break;
+    default: {
+      const _exhaustive: never = settingKey;
+      throw new Error(`Unhandled setting key: ${_exhaustive}`);
+    }
+  }
+
+  await cfg.update(settingKey, next, vscode.ConfigurationTarget.Global);
 }
 
 export function renderSettingsPane(values: SettingsTabValues): string {
@@ -203,8 +279,9 @@ export function renderSettingsPane(values: SettingsTabValues): string {
       ${checkbox("transcripts.autoReloadAfterImport", t("autoReloadAfterImport"), Boolean(values["transcripts.autoReloadAfterImport"]))}
       <div class="settings-row">
         <label class="settings-label" for="chatImport.pythonPath">${escapeHtml(t("pythonPath"))}</label>
-        <input type="text" id="chatImport.pythonPath" data-setting-key="chatImport.pythonPath" value="${escapeHtml(String(values["chatImport.pythonPath"]))}" class="settings-input settings-input-text" />
+        <input type="text" id="chatImport.pythonPath" data-setting-key="chatImport.pythonPath" value="${escapeHtml(String(values["chatImport.pythonPath"]))}" class="settings-input settings-input-text" readonly disabled />
       </div>
+      <div class="settings-hint">Set <code>cursorSync.chatImport.pythonPath</code> in Cursor Settings (not editable here).</div>
     </div>
   </div>
 </div>`;

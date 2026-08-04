@@ -649,6 +649,14 @@
       if (el5) el5.innerHTML = '<div class="empty-state">' + escHtml(tr("noImportHistory", "No import history")) + '</div>';
     }
 
+    if (msg.type === "settings:error") {
+      var errText = msg.message ? String(msg.message) : "Invalid setting";
+      if (typeof console !== "undefined" && console.warn) {
+        console.warn("[cursor-sync settings]", errText);
+      }
+      return;
+    }
+
     if (msg.type === "settings:current") {
       var vals = msg.values;
       if (!vals) return;

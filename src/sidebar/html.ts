@@ -107,11 +107,19 @@ export async function renderSidebarHtml(
     vscode.Uri.joinPath(context.extensionUri, "resources", "sidebar", "webview.js")
   );
   const htmlLang = settingsValues["ui.language"] === "it" ? "it" : "en";
+  const csp = [
+    `default-src 'none'`,
+    `style-src ${webview.cspSource} 'unsafe-inline'`,
+    `script-src ${webview.cspSource}`,
+    `font-src ${webview.cspSource}`,
+    `img-src ${webview.cspSource} data:`,
+  ].join("; ");
 
   return `<!DOCTYPE html>
 <html lang="${htmlLang}">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -175,7 +183,7 @@ export async function renderSidebarHtml(
       padding: 16px;
       margin-bottom: 16px;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 14px;
       border: 1px solid rgba(237, 236, 236, 0.06);
       background: #1c1a13;
@@ -259,14 +267,19 @@ export async function renderSidebarHtml(
     }
 
     .status-info { flex: 1; min-width: 0; }
+    .status-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
     .status-version {
       flex-shrink: 0;
-      align-self: flex-start;
       font-size: 11px;
       font-variant-numeric: tabular-nums;
       letter-spacing: 0.02em;
       color: rgba(237, 236, 236, 0.45);
-      padding: 2px 0 0 8px;
       user-select: text;
     }
     .remote-row {
@@ -306,10 +319,13 @@ export async function renderSidebarHtml(
       background: rgba(251, 191, 36, 0.08);
     }
     .status-label {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       font-weight: 600;
       font-size: 14px;
-      display: block;
-      margin-bottom: 3px;
       letter-spacing: -0.01em;
     }
     .status-meta {
@@ -319,13 +335,15 @@ export async function renderSidebarHtml(
       align-items: center;
       gap: 6px;
       flex-wrap: wrap;
+      line-height: 1.35;
     }
     .status-meta .codicon { font-size: 11px; color: rgba(237, 236, 236, 0.22); }
 
     .file-count {
       font-size: 11px;
       color: rgba(237, 236, 236, 0.22);
-      margin-top: 3px;
+      margin-top: 4px;
+      line-height: 1.35;
     }
 
     /* ── Sync Now Button ── */
