@@ -1,4 +1,5 @@
 import type { ApiResult, FailureCategory } from "../types.js";
+import { clampRetryAfterSeconds } from "../retry.js";
 
 export const GITHUB_API = "https://api.github.com";
 export const USER_AGENT = "cursor-sync-extension";
@@ -49,7 +50,9 @@ export async function githubRequest<T>(
         category: "RATE_LIMITED",
         message: "GitHub API rate limit exceeded",
         statusCode: 429,
-        retryAfter: retryAfterHeader ? parseInt(retryAfterHeader, 10) : 60,
+        retryAfter: clampRetryAfterSeconds(
+          retryAfterHeader ? parseInt(retryAfterHeader, 10) : 60
+        ) ?? 60,
       },
     };
   }

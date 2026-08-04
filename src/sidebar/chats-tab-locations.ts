@@ -11,6 +11,11 @@ import {
   resolveProjectsRoot,
 } from "../transcripts-discovery.js";
 import { findStoreDbForConversation, resolveChatsRoot } from "../transcripts-cursor-paths.js";
+import {
+  assertPathUnderRoot,
+  isComposerConversationId,
+  isSafePathSegment,
+} from "../composer-id.js";
 
 export interface ConversationFileTargets {
   transcriptDir?: string;
@@ -23,6 +28,8 @@ export interface ConversationFileTargets {
 
 const TRANSCRIPT_SCAN_MAX_BYTES = 256 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
+
+export { isComposerConversationId } from "../composer-id.js";
 
 function projectPaths(projectKey: string): {
   projectDir: string;
@@ -40,6 +47,16 @@ export async function resolveConversationFileTargets(
   workspaceKeyHint?: string,
   projectKeyHint?: string
 ): Promise<ConversationFileTargets> {
+  if (!isComposerConversationId(conversationId)) {
+    return {};
+  }
+  if (workspaceKeyHint && !isSafePathSegment(workspaceKeyHint)) {
+    return {};
+  }
+  if (projectKeyHint && !isSafePathSegment(projectKeyHint)) {
+    return {};
+  }
+
   const projectsRoot = resolveProjectsRoot();
   const projects = await discoverProjects(projectsRoot);
   let orderedProjects = projects;
@@ -58,9 +75,14 @@ export async function resolveConversationFileTargets(
   let projectDir: string | undefined;
   let agentTranscriptsDir: string | undefined;
   for (const project of orderedProjects) {
-    const convDir = path.join(project.fullPath, "agent-transcripts", conversationId);
+    const agentRoot = path.join(project.fullPath, "agent-transcripts");
+    const convDirRaw = path.join(agentRoot, conversationId);
+    const convDir = assertPathUnderRoot(convDirRaw, agentRoot);
+    if (!convDir) {
+      continue;
+    }
     projectDir = project.fullPath;
-    agentTranscriptsDir = path.join(project.fullPath, "agent-transcripts");
+    agentTranscriptsDir = agentRoot;
     const files = await enumerateTranscriptFilesInConversation(
       project.fullPath,
       conversationId,
@@ -100,16 +122,20 @@ export async function resolveConversationFileTargets(
     storeDbPath = store.absolutePath;
     chatDataDir = path.dirname(store.absolutePath);
   } else if (workspaceKeyHint) {
-    const hintedDir = path.join(resolveChatsRoot(), workspaceKeyHint, conversationId);
-    const hintedStore = path.join(hintedDir, "store.db");
-    try {
-      const stat = await fs.stat(hintedStore);
-      if (stat.isFile()) {
-        storeDbPath = hintedStore;
-        chatDataDir = hintedDir;
+    const chatsRoot = resolveChatsRoot();
+    const hintedDirRaw = path.join(chatsRoot, workspaceKeyHint, conversationId);
+    const hintedDir = assertPathUnderRoot(hintedDirRaw, chatsRoot);
+    if (hintedDir) {
+      const hintedStore = path.join(hintedDir, "store.db");
+      try {
+        const stat = await fs.stat(hintedStore);
+        if (stat.isFile()) {
+          storeDbPath = hintedStore;
+          chatDataDir = hintedDir;
+        }
+      } catch {
+        // no store on disk for this workspace key
       }
-    } catch {
-      // no store on disk for this workspace key
     }
   }
 
@@ -211,6 +237,19 @@ export async function revealConversationFiles(
   workspaceKeyHint?: string,
   projectKeyHint?: string
 ): Promise<void> {
+  if (!isComposerConversationId(conversationId)) {
+    void vscode.window.showWarningMessage("Invalid conversation id.");
+    return;
+  }
+  if (workspaceKeyHint && !isSafePathSegment(workspaceKeyHint)) {
+    void vscode.window.showWarningMessage("Invalid workspace key.");
+    return;
+  }
+  if (projectKeyHint && !isSafePathSegment(projectKeyHint)) {
+    void vscode.window.showWarningMessage("Invalid project key.");
+    return;
+  }
+
   const targets = await resolveConversationFileTargets(
     conversationId,
     workspaceKeyHint,
@@ -273,8 +312,11 @@ export async function revealConversationFiles(
     (folders?.[0]
       ? md5FolderKey(path.resolve(folders[0].uri.fsPath))
       : undefined);
-  const fallbackDir =
+  const fallbackDirRaw =
     workspaceKey && path.join(resolveChatsRoot(), workspaceKey, conversationId);
+  const fallbackDir =
+    fallbackDirRaw &&
+    assertPathUnderRoot(fallbackDirRaw, resolveChatsRoot());
   if (fallbackDir && (await pathExists(fallbackDir))) {
     await revealFsPath(fallbackDir);
     return;

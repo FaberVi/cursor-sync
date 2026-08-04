@@ -1,4 +1,5 @@
 import type { ApiResult, GistFile, GistResponse, FailureCategory } from "./types.js";
+import { clampRetryAfterSeconds } from "./retry.js";
 
 const GITHUB_API = "https://api.github.com";
 const USER_AGENT = "cursor-sync-extension";
@@ -136,7 +137,9 @@ export class GistClient {
           category: "RATE_LIMITED",
           message: "GitHub API rate limit exceeded",
           statusCode: 429,
-          retryAfter: retryAfterHeader ? parseInt(retryAfterHeader, 10) : 60,
+          retryAfter: clampRetryAfterSeconds(
+            retryAfterHeader ? parseInt(retryAfterHeader, 10) : 60
+          ) ?? 60,
         },
       };
     }

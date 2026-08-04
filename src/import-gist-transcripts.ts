@@ -18,7 +18,6 @@ import {
   type TranscriptManifestV1,
   type TranscriptManifestV2,
 } from "./transcript-bundle.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
 import { buildChatsKeyToFolderMap } from "./chat-workspace-context.js";
 import {
   humanWorkspaceLabel,
@@ -27,18 +26,25 @@ import {
 } from "./chat-workspace-label.js";
 import { listChatsWorkspaceDirs, type WorkspaceDir } from "./chat-export-ux.js";
 import { resolveSyncRoots } from "./paths.js";
-
-const {
-  runSqliteScript,
-  resolveStateDbCandidates,
-  resolveChatsRoot,
+import {
   escapeSqlLiteral,
   mergeComposerHeadersChain,
   mergeComposerDataAdditive,
   deriveComposerHeadersPayloadFromSidebarSnapshot,
-  stampWorkspaceIdentifierOnPayload,
+} from "./composer-merge.js";
+import { resolveChatsRoot } from "./transcripts-cursor-paths.js";
+import { stampWorkspaceIdentifierOnPayload } from "./transcripts-import-sidebar.js";
+import {
   isExecFileTimeoutError,
-} = __chatPersistenceInternals;
+  querySqliteRows,
+  resolveStateDbCandidates,
+  runSqliteScript,
+} from "./transcripts-sqlite.js";
+import {
+  assertPathUnderRoot,
+  isComposerConversationId,
+  isSafePathSegment,
+} from "./composer-id.js";
 
 interface DiscoveredTranscript {
   conversationId: string;
@@ -205,14 +211,34 @@ async function importTranscriptsFromGist(
   const projectsRoot = resolveProjectsRoot();
 
   for (const transcript of transcripts) {
+    if (
+      !isComposerConversationId(transcript.conversationId) ||
+      !isSafePathSegment(transcript.projectKey)
+    ) {
+      warnings.push(
+        `Skipped unsafe transcript id/path: ${transcript.projectKey}/${transcript.conversationId}`
+      );
+      continue;
+    }
     const mappedProjectKey = projectMapping.get(transcript.projectKey) ?? transcript.projectKey;
-    const targetPath = path.join(
+    if (!isSafePathSegment(mappedProjectKey)) {
+      warnings.push(`Skipped unsafe mapped project key: ${mappedProjectKey}`);
+      continue;
+    }
+    const targetPathRaw = path.join(
       projectsRoot,
       mappedProjectKey,
       "agent-transcripts",
       transcript.conversationId,
       `${transcript.conversationId}.jsonl`
     );
+    const targetPath = assertPathUnderRoot(targetPathRaw, projectsRoot);
+    if (!targetPath) {
+      warnings.push(
+        `Skipped path escape for ${transcript.projectKey}/${transcript.conversationId}`
+      );
+      continue;
+    }
 
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
 
@@ -442,7 +468,6 @@ async function readExistingComposerState(
   dbPath: string,
   logger?: ReturnType<typeof getLogger>
 ): Promise<{ headersRaw: string | undefined; dataRaw: string | undefined }> {
-  const { querySqliteRows } = __chatPersistenceInternals;
   const rows = await querySqliteRows(
     dbPath,
     "SELECT key, value FROM ItemTable WHERE key IN ('composer.composerHeaders', 'composer.composerData');",

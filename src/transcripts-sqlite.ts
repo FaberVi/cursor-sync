@@ -194,36 +194,46 @@ export async function runSqliteQuery(
 }
 
 export async function runSqliteScript(dbPath: string, script: string): Promise<void> {
+  // Never feed scripts to `sqlite3 … .read`: the CLI honors meta-commands such as
+  // `.shell` / `.system` inside the file (RCE). Python executescript runs SQL only.
+  assertNoSqliteMetaCommands(script);
   const scriptWithBusy = `PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};\n${script}`;
   const sanitized = scriptWithBusy.replace(/[\ud800-\udfff]/g, "\ufffd");
-  const tmpPath = path.join(os.tmpdir(), `cursor-sync-sql-${Date.now()}-${Math.random().toString(36).slice(2)}.sql`);
+  const tmpPath = path.join(
+    os.tmpdir(),
+    `cursor-sync-sql-${Date.now()}-${Math.random().toString(36).slice(2)}.sql`
+  );
   await fs.writeFile(tmpPath, sanitized, "utf-8");
   const execOpts = { maxBuffer: 64 * 1024 * 1024, timeout: SQLITE_SUBPROCESS_TIMEOUT_MS };
   try {
-    try {
-      await execFile("sqlite3", [dbPath, `.read ${tmpPath}`], execOpts);
-      return;
-    } catch (error) {
-      if (!isCommandMissingError(error, "sqlite3") && !isExecFileTimeoutError(error)) {
-        throw error;
-      }
-      const pyScript = [
-        "import sqlite3, sys",
-        "db_path = sys.argv[1]",
-        "sql_path = sys.argv[2]",
-        "sql_script = open(sql_path, 'r', encoding='utf-8').read()",
-        `conn = sqlite3.connect(db_path, timeout=${Math.ceil(SQLITE_SUBPROCESS_TIMEOUT_MS / 1000)})`,
-        "cur = conn.cursor()",
-        "cur.executescript(sql_script)",
-        "conn.commit()",
-        "conn.close()",
-      ].join(";");
-      const py = await resolvePythonInterpreterForSqlite();
-      const args = [...py.argvPrefix, "-c", pyScript, dbPath, tmpPath];
-      await execFile(py.command, args, execOpts);
-    }
+    const pyScript = [
+      "import sqlite3, sys",
+      "db_path = sys.argv[1]",
+      "sql_path = sys.argv[2]",
+      "sql_script = open(sql_path, 'r', encoding='utf-8').read()",
+      `conn = sqlite3.connect(db_path, timeout=${Math.ceil(SQLITE_SUBPROCESS_TIMEOUT_MS / 1000)})`,
+      "cur = conn.cursor()",
+      "cur.executescript(sql_script)",
+      "conn.commit()",
+      "conn.close()",
+    ].join(";");
+    const py = await resolvePythonInterpreterForSqlite();
+    const args = [...py.argvPrefix, "-c", pyScript, dbPath, tmpPath];
+    await execFile(py.command, args, execOpts);
   } finally {
     await fs.unlink(tmpPath).catch(() => {});
+  }
+}
+
+/** Reject sqlite3 CLI meta-commands that would RCE via `.read` / accidental CLI use. */
+export function assertNoSqliteMetaCommands(script: string): void {
+  for (const line of script.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(".") && !trimmed.startsWith("...")) {
+      throw new Error(
+        `Refusing SQL script that contains sqlite3 meta-command: ${trimmed.slice(0, 40)}`
+      );
+    }
   }
 }
 
