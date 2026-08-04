@@ -33,7 +33,8 @@
         "src/sidebar/settings-tab.ts:23-28",
         "src/sidebar/index.ts:26-28"
       ],
-      "remediation": "Allowlist settings:set keys to the five keys rendered in settings-tab. Validate value types. Add webview CSP. Runtime-validate message shape before dispatch."
+      "remediation": "Allowlist settings:set keys to the five keys rendered in settings-tab. Validate value types. Add webview CSP. Runtime-validate message shape before dispatch.",
+      "reported_link": "https://cursorambassadors.slack.com/archives/D0AJNLWDSAX/p1785835109062969"
     },
     {
       "severity": "medium",
@@ -50,7 +51,8 @@
         "src/sidebar/messages.ts:112-115",
         "src/sidebar/messages.ts:90-96"
       ],
-      "remediation": "Require COMPOSER_ID_RE (UUID) on conversationId at the message boundary. After path.resolve, assert containment under projectsRoot."
+      "remediation": "Require COMPOSER_ID_RE (UUID) on conversationId at the message boundary. After path.resolve, assert containment under projectsRoot.",
+      "reported_link": "https://cursorambassadors.slack.com/archives/D0AJNLWDSAX/p1785835109062969"
     },
     {
       "severity": "low",
@@ -65,7 +67,8 @@
         "src/retry.ts:27-31",
         "src/gist.ts:130-139"
       ],
-      "remediation": "Clamp retryAfter to a sane max (e.g. 60-120s). Ignore non-finite parse results and use default backoff."
+      "remediation": "Clamp retryAfter to a sane max (e.g. 60-120s). Ignore non-finite parse results and use default backoff.",
+      "reported_link": "https://cursorambassadors.slack.com/archives/D0AJNLWDSAX/p1785835109062969"
     }
   ],
   "reconfirmed_findings": [
