@@ -5,22 +5,7 @@ import { GistClient } from "./gist.js";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { getLogger } from "./diagnostics.js";
-import { generateExtensionsJson } from "./extensions.js";
-import * as fs from "node:fs/promises";
-
-async function writeExtensionsFile(
-  cursorUserRoot: string,
-  content: string
-): Promise<string> {
-  const filePath = (await import("node:path")).join(
-    cursorUserRoot,
-    "extensions.json"
-  );
-  const dir = (await import("node:path")).dirname(filePath);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(filePath, content, "utf-8");
-  return filePath;
-}
+import { generateExtensionsJson, writeExtensionsFile } from "./extensions.js";
 
 export async function executeExport(context: vscode.ExtensionContext): Promise<void> {
   const logger = getLogger();

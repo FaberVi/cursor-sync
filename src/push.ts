@@ -12,7 +12,7 @@ import {
   getUnresolvedConflicts,
   getResolutionForKey,
 } from "./conflicts.js";
-import { generateExtensionsJson } from "./extensions.js";
+import { generateExtensionsJson, writeExtensionsFile } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
@@ -653,17 +653,6 @@ async function doPush(
     `[${new Date().toISOString()}] Push succeeded: ${fileCount} files uploaded, ${delta.unchangedCount} unchanged → ${backend.remoteLabel()}`
   );
   return true;
-}
-
-async function writeExtensionsFile(
-  cursorUserRoot: string,
-  content: string
-): Promise<string> {
-  const filePath = path.join(cursorUserRoot, "extensions.json");
-  const dir = path.dirname(filePath);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(filePath, content, "utf-8");
-  return filePath;
 }
 
 function syncKeyToAbsolutePath(

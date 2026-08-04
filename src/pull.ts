@@ -15,7 +15,7 @@ import {
   syncKeyToAbsolutePath,
   PartialLocalDeleteError,
 } from "./sync-local-deletes.js";
-import { findMissingExtensions, findExtraExtensions, ensureExtensionsJsonOnDisk } from "./extensions.js";
+import { findMissingExtensions, findExtraExtensions, ensureExtensionsJsonOnDisk, isInstallCandidateExtensionId, isPublisherAllowed } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
@@ -772,29 +772,51 @@ async function syncExtensionsAfterPull(
   }
 
   const config = vscode.workspace.getConfiguration("cursorSync");
-  const autoInstall = config.get<boolean>("syncExtensions.autoInstall") ?? true;
+  const autoInstall = config.get<boolean>("syncExtensions.autoInstall") ?? false;
   const autoUninstall = config.get<boolean>("syncExtensions.autoUninstall") ?? false;
+  const allowedPublishers =
+    config.get<string[]>("syncExtensions.allowedPublishers") ?? [];
 
-  const missing = findMissingExtensions(entries);
-  if (autoInstall && missing.length > 0) {
-    for (let i = 0; i < missing.length; i += CONCURRENT_INSTALLS) {
-      const batch = missing.slice(i, i + CONCURRENT_INSTALLS);
-      await Promise.all(
-        batch.map(async (entry) => {
-          try {
-            await vscode.commands.executeCommand(
-              "workbench.extensions.installExtension",
-              entry.id
-            );
-          } catch (err) {
-            logger.appendLine(
-              `[${new Date().toISOString()}] Failed to install extension ${entry.id}: ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
-        })
-      );
+  const installCandidates = entries.filter(
+    (entry) =>
+      isInstallCandidateExtensionId(entry.id) &&
+      isPublisherAllowed(entry.id, allowedPublishers)
+  );
+  const skippedBuiltinRemote = entries.length - installCandidates.length;
+  if (skippedBuiltinRemote > 0) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Skipping ${skippedBuiltinRemote} product/builtin/invalid extension id(s) from remote install list`
+    );
+  }
+
+  const missing = findMissingExtensions(installCandidates);
+  if (missing.length > 0 && autoInstall) {
+    const names = missing.map((m) => m.id).join(", ");
+    const choice = await vscode.window.showWarningMessage(
+      `Install ${missing.length} extension(s) from the synced list?\n${names}`,
+      "Install",
+      "Skip"
+    );
+    if (choice === "Install") {
+      for (let i = 0; i < missing.length; i += CONCURRENT_INSTALLS) {
+        const batch = missing.slice(i, i + CONCURRENT_INSTALLS);
+        await Promise.all(
+          batch.map(async (entry) => {
+            try {
+              await vscode.commands.executeCommand(
+                "workbench.extensions.installExtension",
+                entry.id
+              );
+            } catch (err) {
+              logger.appendLine(
+                `[${new Date().toISOString()}] Failed to install extension ${entry.id}: ${err instanceof Error ? err.message : String(err)}`
+              );
+            }
+          })
+        );
+      }
     }
-  } else if (!autoInstall && missing.length > 0) {
+  } else if (missing.length > 0) {
     const names = missing.map((m) => m.id).join(", ");
     vscode.window.showInformationMessage(
       `Extensions present remotely but not installed locally: ${names}`
