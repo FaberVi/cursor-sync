@@ -12,11 +12,7 @@ import {
 import { buildChatsKeyToFolderMap } from "./chat-workspace-context.js";
 import { workspaceQuickPickLabel } from "./chat-workspace-label.js";
 import { resolveSyncRoots } from "./paths.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
-
-function resolveChatsRoot(): string {
-  return __chatPersistenceInternals.resolveChatsRoot();
-}
+import { resolveChatsRoot } from "./transcripts-cursor-paths.js";
 
 export interface WorkspaceDir {
   name: string;

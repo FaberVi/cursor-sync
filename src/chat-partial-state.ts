@@ -3,9 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ChatBundle } from "./chat-persistence.js";
 import type { WorkspaceIdentifier } from "./chat-workspace-context.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
-
-const { querySqliteRows } = __chatPersistenceInternals;
+import { querySqliteRows } from "./transcripts-sqlite.js";
 
 export const PARTIAL_STATE_STRIPPED = new Set([
   "capabilities",

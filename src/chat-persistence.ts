@@ -3,7 +3,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { getLogger } from "./diagnostics.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
+import {
+  isExecFileTimeoutError,
+  listGlobalStateVscdbPaths,
+  querySqliteRows,
+  resolveStateDbCandidates,
+} from "./transcripts-sqlite.js";
+import { findStoreDbForConversation, resolveChatsRoot } from "./transcripts-cursor-paths.js";
 import {
   computeArtifactChecksum,
   encodeTranscriptArtifact,
@@ -61,15 +67,6 @@ export {
   restoreNativeChatJson,
   restoreNativeChatsBatch,
 } from "./chat-native-import.js";
-
-const {
-  querySqliteRows,
-  resolveStateDbCandidates,
-  listGlobalStateVscdbPaths,
-  resolveChatsRoot,
-  findStoreDbForConversation,
-  isExecFileTimeoutError,
-} = __chatPersistenceInternals;
 
 /** Layer 4 cursorDiskKV rows (global state.vscdb); matches Python export_disk_kv_snapshot. */
 export interface ChatBundleDiskKvSnapshotRow {

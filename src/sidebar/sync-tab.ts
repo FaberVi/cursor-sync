@@ -236,7 +236,10 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
       ${state.status === "synced" ? cursorLogoSvg : `<span class="codicon codicon-${statusIcon}"></span>`}
     </div>
     <div class="status-info">
-      <span class="status-label">${escapeHtml(statusLabel)}</span>
+      <div class="status-header">
+        <span class="status-label">${escapeHtml(statusLabel)}</span>
+        <span class="status-version" title="Extension version">v${escapeHtml(state.extensionVersion)}</span>
+      </div>
       <div class="status-meta">
         <span>${escapeHtml(lastSyncText)}</span>
         ${directionLabel ? `<span class="codicon codicon-${directionIcon}"></span><span>${escapeHtml(directionLabel)}</span>` : ""}
@@ -265,7 +268,6 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
           : ""
       }
     </div>
-    <div class="status-version" title="Extension version">v${escapeHtml(state.extensionVersion)}</div>
   </div>
 
   <div class="file-count chat-sync-status">${chatStatusLine}</div>

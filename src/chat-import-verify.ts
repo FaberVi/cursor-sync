@@ -6,9 +6,8 @@ import type { WorkspaceContext } from "./chat-workspace-context.js";
 import { sidebarSnapshotHasComposerData } from "./chat-partial-state.js";
 import { bundleHasNativeDiskKv } from "./chat-bundle-fidelity.js";
 import { resolveSyncRoots } from "./paths.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
-
-const { querySqliteRows, resolveChatsRoot } = __chatPersistenceInternals;
+import { resolveChatsRoot } from "./transcripts-cursor-paths.js";
+import { querySqliteRows } from "./transcripts-sqlite.js";
 
 export type VerifyStatus = "OK" | "WARN" | "FAIL" | "SKIP" | "PENDING";
 

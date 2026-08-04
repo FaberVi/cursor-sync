@@ -40,9 +40,7 @@ function mergeWorkspaceIdentifier(
   return { id: wi.id, uri: wi.uri as unknown as Record<string, unknown> };
 }
 import { getLogger } from "./diagnostics.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
-
-const { querySqliteRows, runSqliteScript } = __chatPersistenceInternals;
+import { querySqliteRows, runSqliteScript } from "./transcripts-sqlite.js";
 
 type OpenBundleMode = "export-bundle" | "header-only" | "minimal-stub" | "existing-rich";
 

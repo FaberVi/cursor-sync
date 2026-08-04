@@ -4,7 +4,6 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { getLogger } from "./diagnostics.js";
 import { pruneOldBackups } from "./rollback.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
 import {
   chatManifestFromBundle,
   hydrateGoldenStoreTemplate,
@@ -13,6 +12,7 @@ import {
   discoverProjects,
   findProjectMatchingOpenWorkspaceFolder,
 } from "./transcripts.js";
+import { resolveChatsRoot } from "./transcripts-cursor-paths.js";
 import {
   folderToProjectKey,
   requireWorkspaceContext,
@@ -57,7 +57,6 @@ import {
   applyImmediateSidebarWriteback,
   queueSidebarWriteback,
 } from "./chat-import-sidebar-writeback.js";
-const { resolveChatsRoot } = __chatPersistenceInternals;
 
 function parseSidebarMergedFromPythonOutput(pyText: string): boolean {
   const match = pyText.match(/sidebar_merged=(true|false)/i);

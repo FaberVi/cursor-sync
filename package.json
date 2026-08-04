@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync",
   "description": "Sync user-level Cursor settings and assets to a private GitHub Gist or repository",
-  "version": "0.10.4",
+  "version": "0.11.0",
   "icon": "assets/icon.png",
   "publisher": "MarceloBarella",
   "repository": {
@@ -234,7 +234,8 @@
             "vsix/**",
             "skills/**",
             "commands/**/*.md",
-            "rules/*.mdc"
+            "rules/*.mdc",
+            "agents/*.md"
           ],
           "description": "Glob patterns for included sync paths"
         },
@@ -323,8 +324,16 @@
         },
         "cursorSync.syncExtensions.autoInstall": {
           "type": "boolean",
-          "default": true,
-          "description": "On pull, automatically install extensions that are in the synced list but not installed locally"
+          "default": false,
+          "description": "On pull, automatically install extensions that are in the synced list but not installed locally (off by default; a compromised remote could otherwise install arbitrary marketplace extensions)"
+        },
+        "cursorSync.syncExtensions.allowedPublishers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "When non-empty, only auto-install extensions whose publisher (id prefix before '.') is in this list. Empty means all publishers are eligible (still subject to confirmation when autoInstall is on)."
         },
         "cursorSync.syncExtensions.autoUninstall": {
           "type": "boolean",

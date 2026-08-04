@@ -93,6 +93,7 @@ describe("paths", () => {
       await fs.mkdir(path.join(cursorUser, "snippets"), { recursive: true });
       await fs.mkdir(path.join(cursorUser, "vsix"), { recursive: true });
       await fs.mkdir(path.join(dotCursor, "rules"), { recursive: true });
+      await fs.mkdir(path.join(dotCursor, "agents"), { recursive: true });
       await fs.mkdir(path.join(dotCursor, "skills", "coding"), { recursive: true });
       await fs.mkdir(path.join(dotCursor, "extensions"), { recursive: true });
       await fs.mkdir(path.join(dotCursor, "logs"), { recursive: true });
@@ -107,6 +108,10 @@ describe("paths", () => {
       await fs.writeFile(
         path.join(dotCursor, "rules", "test.mdc"),
         "rule"
+      );
+      await fs.writeFile(
+        path.join(dotCursor, "agents", "reviewer.md"),
+        "subagent"
       );
       await fs.writeFile(
         path.join(dotCursor, "skills", "coding", "SKILL.md"),
@@ -124,6 +129,8 @@ describe("paths", () => {
     });
 
     afterEach(async () => {
+      const { __clearMockGlobalConfigKeys } = await import("./__mocks__/vscode.js");
+      __clearMockGlobalConfigKeys("enabledPaths");
       await fs.rm(tmpDir, { recursive: true, force: true });
     });
 
@@ -141,6 +148,7 @@ describe("paths", () => {
       expect(keys).toContain("cursor-user/snippets/ts.json");
       expect(keys).toContain("cursor-user/vsix/sample.vsix");
       expect(keys).toContain("dot-cursor/rules/test.mdc");
+      expect(keys).toContain("dot-cursor/agents/reviewer.md");
       expect(keys).toContain("dot-cursor/skills/coding/SKILL.md");
       expect(keys).toContain("dot-cursor/skills/coding/template.txt");
 
@@ -202,6 +210,34 @@ describe("paths", () => {
       const keys = files.map((f) => f.relativeSyncKey);
 
       expect(keys).toContain("cursor-user/vsix/big.vsix");
+    });
+
+    it("routes custom dot-cursor globs without hardcoded prefix filter", async () => {
+      const { __setMockGlobalConfig } = await import("./__mocks__/vscode.js");
+      __setMockGlobalConfig({
+        enabledPaths: [
+          "settings.json",
+          "skills/**",
+          "agents/*.md",
+          "mcp.json",
+        ],
+      });
+
+      await fs.writeFile(
+        path.join(tmpDir, "dotCursor", "mcp.json"),
+        '{"servers":{}}'
+      );
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const files = await enumerateSyncFiles(roots);
+      const keys = files.map((f) => f.relativeSyncKey);
+
+      expect(keys).toContain("dot-cursor/mcp.json");
+      expect(keys).toContain("dot-cursor/agents/reviewer.md");
     });
 
     it("excludes skill-creator workspace snapshots and backups", async () => {

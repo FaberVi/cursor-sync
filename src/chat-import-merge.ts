@@ -14,10 +14,12 @@ import {
   clearSessionBindingInTree,
   partialStateHasConversationContent,
 } from "./chat-partial-state.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
-
-const { querySqliteRows, runSqliteScript, listGlobalStateVscdbPaths, resolveStateDbCandidates } =
-  __chatPersistenceInternals;
+import {
+  listGlobalStateVscdbPaths,
+  querySqliteRows,
+  resolveStateDbCandidates,
+  runSqliteScript,
+} from "./transcripts-sqlite.js";
 
 const UUID_KEY_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

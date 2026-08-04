@@ -93,9 +93,9 @@ Files included from this root (configurable via `cursorSync.enabledPaths`):
 
 Files included from this root:
 - `skills/**`
-- `skills-cursor/**/SKILL.md`
 - `commands/**/*.md`
 - `rules/*.mdc`
+- `agents/*.md` (user-level subagents)
 
 Skill-creator / skill-forge eval artifacts (`skill-snapshot/`, `skill-*-backup/`, and `iteration-*` / `eval-*` / `outputs` under `*-workspace/`) are never synced. Cursor treats each `SKILL.md` parent folder as the skill name, so syncing those snapshots would register skills named `skill-snapshot`. A real skill whose folder merely ends with `-workspace` is still synced. On activate (and after push/pull/import), Cursor Sync merges missing files from snapshots/backups into the live skill (never overwrites live files), only deletes disposable artifact-only workspaces, relocates orphan top-level `skill-snapshot` folders, and publishes recovered skills in the same remote write that removes artifact keys — never a full settings push and never purge-before-publish.
 

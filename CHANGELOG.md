@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## v0.11.0
+
+### Added
+- Sync user-level subagents (`~/.cursor/agents/*.md`) on push/pull. If you customized `cursorSync.enabledPaths` before this change, add `agents/*.md` manually — VS Code does not merge new defaults into existing settings.
+- `.gitattributes` with `* text=auto eol=lf` to avoid CRLF-only noise on Windows.
+
+### Fixed
+- `extensions.json` no longer lists Cursor/VS Code built-in extensions (via `packageJSON.isBuiltin` / `isUserBuiltin`, path under `resources/app/extensions`, and known product id patterns such as `anysphere.cursor-*`). Writes are skipped when regenerated content is unchanged. Pull skips product/builtin ids still present on older remotes instead of attempting marketplace install.
+- Sidebar `settings:set` only accepts keys rendered in the Settings tab, with type validation. `chatImport.pythonPath` is read-only in the sidebar (set via Cursor Settings only) to block webview-driven RCE via a crafted Python path.
+- Chat webview messages validate `conversationId` (UUID) and workspace/project path segments at the message boundary before open/reveal/reactivate.
+- Chat transcript reveal/open rejects unsafe ids and keeps resolved paths under `agent-transcripts` / chats roots.
+- GitHub `Retry-After` sleeps are clamped to 120 seconds (gist + repo API clients).
+- Sidebar webview Content-Security-Policy meta tag; unknown sidebar commands are ignored.
+- Break circular import `chat-partial-state` → `transcripts` (import `querySqliteRows` from `transcripts-sqlite` directly).
+- **Critical:** `runSqliteScript` no longer uses `sqlite3 … .read` (CLI meta-commands like `.shell` could RCE). Scripts run only via Python `executescript`, and lines starting with `.` are rejected.
+- Extension auto-install on pull defaults to **off**; marketplace id shape is validated; optional `syncExtensions.allowedPublishers` allowlist; even when auto-install is on, the user must confirm before install.
+- Native chat collection `createdAt` is derived from chat payloads (not `Date.now()`), so sync checksums stay stable across repeated packaging.
+- Sync manifest `conversation_id` must be a UUID (blocks path traversal into `~/.cursor/chats`); SyncEngine also refuses store paths that escape the chats root. Gist transcript import skips unsafe conversation/project path segments.
+
+### Changed
+- `dot-cursor` sync globs are routed generically: any `enabledPaths` entry that is not a Cursor User config glob (`settings.json`, `keybindings.json`, `extensions.json`, `snippets/**`, `vsix/**`) is scanned under `~/.cursor`. Custom paths such as `mcp.json` now work without code changes — do not add `mcp.json` unless you accept syncing MCP server secrets to the remote.
+- Removed stale `skills-cursor/**/SKILL.md` from code/README/mock fallbacks (already absent from `package.json` defaults since v0.1.6; Cursor-managed built-in skills stay local).
+
+### Docs
+- Import scoped security audit reports from upstream `cursor/vulnerability-findings-management-ae89` (Marcelo-Barella/cursor-sync PR #33) under `docs/security/`. Audited baseline commit `7713dc7`.
+
 ## v0.10.4
 
 ### Changed

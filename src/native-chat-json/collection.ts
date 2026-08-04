@@ -21,7 +21,14 @@ export function buildNativeChatCollection(
 }
 
 export function nativeCollectionFromBundles(bundles: ChatBundle[]): NativeChatCollection {
-  return buildNativeChatCollection(bundles.map(nativeChatJsonFromBundle));
+  const chats = bundles.map(nativeChatJsonFromBundle);
+  // Deterministic collection stamp from chat payloads (avoid Date.now() churn in checksums).
+  const stamp = chats
+    .map((c) => c.createdAt)
+    .filter((v): v is string => typeof v === "string" && v.length > 0)
+    .sort()
+    .at(-1);
+  return buildNativeChatCollection(chats, stamp);
 }
 
 export function bundlesFromNativeCollection(collection: NativeChatCollection): ChatBundle[] {

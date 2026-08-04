@@ -101,24 +101,19 @@ vi.mock("../src/rollback.js", () => ({
   pruneOldBackups: vi.fn(),
 }));
 
-vi.mock("../src/transcripts.js", () => ({
-  __chatPersistenceInternals: {
-    runSqliteScript: vi.fn(async () => undefined),
-    resolveStateDbCandidates: vi.fn(async () => ["/fake/state.vscdb"]),
-    resolveChatsRoot: vi.fn(() => path.join(mockedHomeDir, ".cursor", "chats")),
-    escapeSqlLiteral: vi.fn((s: string) => s.replace(/'/g, "''")),
-    mergeComposerHeadersChain: vi.fn((_existing: string | undefined, payloads: unknown[]) => ({
-      allComposers: payloads,
-    })),
-    mergeComposerDataAdditive: vi.fn(),
-    deriveComposerHeadersPayloadFromSidebarSnapshot: vi.fn(() => ({
-      composerId: "conv-reload-123",
-      name: "Reload test",
-    })),
-    stampWorkspaceIdentifierOnPayload: vi.fn((p: Record<string, unknown>) => p),
-    isExecFileTimeoutError: vi.fn(() => false),
-    querySqliteRows: vi.fn(async () => []),
-  },
+vi.mock("../src/transcripts-sqlite.js", () => ({
+  runSqliteScript: vi.fn(async () => undefined),
+  resolveStateDbCandidates: vi.fn(async () => ["/fake/state.vscdb"]),
+  querySqliteRows: vi.fn(async () => []),
+  isExecFileTimeoutError: vi.fn(() => false),
+}));
+
+vi.mock("../src/transcripts-cursor-paths.js", () => ({
+  resolveChatsRoot: () => path.join(mockedHomeDir, ".cursor", "chats"),
+}));
+
+vi.mock("../src/transcripts-import-sidebar.js", () => ({
+  stampWorkspaceIdentifierOnPayload: vi.fn((p: Record<string, unknown>) => p),
 }));
 
 function buildV1Manifest(projectKey: string, relativePath: string, content: string) {

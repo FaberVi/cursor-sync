@@ -159,6 +159,16 @@ export function resolveSyncRoots(
   };
 }
 
+export function isCursorUserGlob(glob: string): boolean {
+  return (
+    glob === "settings.json" ||
+    glob === "keybindings.json" ||
+    glob === "extensions.json" ||
+    glob.startsWith("snippets") ||
+    glob.startsWith("vsix")
+  );
+}
+
 export async function enumerateSyncFiles(
   roots?: SyncRoots
 ): Promise<SyncFileEntry[]> {
@@ -169,20 +179,8 @@ export async function enumerateSyncFiles(
   const maxFileSizeKB = config.get<number>("maxFileSizeKB") ?? 512;
   const maxBytes = maxFileSizeKB * 1024;
 
-  const cursorUserGlobs = enabledPaths.filter(
-    (g) =>
-      g === "settings.json" ||
-      g === "keybindings.json" ||
-      g === "extensions.json" ||
-      g.startsWith("snippets") ||
-      g.startsWith("vsix")
-  );
-  const dotCursorGlobs = enabledPaths.filter(
-    (g) =>
-      g.startsWith("skills") ||
-      g.startsWith("commands") ||
-      g.startsWith("rules")
-  );
+  const cursorUserGlobs = enabledPaths.filter(isCursorUserGlob);
+  const dotCursorGlobs = enabledPaths.filter((g) => !isCursorUserGlob(g));
 
   const entries: SyncFileEntry[] = [];
 
@@ -325,9 +323,9 @@ export function getDefaultEnabledPaths(): string[] {
     "extensions.json",
     "vsix/**",
     "skills/**",
-    "skills-cursor/**/SKILL.md",
     "commands/**/*.md",
     "rules/*.mdc",
+    "agents/*.md",
   ];
 }
 

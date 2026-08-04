@@ -24,8 +24,8 @@ import {
   findProjectMatchingOpenWorkspaceFolder,
   type ProjectInfo,
 } from "./transcripts-discovery.js";
-import { findWorkspaceKeysForConversation } from "./transcripts-cursor-paths.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
+import { findWorkspaceKeysForConversation, resolveChatsRoot } from "./transcripts-cursor-paths.js";
+import { querySqliteRows } from "./transcripts-sqlite.js";
 import {
   summarizeDiscoveredBackupTier,
   type BackupTier,
@@ -103,10 +103,6 @@ interface MutableDiscovered {
   jsonlCount: number;
   subagentJsonlCount: number;
   sources: Set<ConversationSource>;
-}
-
-function resolveChatsRoot(): string {
-  return __chatPersistenceInternals.resolveChatsRoot();
 }
 
 function resolveProjectsRoot(): string {
@@ -367,7 +363,7 @@ async function readComposerHeadersFromDb(
   dbPath: string
 ): Promise<Array<Record<string, unknown>>> {
   try {
-    const rows = await __chatPersistenceInternals.querySqliteRows(
+    const rows = await querySqliteRows(
       dbPath,
       "SELECT value FROM ItemTable WHERE key = 'composer.composerHeaders' LIMIT 1"
     );

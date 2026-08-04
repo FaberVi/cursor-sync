@@ -30,8 +30,7 @@ describe("store-template-hydrate", () => {
     }
     const { hydrateGoldenStoreTemplate, readTemplateUserVersion, GOLDEN_STORE_TEMPLATE_VERSION } =
       await import("../src/store-template-hydrate.js");
-    const { __chatPersistenceInternals } = await import("../src/transcripts.js");
-    const { querySqliteRows } = __chatPersistenceInternals;
+    const { querySqliteRows } = await import("../src/transcripts-sqlite.js");
 
     const outDir = path.join(os.tmpdir(), `cursor-sync-hydrate-${Date.now()}`);
     const outPath = path.join(outDir, "store.db");

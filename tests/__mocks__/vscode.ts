@@ -83,6 +83,16 @@ const mockGlobalConfig: Record<string, unknown> = {
   "chatImport.pythonPath": "",
 };
 
+export function __setMockGlobalConfig(values: Record<string, unknown>): void {
+  Object.assign(mockGlobalConfig, values);
+}
+
+export function __clearMockGlobalConfigKeys(...keys: string[]): void {
+  for (const key of keys) {
+    delete mockGlobalConfig[key];
+  }
+}
+
 export const workspace = {
   get workspaceFolders() {
     return mockWorkspaceFolders.length ? mockWorkspaceFolders : undefined;
@@ -112,9 +122,9 @@ export const workspace = {
           "extensions.json",
           "vsix/**",
           "skills/**",
-          "skills-cursor/**/SKILL.md",
           "commands/**/*.md",
           "rules/*.mdc",
+          "agents/*.md",
         ],
         excludeGlobs: [],
         maxFileSizeKB: 512,
@@ -253,8 +263,32 @@ export const commands = {
 };
 
 export const extensions = {
-  all: [],
+  all: [] as Array<{
+    id: string;
+    packageJSON?: {
+      version?: string;
+      isBuiltin?: boolean;
+      isUserBuiltin?: boolean;
+    };
+  }>,
 };
+
+export function __setExtensionsAll(
+  items: Array<{
+    id: string;
+    packageJSON?: {
+      version?: string;
+      isBuiltin?: boolean;
+      isUserBuiltin?: boolean;
+    };
+  }>
+): void {
+  extensions.all = items;
+}
+
+export function __resetExtensionsAll(): void {
+  extensions.all = [];
+}
 
 export enum ExtensionKind {
   UI = 1,
