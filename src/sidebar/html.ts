@@ -13,7 +13,7 @@ import {
   readDestinationSettings,
   normalizeSyncStateDestination,
 } from "../remote/index.js";
-import { readExtensionVersion as readExtensionVersionFallback } from "../sync-debug.js";
+import { readExtensionVersion } from "../extension-version.js";
 import type { SyncTabState } from "./sync-tab.js";
 import { renderSyncPane } from "./sync-tab.js";
 import { renderSettingsPane, readSettingsValues } from "./settings-tab.js";
@@ -26,10 +26,7 @@ export interface BuildSyncTabStateOptions {
 }
 
 function extensionVersionForContext(context: vscode.ExtensionContext): string {
-  return (
-    (context.extension?.packageJSON as { version?: string } | undefined)?.version ??
-    readExtensionVersionFallback()
-  );
+  return readExtensionVersion(context);
 }
 
 function buildSyncTabStateShell(context: vscode.ExtensionContext): SyncTabState {
@@ -848,6 +845,15 @@ function assembleSidebarDocument(params: {
     }
     .progress-message {
       color: rgba(237, 236, 236, 0.6);
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .progress-elapsed {
+      flex-shrink: 0;
+      color: rgba(237, 236, 236, 0.45);
+      font-variant-numeric: tabular-nums;
     }
     .progress-bar-track {
       height: 3px;

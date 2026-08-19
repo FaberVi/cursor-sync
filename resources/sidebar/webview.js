@@ -483,13 +483,18 @@
             ? tr("syncNow", "Sync Now")
             : tr("push", "Push");
       var spct = typeof sev.percent === "number" ? sev.percent : 0;
+      var elapsedHtml = sev.elapsedLabel
+        ? '<span class="progress-elapsed">' + escHtml(sev.elapsedLabel) + "</span>"
+        : "";
       syncEl.innerHTML =
         '<div class="progress-card">' +
         '<div class="progress-phase">' +
         escHtml(opLabel) +
         "</div>" +
-        '<div class="progress-message">' +
+        '<div class="progress-message"><span>' +
         escHtml(sev.message || "") +
+        "</span>" +
+        elapsedHtml +
         "</div>" +
         '<div class="progress-bar-track"><div class="progress-bar-fill" style="width:' +
         Math.min(100, Math.max(4, spct)) +

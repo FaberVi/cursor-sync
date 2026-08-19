@@ -203,3 +203,193 @@ export function findExtraExtensions(
     .map((ext) => ext.id)
     .filter((id) => !remoteIds.has(id.toLowerCase()));
 }
+
+export const LAST_REMOTE_EXTENSIONS_STATE_KEY = "cursorSync.lastRemoteExtensions";
+
+const REMOTE_EXTENSIONS_GIST_FILE = "cursor-user--extensions.json";
+const CONCURRENT_INSTALLS = 2;
+
+type ExtensionSyncLogger = { appendLine: (value: string) => void };
+
+/** Valid `{ id, version }[]`; non-array or non-object items are rejected. */
+export function parseExtensionEntries(raw: unknown): ExtensionEntry[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const entries: ExtensionEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const id = (item as { id?: unknown }).id;
+    const version = (item as { version?: unknown }).version;
+    if (typeof id !== "string" || !isValidMarketplaceExtensionId(id)) {
+      continue;
+    }
+    entries.push({
+      id,
+      version: typeof version === "string" && version.length > 0 ? version : "0.0.0",
+    });
+  }
+  return entries;
+}
+
+export function parseRemoteExtensionsFileContent(
+  content: string
+): ExtensionEntry[] | undefined {
+  try {
+    return parseExtensionEntries(JSON.parse(content));
+  } catch {
+    return undefined;
+  }
+}
+
+export async function cacheLastRemoteExtensions(
+  context: vscode.ExtensionContext,
+  entries: ExtensionEntry[]
+): Promise<void> {
+  await context.globalState.update(LAST_REMOTE_EXTENSIONS_STATE_KEY, entries);
+}
+
+export async function clearLastRemoteExtensions(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  await context.globalState.update(LAST_REMOTE_EXTENSIONS_STATE_KEY, undefined);
+}
+
+export function readLastRemoteExtensions(
+  context: vscode.ExtensionContext
+): ExtensionEntry[] {
+  return (
+    parseExtensionEntries(context.globalState.get(LAST_REMOTE_EXTENSIONS_STATE_KEY)) ??
+    []
+  );
+}
+
+function filterInstallCandidates(
+  remoteEntries: ExtensionEntry[],
+  logger: ExtensionSyncLogger
+): ExtensionEntry[] {
+  const allowedPublishers =
+    vscode.workspace.getConfiguration("cursorSync").get<string[]>(
+      "syncExtensions.allowedPublishers"
+    ) ?? [];
+  const installCandidates = remoteEntries.filter(
+    (entry) =>
+      isInstallCandidateExtensionId(entry.id) &&
+      isPublisherAllowed(entry.id, allowedPublishers)
+  );
+  const skippedBuiltinRemote = remoteEntries.length - installCandidates.length;
+  if (skippedBuiltinRemote > 0) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Skipping ${skippedBuiltinRemote} product/builtin/invalid extension id(s) from remote install list`
+    );
+  }
+  return installCandidates;
+}
+
+/** Prompt Install/Skip for missing remote extensions; never installs without Install. */
+export async function promptAndInstallMissingExtensions(
+  remoteEntries: ExtensionEntry[],
+  logger: ExtensionSyncLogger
+): Promise<void> {
+  if (remoteEntries.length === 0) {
+    return;
+  }
+  const missing = findMissingExtensions(filterInstallCandidates(remoteEntries, logger));
+  if (missing.length === 0) {
+    return;
+  }
+  const names = missing.map((m) => m.id).join(", ");
+  const choice = await vscode.window.showWarningMessage(
+    `Install ${missing.length} extension(s) from the synced list?\n${names}`,
+    { modal: true },
+    "Install",
+    "Skip"
+  );
+  if (choice !== "Install") {
+    return;
+  }
+  for (let i = 0; i < missing.length; i += CONCURRENT_INSTALLS) {
+    const batch = missing.slice(i, i + CONCURRENT_INSTALLS);
+    await Promise.all(
+      batch.map(async (entry) => {
+        try {
+          await vscode.commands.executeCommand(
+            "workbench.extensions.installExtension",
+            entry.id
+          );
+        } catch (err) {
+          logger.appendLine(
+            `[${new Date().toISOString()}] Failed to install extension ${entry.id}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      })
+    );
+  }
+}
+
+/** Missing-install prompt plus extra-extension uninstall prompt (pull paths). */
+export async function syncExtensionsFromRemoteEntries(
+  remoteEntries: ExtensionEntry[],
+  logger: ExtensionSyncLogger
+): Promise<void> {
+  await promptAndInstallMissingExtensions(remoteEntries, logger);
+
+  const extras = findExtraExtensions(remoteEntries);
+  if (extras.length === 0) {
+    return;
+  }
+
+  const autoUninstall =
+    vscode.workspace
+      .getConfiguration("cursorSync")
+      .get<boolean>("syncExtensions.autoUninstall") ?? false;
+  let shouldUninstall = autoUninstall;
+  if (!shouldUninstall) {
+    const choice = await vscode.window.showWarningMessage(
+      `Remove ${extras.length} extension(s) that are not in the synced list?`,
+      { modal: true },
+      "Yes",
+      "No"
+    );
+    shouldUninstall = choice === "Yes";
+  }
+  if (!shouldUninstall) {
+    return;
+  }
+
+  for (const id of extras) {
+    try {
+      await vscode.commands.executeCommand(
+        "workbench.extensions.uninstallExtension",
+        id
+      );
+    } catch (err) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] Failed to uninstall extension ${id}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+}
+
+/**
+ * Cache the remote extensions list (when parseable) and run missing + extra sync.
+ * Callers must skip this when Keep Local is set on extensions.json.
+ */
+export async function syncExtensionsFromRemoteFiles(
+  context: vscode.ExtensionContext,
+  remoteFiles: Record<string, string>,
+  logger: ExtensionSyncLogger
+): Promise<void> {
+  const extContent = remoteFiles[REMOTE_EXTENSIONS_GIST_FILE];
+  if (!extContent) {
+    return;
+  }
+  const entries = parseRemoteExtensionsFileContent(extContent);
+  if (entries === undefined) {
+    return;
+  }
+  await cacheLastRemoteExtensions(context, entries);
+  await syncExtensionsFromRemoteEntries(entries, logger);
+}

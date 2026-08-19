@@ -326,4 +326,108 @@ describe("RepoBackend", () => {
     const created = await backend.createRepository({ isPrivate: false });
     expect(created.ok).toBe(true);
   });
+
+  it("reuses ref/commit/tree on a second getSnapshot and fetches only requested blobs", async () => {
+    const counts = { ref: 0, commit: 0, tree: 0, blob: 0 };
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/git/ref/heads/main")) {
+        counts.ref += 1;
+        return new Response(
+          JSON.stringify({
+            ref: "refs/heads/main",
+            object: { sha: "refsha", type: "commit" },
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/refsha")) {
+        counts.commit += 1;
+        return new Response(
+          JSON.stringify({ sha: "refsha", tree: { sha: "treesha" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/trees/treesha")) {
+        counts.tree += 1;
+        return new Response(
+          JSON.stringify({
+            sha: "treesha",
+            truncated: false,
+            tree: [
+              {
+                path: "cursor-sync/manifest.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-manifest",
+              },
+              {
+                path: "cursor-sync/cursor-user--settings.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-settings",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-manifest")) {
+        counts.blob += 1;
+        return new Response(
+          JSON.stringify({
+            sha: "blob-manifest",
+            encoding: "utf-8",
+            content: '{"files":{}}',
+            size: 11,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-settings")) {
+        counts.blob += 1;
+        return new Response(
+          JSON.stringify({
+            sha: "blob-settings",
+            encoding: "utf-8",
+            content: "{}",
+            size: 2,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected " + url }), {
+        status: 500,
+      });
+    }) as typeof fetch;
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+    });
+    const first = await backend.getSnapshot({ onlyFiles: ["manifest.json"] });
+    const second = await backend.getSnapshot({
+      onlyFiles: ["cursor-user--settings.json"],
+    });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (first.ok) {
+      expect(first.data.files).toEqual({ "manifest.json": '{"files":{}}' });
+      expect(first.data.allFileNames.sort()).toEqual([
+        "cursor-user--settings.json",
+        "manifest.json",
+      ]);
+    }
+    if (second.ok) {
+      expect(second.data.files).toEqual({
+        "cursor-user--settings.json": "{}",
+      });
+    }
+    expect(counts.ref).toBe(1);
+    expect(counts.commit).toBe(1);
+    expect(counts.tree).toBe(1);
+    expect(counts.blob).toBe(2);
+  });
 });

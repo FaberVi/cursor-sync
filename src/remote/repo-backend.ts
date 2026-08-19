@@ -59,6 +59,11 @@ export class RepoBackend implements RemoteSyncBackend {
   private repo: string;
   private branch: string;
   private basePath: string;
+  /** Ref + tree blobs for this instance (invalidated on write). */
+  private refShaCache: string | undefined;
+  private treeCache:
+    | { refSha: string; blobsByName: Map<string, string> }
+    | undefined;
 
   constructor(options: {
     pat: string;
@@ -197,50 +202,59 @@ export class RepoBackend implements RemoteSyncBackend {
   async getSnapshot(
     options?: RemoteSnapshotOptions
   ): Promise<ApiResult<RemoteSnapshot>> {
-    const refResult = await this.getBranchRef();
-    if (!refResult.ok) {
-      if (refResult.error.statusCode === 404) {
-        return {
-          ok: true,
-          data: {
-            id: this.getIdentity(),
-            htmlUrl: this.remoteUrl()!,
-            files: {},
-            allFileNames: [],
-          },
-        };
+    let refSha = this.refShaCache;
+    if (!refSha) {
+      const refResult = await this.getBranchRef();
+      if (!refResult.ok) {
+        if (refResult.error.statusCode === 404) {
+          return {
+            ok: true,
+            data: {
+              id: this.getIdentity(),
+              htmlUrl: this.remoteUrl()!,
+              files: {},
+              allFileNames: [],
+            },
+          };
+        }
+        return refResult;
       }
-      return refResult;
+      refSha = refResult.data.object.sha;
+      this.refShaCache = refSha;
     }
+    let blobsByName = this.treeCache?.refSha === refSha ? this.treeCache.blobsByName : undefined;
 
-    const commitResult = await githubRequest<GitCommitResponse>(
-      "GET",
-      `/repos/${this.owner}/${this.repo}/git/commits/${refResult.data.object.sha}`,
-      this.pat
-    );
-    if (!commitResult.ok) {
-      return commitResult;
-    }
-
-    const treeResult = await githubRequest<GitTreeResponse>(
-      "GET",
-      `/repos/${this.owner}/${this.repo}/git/trees/${commitResult.data.tree.sha}?recursive=1`,
-      this.pat
-    );
-    if (!treeResult.ok) {
-      return treeResult;
-    }
-
-    const blobsByName = new Map<string, string>();
-    for (const entry of treeResult.data.tree) {
-      if (entry.type !== "blob") {
-        continue;
+    if (!blobsByName) {
+      const commitResult = await githubRequest<GitCommitResponse>(
+        "GET",
+        `/repos/${this.owner}/${this.repo}/git/commits/${refSha}`,
+        this.pat
+      );
+      if (!commitResult.ok) {
+        return commitResult;
       }
-      const flatName = stripRemotePath(this.basePath, entry.path);
-      if (!flatName || flatName.includes("/")) {
-        continue;
+
+      const treeResult = await githubRequest<GitTreeResponse>(
+        "GET",
+        `/repos/${this.owner}/${this.repo}/git/trees/${commitResult.data.tree.sha}?recursive=1`,
+        this.pat
+      );
+      if (!treeResult.ok) {
+        return treeResult;
       }
-      blobsByName.set(flatName, entry.sha);
+
+      blobsByName = new Map<string, string>();
+      for (const entry of treeResult.data.tree) {
+        if (entry.type !== "blob") {
+          continue;
+        }
+        const flatName = stripRemotePath(this.basePath, entry.path);
+        if (!flatName || flatName.includes("/")) {
+          continue;
+        }
+        blobsByName.set(flatName, entry.sha);
+      }
+      this.treeCache = { refSha, blobsByName };
     }
 
     const allFileNames = [...blobsByName.keys()];
@@ -285,6 +299,8 @@ export class RepoBackend implements RemoteSyncBackend {
     files: Record<string, string>,
     options?: { deleteNames?: string[] }
   ): Promise<ApiResult<RemoteWriteResult>> {
+    this.treeCache = undefined;
+    this.refShaCache = undefined;
     const deleteNames = new Set(options?.deleteNames ?? []);
     const refResult = await this.getBranchRef();
 

@@ -15,7 +15,11 @@ import {
   syncKeyToAbsolutePath,
   PartialLocalDeleteError,
 } from "./sync-local-deletes.js";
-import { findMissingExtensions, findExtraExtensions, ensureExtensionsJsonOnDisk, isInstallCandidateExtensionId, isPublisherAllowed } from "./extensions.js";
+import {
+  clearLastRemoteExtensions,
+  ensureExtensionsJsonOnDisk,
+  syncExtensionsFromRemoteFiles,
+} from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
@@ -40,9 +44,13 @@ import {
   hasRemoteDestination,
   normalizeSyncStateDestination,
   readDestinationSettings,
+  remoteSnapshotFileNames,
 } from "./remote/index.js";
+import type { RemoteSnapshot } from "./remote/index.js";
 import { createSidebarSyncProgress } from "./sync-progress-events.js";
-import type { SyncState, Manifest } from "./types.js";
+import { formatElapsedPrecise } from "./elapsed.js";
+import { planPullDownloadNames } from "./pull-download-plan.js";
+import type { ApiResult, SyncState, Manifest } from "./types.js";
 
 export type PullTrigger = "manual" | "scheduled" | "syncNow";
 
@@ -73,15 +81,22 @@ export async function executePull(
   pullLock = true;
   updateStatusBar("syncing");
   const progress = createSidebarSyncProgress("pull");
+  const startedAt = Date.now();
   try {
     progress.report({ message: mirror ? "Starting mirror pull…" : "Starting pull…" });
     const success = await doPull(context, trigger, progress, mirror);
     progress.complete(success);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Pull finished in ${formatElapsedPrecise(Date.now() - startedAt)} (${success ? "ok" : "failed"}).`
+    );
     updateStatusBar(success ? "ok" : "error", new Date());
     refreshSidebar();
     return success;
   } catch (err) {
     progress.complete(false);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Pull finished in ${formatElapsedPrecise(Date.now() - startedAt)} (failed).`
+    );
     updateStatusBar("error", new Date());
     refreshSidebar();
     throw err;
@@ -217,40 +232,75 @@ async function doPull(
     }
   }
 
-  progress.report({ message: "Fetching remote snapshot…" });
-  const snapshotResult = await withRetry(() => backend!.getSnapshot());
-
+  const remoteStarted = Date.now();
+  progress.report({ message: "Fetching remote manifest…" });
+  let snapshotResult = await withRetry(() =>
+    backend!.getSnapshot({ onlyFiles: ["manifest.json"] })
+  );
   if (!snapshotResult.ok) {
-    void showSyncFailureWithDebug(
-      context,
-      buildSyncDebugFailure("pull", trigger, snapshotResult.error.message, {
-        direction: "pull",
-        category: snapshotResult.error.category,
-        statusCode: snapshotResult.error.statusCode,
-      }),
-      { title: `Pull failed: ${snapshotResult.error.message}` }
-    );
-    logger.appendLine(
-      `[${new Date().toISOString()}] Pull failed: ${snapshotResult.error.category} - ${snapshotResult.error.message}`
-    );
-    await addSyncHistoryEntry(context, {
-      timestamp: new Date().toISOString(),
-      direction: "pull",
-      trigger,
-      fileCount: 0,
-      success: false,
-      error: snapshotResult.error.message,
-    });
-    sendEvent(context, "sync_failed", {
-      direction: "pull",
-      reason: snapshotResult.error.category,
-      status_code: snapshotResult.error.statusCode,
-      trigger,
-    });
+    await reportPullRemoteFailure(context, trigger, snapshotResult, logger);
     return false;
   }
 
-  const remoteFiles = snapshotResult.data.files;
+  let snapshot = snapshotResult.data;
+  const firstManifest = snapshot.files["manifest.json"];
+  if (!firstManifest || !isReadableManifestJson(firstManifest)) {
+    logger.appendLine(
+      "[Cursor Sync] Remote manifest.json missing or unreadable; fetching full snapshot."
+    );
+    progress.report({ message: "Fetching remote snapshot…" });
+    snapshotResult = await withRetry(() => backend!.getSnapshot());
+    if (!snapshotResult.ok) {
+      await reportPullRemoteFailure(context, trigger, snapshotResult, logger);
+      return false;
+    }
+    snapshot = snapshotResult.data;
+  } else {
+    const previewChecksums = checksumsFromManifestJson(firstManifest) ?? {};
+    const downloadKeepLocal = new Set<string>();
+    for (const key of Object.keys(previewChecksums)) {
+      if (getResolutionForKey(key) === "keepLocal") {
+        downloadKeepLocal.add(key);
+      }
+    }
+    const downloadNames = planPullDownloadNames({
+      manifestChecksums: previewChecksums,
+      localChecksums: syncState?.localChecksums ?? {},
+      allFileNames: remoteSnapshotFileNames(snapshot),
+      keepLocalKeys: downloadKeepLocal,
+      chatEnabled: isChatSyncEnabled(),
+      chatFiles: [
+        { syncKey: CURSOR_CHAT_SYNC_KEY, gistName: CURSOR_CHAT_GIST_FILE_NAME },
+        { syncKey: CHAT_BUNDLES_SYNC_KEY, gistName: CHAT_BUNDLES_GIST_FILE_NAME },
+      ],
+    });
+    if (downloadNames.length === 0) {
+      logger.appendLine(
+        "[Cursor Sync] Remote files already in sync; skipping content download."
+      );
+    } else {
+      progress.report({
+        message: `Fetching ${downloadNames.length} changed file(s)…`,
+      });
+      const second = await withRetry(() =>
+        backend!.getSnapshot({ onlyFiles: downloadNames })
+      );
+      if (!second.ok) {
+        await reportPullRemoteFailure(context, trigger, second, logger);
+        return false;
+      }
+      snapshot = {
+        ...snapshot,
+        files: { ...snapshot.files, ...second.data.files },
+      };
+    }
+  }
+
+  logger.appendLine(
+    `[Cursor Sync] Remote snapshot ready in ${formatElapsedPrecise(Date.now() - remoteStarted)} (${Object.keys(snapshot.files).length} file(s) downloaded).`
+  );
+
+  const remoteFiles = snapshot.files;
   const manifestContent = remoteFiles["manifest.json"];
   if (!manifestContent) {
     const message =
@@ -402,9 +452,6 @@ async function doPull(
     const n = filesToWrite.length;
     const m = keysToDelete.length;
     if (n === 0 && m === 0) {
-      if (trigger === "manual" || trigger === "syncNow") {
-        vscode.window.showInformationMessage("Pull complete: already in sync.");
-      }
       await addSyncHistoryEntry(context, {
         timestamp: new Date().toISOString(),
         direction: "pull",
@@ -424,7 +471,7 @@ async function doPull(
       let alignedState: SyncState = buildSyncStateAfterWrite(
         syncState,
         backend!,
-        snapshotResult.data.id,
+        snapshot.id,
         localChecksums,
         "pull"
       );
@@ -435,6 +482,16 @@ async function doPull(
       await saveSyncState(context, alignedState);
       await clearConflicts();
       sendEvent(context, "sync_completed", { direction: "pull", file_count: 0, trigger });
+      await applyRemoteExtensionSync(
+        context,
+        remoteFiles,
+        logger,
+        keepLocalExtensions,
+        progress
+      );
+      if (trigger === "manual" || trigger === "syncNow") {
+        vscode.window.showInformationMessage("Pull complete: already in sync.");
+      }
       progress.report({ message: "Done" });
       await migrateAndLogSkillArtifacts();
       return true;
@@ -479,9 +536,6 @@ async function doPull(
   }
 
   if (filesToWrite.length === 0 && keysToDelete.length === 0) {
-    if (trigger === "manual") {
-      vscode.window.showInformationMessage("Pull complete: no files to update.");
-    }
     await addSyncHistoryEntry(context, {
       timestamp: new Date().toISOString(),
       direction: "pull",
@@ -500,7 +554,7 @@ async function doPull(
     let alignedState: SyncState = buildSyncStateAfterWrite(
       syncState,
       backend!,
-      snapshotResult.data.id,
+      snapshot.id,
       localChecksums,
       "pull"
     );
@@ -511,6 +565,16 @@ async function doPull(
     await saveSyncState(context, alignedState);
     await clearConflicts();
     sendEvent(context, "sync_completed", { direction: "pull", file_count: 0, trigger });
+    await applyRemoteExtensionSync(
+      context,
+      remoteFiles,
+      logger,
+      keepLocalExtensions,
+      progress
+    );
+    if (trigger === "manual") {
+      vscode.window.showInformationMessage("Pull complete: no files to update.");
+    }
     progress.report({ message: "Done" });
     await migrateAndLogSkillArtifacts();
     return true;
@@ -637,7 +701,7 @@ async function doPull(
   let newState: SyncState = buildSyncStateAfterWrite(
     syncState,
     backend!,
-    snapshotResult.data.id,
+    snapshot.id,
     newLocalChecksums,
     "pull"
   );
@@ -667,27 +731,6 @@ async function doPull(
     trigger,
     destination_type: backend!.type,
   });
-
-  if (!keepLocalExtensions) {
-    await syncExtensionsAfterPull(remoteFiles, logger);
-    await ensureExtensionsJsonOnDisk();
-    try {
-      const rootsAfter = resolveSyncRoots();
-      const extPath = path.join(rootsAfter.cursorUser, "extensions.json");
-      const extBuf = await fs.readFile(extPath);
-      const extChecksum = computeChecksum(extBuf);
-      newState = {
-        ...newState,
-        localChecksums: {
-          ...newState.localChecksums,
-          [extensionsKey]: extChecksum,
-        },
-      };
-      await saveSyncState(context, newState);
-    } catch {
-      // Best-effort; next sync will recompute.
-    }
-  }
 
   let chatImported = 0;
   let chatSkipped = 0;
@@ -720,19 +763,46 @@ async function doPull(
         ? CURSOR_CHAT_SYNC_KEY
         : CHAT_BUNDLES_SYNC_KEY;
       if (chatChecksum) {
-        const updatedState: SyncState = {
+        newState = {
           ...newState,
           localChecksums: {
             ...newState.localChecksums,
             [chatSyncKey]: chatChecksum,
           },
         };
-        await saveSyncState(context, updatedState);
+        await saveSyncState(context, newState);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.appendLine(`[${new Date().toISOString()}] Pull chat sync failed: ${msg}`);
       vscode.window.showWarningMessage(`Settings pulled; chat import failed: ${msg}`);
+    }
+  }
+
+  await applyRemoteExtensionSync(
+    context,
+    remoteFiles,
+    logger,
+    keepLocalExtensions,
+    progress
+  );
+  if (!keepLocalExtensions) {
+    await ensureExtensionsJsonOnDisk();
+    try {
+      const rootsAfter = resolveSyncRoots();
+      const extPath = path.join(rootsAfter.cursorUser, "extensions.json");
+      const extBuf = await fs.readFile(extPath);
+      const extChecksum = computeChecksum(extBuf);
+      newState = {
+        ...newState,
+        localChecksums: {
+          ...newState.localChecksums,
+          [extensionsKey]: extChecksum,
+        },
+      };
+      await saveSyncState(context, newState);
+    } catch {
+      // Best-effort; next sync will recompute.
     }
   }
 
@@ -753,105 +823,73 @@ async function doPull(
   return true;
 }
 
-const CONCURRENT_INSTALLS = 2;
+function isReadableManifestJson(raw: string): boolean {
+  return checksumsFromManifestJson(raw) !== undefined;
+}
 
-async function syncExtensionsAfterPull(
-  remoteFiles: Record<string, string>,
-  logger: vscode.OutputChannel
-): Promise<void> {
-  const extContent = remoteFiles["cursor-user--extensions.json"];
-  if (!extContent) {
-    return;
-  }
-
-  let entries: Array<{ id: string; version: string }>;
+function checksumsFromManifestJson(raw: string): Record<string, string> | undefined {
   try {
-    entries = JSON.parse(extContent) as Array<{ id: string; version: string }>;
-  } catch {
-    return;
-  }
-
-  const config = vscode.workspace.getConfiguration("cursorSync");
-  const autoInstall = config.get<boolean>("syncExtensions.autoInstall") ?? false;
-  const autoUninstall = config.get<boolean>("syncExtensions.autoUninstall") ?? false;
-  const allowedPublishers =
-    config.get<string[]>("syncExtensions.allowedPublishers") ?? [];
-
-  const installCandidates = entries.filter(
-    (entry) =>
-      isInstallCandidateExtensionId(entry.id) &&
-      isPublisherAllowed(entry.id, allowedPublishers)
-  );
-  const skippedBuiltinRemote = entries.length - installCandidates.length;
-  if (skippedBuiltinRemote > 0) {
-    logger.appendLine(
-      `[${new Date().toISOString()}] Skipping ${skippedBuiltinRemote} product/builtin/invalid extension id(s) from remote install list`
-    );
-  }
-
-  const missing = findMissingExtensions(installCandidates);
-  if (missing.length > 0 && autoInstall) {
-    const names = missing.map((m) => m.id).join(", ");
-    const choice = await vscode.window.showWarningMessage(
-      `Install ${missing.length} extension(s) from the synced list?\n${names}`,
-      "Install",
-      "Skip"
-    );
-    if (choice === "Install") {
-      for (let i = 0; i < missing.length; i += CONCURRENT_INSTALLS) {
-        const batch = missing.slice(i, i + CONCURRENT_INSTALLS);
-        await Promise.all(
-          batch.map(async (entry) => {
-            try {
-              await vscode.commands.executeCommand(
-                "workbench.extensions.installExtension",
-                entry.id
-              );
-            } catch (err) {
-              logger.appendLine(
-                `[${new Date().toISOString()}] Failed to install extension ${entry.id}: ${err instanceof Error ? err.message : String(err)}`
-              );
-            }
-          })
-        );
+    const parsed = JSON.parse(raw) as { files?: Record<string, { checksum?: string }> };
+    if (!parsed || typeof parsed !== "object" || !parsed.files || typeof parsed.files !== "object") {
+      return undefined;
+    }
+    const checksums: Record<string, string> = {};
+    for (const [key, entry] of Object.entries(parsed.files)) {
+      if (entry?.checksum) {
+        checksums[key] = entry.checksum;
       }
     }
-  } else if (missing.length > 0) {
-    const names = missing.map((m) => m.id).join(", ");
-    vscode.window.showInformationMessage(
-      `Extensions present remotely but not installed locally: ${names}`
-    );
+    return checksums;
+  } catch {
+    return undefined;
   }
+}
 
-  const extras = findExtraExtensions(entries);
-  if (extras.length === 0) {
+async function reportPullRemoteFailure(
+  context: vscode.ExtensionContext,
+  trigger: PullTrigger,
+  snapshotResult: Extract<ApiResult<RemoteSnapshot>, { ok: false }>,
+  logger: vscode.OutputChannel
+): Promise<void> {
+  void showSyncFailureWithDebug(
+    context,
+    buildSyncDebugFailure("pull", trigger, snapshotResult.error.message, {
+      direction: "pull",
+      category: snapshotResult.error.category,
+      statusCode: snapshotResult.error.statusCode,
+    }),
+    { title: `Pull failed: ${snapshotResult.error.message}` }
+  );
+  logger.appendLine(
+    `[${new Date().toISOString()}] Pull failed: ${snapshotResult.error.category} - ${snapshotResult.error.message}`
+  );
+  await addSyncHistoryEntry(context, {
+    timestamp: new Date().toISOString(),
+    direction: "pull",
+    trigger,
+    fileCount: 0,
+    success: false,
+    error: snapshotResult.error.message,
+  });
+  sendEvent(context, "sync_failed", {
+    direction: "pull",
+    reason: snapshotResult.error.category,
+    status_code: snapshotResult.error.statusCode,
+    trigger,
+  });
+}
+
+async function applyRemoteExtensionSync(
+  context: vscode.ExtensionContext,
+  remoteFiles: Record<string, string>,
+  logger: vscode.OutputChannel,
+  keepLocal: boolean,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<void> {
+  if (keepLocal) {
+    await clearLastRemoteExtensions(context);
     return;
   }
-
-  let shouldUninstall = autoUninstall;
-  if (!shouldUninstall) {
-    const choice = await vscode.window.showWarningMessage(
-      `Remove ${extras.length} extension(s) that are not in the synced list?`,
-      "Yes",
-      "No"
-    );
-    shouldUninstall = choice === "Yes";
-  }
-
-  if (!shouldUninstall) {
-    return;
-  }
-
-  for (const id of extras) {
-    try {
-      await vscode.commands.executeCommand(
-        "workbench.extensions.uninstallExtension",
-        id
-      );
-    } catch (err) {
-      logger.appendLine(
-        `[${new Date().toISOString()}] Failed to uninstall extension ${id}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  }
+  progress.report({ message: "Checking extensions…" });
+  await syncExtensionsFromRemoteFiles(context, remoteFiles, logger);
 }

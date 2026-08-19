@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { formatElapsedMs } from "./elapsed.js";
 
 export type SyncProgressOperation = "push" | "pull" | "syncNow";
 
@@ -11,10 +12,15 @@ export interface SyncProgressEvent {
   ok?: boolean;
   /** When false, sync action buttons should stay disabled (nested ops). */
   busy?: boolean;
+  /** Milliseconds since this reporter started. */
+  elapsedMs?: number;
+  /** Compact label for the sidebar (`12s`, `1m 08s`). */
+  elapsedLabel?: string;
 }
 
 let emitterInstance: vscode.EventEmitter<SyncProgressEvent> | undefined;
 let busyDepth = 0;
+const tickTimers = new Set<ReturnType<typeof setInterval>>();
 
 function getEmitter(): vscode.EventEmitter<SyncProgressEvent> {
   if (!emitterInstance) {
@@ -34,6 +40,10 @@ export function emitSyncProgress(event: SyncProgressEvent): void {
 }
 
 export function disposeSyncProgress(): void {
+  for (const timer of tickTimers) {
+    clearInterval(timer);
+  }
+  tickTimers.clear();
   emitterInstance?.dispose();
   emitterInstance = undefined;
   busyDepth = 0;
@@ -66,11 +76,43 @@ export function createSidebarSyncProgress(
 } {
   let percent = 4;
   let held = false;
+  let finished = false;
+  let lastMessage = "";
+  const startedAt = Date.now();
+  let tickTimer: ReturnType<typeof setInterval> | undefined;
+
+  const elapsedFields = (): { elapsedMs: number; elapsedLabel: string } => {
+    const elapsedMs = Math.max(0, Date.now() - startedAt);
+    return { elapsedMs, elapsedLabel: formatElapsedMs(elapsedMs) };
+  };
+
+  const stopTick = () => {
+    if (tickTimer !== undefined) {
+      clearInterval(tickTimer);
+      tickTimers.delete(tickTimer);
+      tickTimer = undefined;
+    }
+  };
+
+  const emitBusy = (message: string, nextPercent: number) => {
+    emitSyncProgress({
+      operation,
+      message,
+      percent: nextPercent,
+      busy: true,
+      done: false,
+      ...elapsedFields(),
+    });
+  };
 
   const ensureHeld = () => {
     if (!held) {
       held = true;
       busyDepth += 1;
+      tickTimer = setInterval(() => {
+        emitBusy(lastMessage, percent);
+      }, 1000);
+      tickTimers.add(tickTimer);
     }
   };
 
@@ -82,16 +124,18 @@ export function createSidebarSyncProgress(
       } else if (message) {
         percent = Math.min(95, percent + 6);
       }
-      emitSyncProgress({
-        operation,
-        message: message ?? "",
-        percent,
-        busy: true,
-        done: false,
-      });
+      if (message) {
+        lastMessage = message;
+      }
+      emitBusy(lastMessage, percent);
     },
     complete(ok: boolean) {
+      if (finished) {
+        return;
+      }
+      finished = true;
       ensureHeld();
+      stopTick();
       if (held) {
         busyDepth = Math.max(0, busyDepth - 1);
         held = false;
@@ -104,6 +148,7 @@ export function createSidebarSyncProgress(
         done: !stillBusy,
         busy: stillBusy,
         ok,
+        ...elapsedFields(),
       });
     },
   };

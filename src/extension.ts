@@ -29,6 +29,10 @@ import { startScheduler, stopScheduler } from "./scheduler.js";
 import { determineSyncAction } from "./scheduler.js";
 import { getLogger, loadSyncState } from "./diagnostics.js";
 import {
+  promptAndInstallMissingExtensions,
+  readLastRemoteExtensions,
+} from "./extensions.js";
+import {
   migrateAndLogSkillArtifacts,
   purgeRemoteSkillArtifacts,
 } from "./skill-artifacts-migrate.js";
@@ -320,6 +324,11 @@ export async function executeSyncNow(
     const result = await determineSyncAction(context);
     switch (result.action) {
       case "none":
+        progress.report({ message: "Checking extensions…" });
+        await promptAndInstallMissingExtensions(
+          readLastRemoteExtensions(context),
+          logger
+        );
         vscode.window.showInformationMessage("Already in sync, nothing to do.");
         progress.complete(true);
         break;

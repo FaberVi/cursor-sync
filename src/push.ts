@@ -12,7 +12,12 @@ import {
   getUnresolvedConflicts,
   getResolutionForKey,
 } from "./conflicts.js";
-import { generateExtensionsJson, writeExtensionsFile } from "./extensions.js";
+import {
+  cacheLastRemoteExtensions,
+  generateExtensionsJson,
+  parseExtensionEntries,
+  writeExtensionsFile,
+} from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
@@ -42,6 +47,7 @@ import {
 import { ensureRepoExistsInteractive } from "./remote/ensure-repo.js";
 import { selectPushDelta } from "./push-delta.js";
 import { createSidebarSyncProgress } from "./sync-progress-events.js";
+import { formatElapsedPrecise } from "./elapsed.js";
 import { ensureParentDirectory } from "./rollback.js";
 import type { ManifestFileEntry, SyncState } from "./types.js";
 import * as path from "node:path";
@@ -68,15 +74,22 @@ export async function executePush(
   pushLock = true;
   updateStatusBar("syncing");
   const progress = createSidebarSyncProgress("push");
+  const startedAt = Date.now();
   try {
     progress.report({ message: "Starting push…" });
     const success = await doPush(context, trigger, progress);
     progress.complete(success);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Push finished in ${formatElapsedPrecise(Date.now() - startedAt)} (${success ? "ok" : "failed"}).`
+    );
     updateStatusBar(success ? "ok" : "error", new Date());
     refreshSidebar();
     return success;
   } catch (err) {
     progress.complete(false);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Push finished in ${formatElapsedPrecise(Date.now() - startedAt)} (failed).`
+    );
     updateStatusBar("error", new Date());
     refreshSidebar();
     throw err;
@@ -202,6 +215,7 @@ async function doPush(
   }
 
   progress.report({ message: "Fetching remote manifest…" });
+  const remoteStarted = Date.now();
   const snapshotResult = await withRetry(() =>
     backend.getSnapshot({ onlyFiles: ["manifest.json"] })
   );
@@ -234,6 +248,10 @@ async function doPush(
       }
     }
   }
+
+  logger.appendLine(
+    `[Cursor Sync] Remote manifest ready in ${formatElapsedPrecise(Date.now() - remoteStarted)}.`
+  );
 
   let keepRemoteKeys = new Set<string>();
   if (syncState) {
@@ -318,6 +336,14 @@ async function doPush(
   const extensionsKey = "cursor-user/extensions.json";
   if (!keepRemoteKeys.has(extensionsKey)) {
     const extensionsJson = generateExtensionsJson();
+    try {
+      const parsed = parseExtensionEntries(JSON.parse(extensionsJson));
+      if (parsed) {
+        await cacheLastRemoteExtensions(context, parsed);
+      }
+    } catch {
+      // Cache is best-effort; push must still upload.
+    }
     const cursorUserRoot = resolveSyncRoots().cursorUser;
     await writeExtensionsFile(cursorUserRoot, extensionsJson);
   }

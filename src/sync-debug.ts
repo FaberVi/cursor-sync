@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import * as vscode from "vscode";
 import {
   COMPOSER_GET_HANDLE_COMMAND_ID,
@@ -11,6 +9,9 @@ import {
   parseComposerIdFromCommandResult,
 } from "./chat-import-activate.js";
 import { getLogger } from "./diagnostics.js";
+import { readExtensionVersion } from "./extension-version.js";
+
+export { readExtensionVersion } from "./extension-version.js";
 
 export type SyncDebugOperation = "syncNow" | "push" | "pull" | "scheduler";
 export type SyncDebugDirection = "push" | "pull";
@@ -41,23 +42,6 @@ const GIST_ID_PATTERN = /\b[a-f0-9]{32}\b/gi;
 const TILDE_PATH_PATTERN = /~(?:\/|\\)[^\s"'`,;:]+/g;
 const ABSOLUTE_PATH_PATTERN =
   /(?:\/(?:home|Users|root|etc|tmp|var|opt|private|Volumes)(?:\/[^\s"'`,;:]+)*|(?:[A-Za-z]:[\\/][^\s"'`,;:]+)+)/g;
-
-let cachedExtensionVersion: string | undefined;
-
-export function readExtensionVersion(): string {
-  if (cachedExtensionVersion !== undefined) {
-    return cachedExtensionVersion;
-  }
-  try {
-    const packageJson = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8")
-    ) as { version: string };
-    cachedExtensionVersion = packageJson.version;
-  } catch {
-    cachedExtensionVersion = "unknown";
-  }
-  return cachedExtensionVersion;
-}
 
 export function buildSyncDebugFailure(
   operation: SyncDebugOperation,

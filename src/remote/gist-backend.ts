@@ -1,5 +1,5 @@
 import { GistClient, fetchGistFileContent } from "../gist.js";
-import type { ApiResult } from "../types.js";
+import type { ApiResult, GistResponse } from "../types.js";
 import type {
   RemoteDiscoverResult,
   RemoteSnapshot,
@@ -16,6 +16,8 @@ export class GistBackend implements RemoteSyncBackend {
   private pat: string;
   private gistId: string | undefined;
   private lastHtmlUrl: string | undefined;
+  /** Last GET /gists/{id} for this backend instance (one pull/push). */
+  private cachedGist: { id: string; response: GistResponse } | undefined;
 
   constructor(pat: string, gistId?: string) {
     this.pat = pat;
@@ -45,6 +47,7 @@ export class GistBackend implements RemoteSyncBackend {
         return result;
       }
       this.lastHtmlUrl = result.data.html_url;
+      this.cachedGist = { id: result.data.id, response: result.data };
       return {
         ok: true,
         data: { id: result.data.id, htmlUrl: result.data.html_url },
@@ -86,7 +89,7 @@ export class GistBackend implements RemoteSyncBackend {
       }
     }
 
-    const result = await this.client.getGist(this.gistId!);
+    const result = await this.getGistCached();
     if (!result.ok) {
       return result;
     }
@@ -129,10 +132,27 @@ export class GistBackend implements RemoteSyncBackend {
     };
   }
 
+  private async getGistCached(): Promise<ApiResult<GistResponse>> {
+    if (
+      this.gistId &&
+      this.cachedGist &&
+      this.cachedGist.id === this.gistId
+    ) {
+      return { ok: true, data: this.cachedGist.response };
+    }
+    const result = await this.client.getGist(this.gistId!);
+    if (result.ok) {
+      this.cachedGist = { id: result.data.id, response: result.data };
+      this.gistId = result.data.id;
+    }
+    return result;
+  }
+
   async writeFiles(
     files: Record<string, string>,
     options?: { deleteNames?: string[] }
   ): Promise<ApiResult<RemoteWriteResult>> {
+    this.cachedGist = undefined;
     const payload: Record<string, { content: string } | null> = {};
     for (const [name, content] of Object.entries(files)) {
       payload[name] = { content };

@@ -2,7 +2,14 @@
 
 ## [Unreleased]
 
+## v0.11.1
+
 ### Fixed
+- Pull downloads only files whose remote checksum changed (plus `extensions.json` when present) instead of re-fetching the entire Gist/repo snapshot. Unchanged chat backups are skipped. A single pull reuses one Gist `GET /gists/{id}` for the two-phase fetch.
+- Sidebar sync progress shows a live elapsed timer (`12s`, `1m 08s`) on pull and push.
+- Missing-extension **Install / Skip** prompt on pull/sync is shown again (awaited warning, not a toast covered by “Pull complete”). After upgrading, run **Pull Now** once so later Sync Now / no-op pulls can re-prompt from the cached remote list.
+- Pull no longer appears stuck on **Saving sync state…** while waiting for extension prompts: sync state is saved first, the sidebar shows **Checking extensions…**, and Install/Skip (and Remove extras) use a modal dialog.
+- Sidebar status badge reads the installed extension version from `package.json` on disk (stays in sync after upgrade).
 - Sidebar opens instantly with a shell UI instead of staying blank while chat discovery and remote gist/repo fetches complete.
 - Clicking a file in sync history opens it in the editor (when it still exists on disk).
 - Settings tab stacks label above field when the sidebar is narrower than ~380px, so destination/interval controls are no longer cramped or truncated.

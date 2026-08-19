@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { clearToken } from "./auth.js";
 import { clearSyncState } from "./diagnostics.js";
+import { clearLastRemoteExtensions } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 
@@ -20,6 +21,7 @@ export async function executeReset(context: vscode.ExtensionContext): Promise<vo
 
   // Clear Sync State (Gist ID, timestamps, checksums)
   await clearSyncState(context);
+  await clearLastRemoteExtensions(context);
 
   // Reset Configuration Settings
   const config = vscode.workspace.getConfiguration("cursorSync");

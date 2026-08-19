@@ -193,7 +193,8 @@ Commands such as Resolve Conflicts and Reset are available from the Command Pale
 | `cursorSync.maxFileSizeKB` | `number` | `512` | Skip files larger than this size in KB |
 | `cursorSync.syncProfileName` | `string` | `"default"` | Profile name written to the sync manifest |
 | `cursorSync.safeMode` | `boolean` | `true` | On **soft** pull (not mirror Pull Now), require multi-select confirmation before overwriting local files |
-| `cursorSync.syncExtensions.autoInstall` | `boolean` | `true` | On pull, auto-install extensions that are in the synced list but not installed locally |
+| `cursorSync.syncExtensions.autoInstall` | `boolean` | `false` | On pull/sync, prompt to install extensions that are in the synced list but not installed locally. Installs always require confirmation (never silent) |
+| `cursorSync.syncExtensions.allowedPublishers` | `string[]` | `[]` | When non-empty, only offer to install extensions whose publisher (id prefix before `.`) is in this list |
 | `cursorSync.syncExtensions.autoUninstall` | `boolean` | `false` | On pull, auto-uninstall extensions that are installed locally but not in the synced list (use with caution) |
 
 ## Export and Import
@@ -240,11 +241,12 @@ Works with the **transport-chat** skill (`~/.cursor/skills/transport-chat`):
 
 ## Extension List Sync
 
-On push, the extension generates an `extensions.json` file listing all installed non-builtin extensions with their IDs and versions. On pull:
+On push, the extension generates an `extensions.json` file listing all installed non-builtin extensions with their IDs and versions. On pull and Sync Now:
 
-- If **Auto-install** is enabled (default): extensions present in the synced list but not installed locally are installed automatically.
-- If **Auto-install** is disabled: a notification lists missing extensions; they are not installed.
-- Extensions installed locally but not in the synced list: if **Auto-uninstall** is enabled, they are uninstalled; if disabled, you are prompted to confirm removal.
+- Missing extensions (in the synced list, not installed locally) always show an **Install / Skip** confirmation. Nothing is installed unless you choose **Install**.
+- After upgrading, run **Pull Now** once so the remote list is cached; later Sync Now / no-op pulls can offer the same prompt even when files are already in sync.
+- Keep Local on `extensions.json` skips the prompt and clears the cached remote list.
+- Extensions installed locally but not in the synced list: if **Auto-uninstall** is enabled, they are uninstalled; if disabled, a pull prompts to confirm removal (Sync Now “already in sync” does not ask to uninstall).
 
 Extensions are installed at the latest available version; the synced list records versions for reference only.
 
@@ -265,4 +267,4 @@ If a pull (or import) fails partway through writing files, all partially written
 
 ## Reset
 
-**Cursor Sync: Reset Extension State** clears your GitHub token, sync state (e.g. Gist ID / repo destination, checksums), and resets the following settings to their defaults: `enabledPaths`, `excludeGlobs`, `schedule.enabled`, `schedule.interval`, `schedule.intervalUnit`, `schedule.intervalMin`, `destination.type`, `destination.repo`, `destination.branch`, `destination.path`, `maxFileSizeKB`, `syncProfileName`, `safeMode`. It does not change `syncExtensions.autoInstall` or `syncExtensions.autoUninstall`. Use this to start over or move to a new machine without reusing the previous remote.
+**Cursor Sync: Reset Extension State** clears your GitHub token, sync state (e.g. Gist ID / repo destination, checksums), the cached remote extension list used for missing-install prompts, and resets the following settings to their defaults: `enabledPaths`, `excludeGlobs`, `schedule.enabled`, `schedule.interval`, `schedule.intervalUnit`, `schedule.intervalMin`, `destination.type`, `destination.repo`, `destination.branch`, `destination.path`, `maxFileSizeKB`, `syncProfileName`, `safeMode`. It does not change `syncExtensions.autoInstall` or `syncExtensions.autoUninstall`. Use this to start over or move to a new machine without reusing the previous remote.
