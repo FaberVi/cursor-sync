@@ -5,9 +5,13 @@ import * as path from "node:path";
 
 const showQuickPickMock = vi.fn();
 
-vi.mock("vscode", () => ({
-  window: { showQuickPick: showQuickPickMock, showErrorMessage: vi.fn() },
-}));
+vi.mock("vscode", async () => {
+  const base = await import("./__mocks__/vscode.js");
+  return {
+    ...base,
+    window: { ...base.window, showQuickPick: showQuickPickMock, showErrorMessage: vi.fn() },
+  };
+});
 
 vi.mock("../src/transcripts.js", () => ({
   __chatPersistenceInternals: {
@@ -64,7 +68,7 @@ describe("import gist workspace picker labels", () => {
       label: string;
       description: string;
     }>;
-    expect(firstPickArg[0]!.label).toBe(path.join("~", "repo"));
+    expect(firstPickArg[0]!.label).toBe("~/repo");
     expect(firstPickArg[0]!.description).toBe(key);
   });
 });

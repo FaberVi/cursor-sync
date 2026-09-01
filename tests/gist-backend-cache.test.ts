@@ -75,6 +75,53 @@ describe("GistBackend snapshot cache", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("reports onFileProgress after each downloaded gist file", async () => {
+    const gist = gistResponse();
+    vi.spyOn(GistClient.prototype, "getGist").mockResolvedValue({
+      ok: true,
+      data: gist,
+    });
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+
+    const progress: Array<[number, number]> = [];
+    const backend = new GistBackend("token", "gist-abc");
+    const snap = await backend.getSnapshot({
+      onlyFiles: ["manifest.json", "cursor-user--settings.json"],
+      onFileProgress: (completed, total) => {
+        progress.push([completed, total]);
+      },
+    });
+
+    expect(snap.ok).toBe(true);
+    expect(progress).toEqual([
+      [1, 2],
+      [2, 2],
+    ]);
+  });
+
+  it("does not report onFileProgress when a gist file fetch fails", async () => {
+    const gist = gistResponse();
+    vi.spyOn(GistClient.prototype, "getGist").mockResolvedValue({
+      ok: true,
+      data: gist,
+    });
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("network");
+    }) as unknown as typeof fetch;
+
+    const progress: Array<[number, number]> = [];
+    const backend = new GistBackend("token", "gist-abc");
+    const snap = await backend.getSnapshot({
+      onlyFiles: ["cursor-chat.json"],
+      onFileProgress: (completed, total) => {
+        progress.push([completed, total]);
+      },
+    });
+
+    expect(snap.ok).toBe(false);
+    expect(progress).toEqual([]);
+  });
+
   it("invalidates the cache after writeFiles", async () => {
     const gist = gistResponse();
     const getGist = vi

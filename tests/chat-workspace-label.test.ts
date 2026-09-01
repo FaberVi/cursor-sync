@@ -72,13 +72,13 @@ describe("workspaceQuickPickLabel", () => {
 });
 
 describe("projectQuickPickLabel", () => {
-  it("uses decoded folder label when project dir matches map folder basename", async () => {
+  it("uses tilde path when project dir matches map folder basename", async () => {
     const { projectQuickPickLabel } = await import("../src/chat-workspace-label.js");
     const home = os.homedir();
     const folder = path.join(home, "dev", "cursor-sync");
     const map = new Map([[md5FolderKey(folder), folder]]);
     const projectDir = "home-user-dev-cursor-sync-abcdef12";
-    expect(projectQuickPickLabel(projectDir, map, home)).toBe("home-user-dev-cursor-sync");
+    expect(projectQuickPickLabel(projectDir, map, home)).toBe("~/dev/cursor-sync");
   });
 
   it("falls back to humanWorkspaceLabel when no match", async () => {

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- Sidebar pull/push progress no longer rebuilds the bar on every elapsed-timer tick (the fill reset and slid forward once a second).
+- Pull reports real `Fetching n/total` and `Writing n/total` progress with an absolute percent, matching repo push uploads.
+- Chat transport and composer-bridge Python on Windows uses `py -3` (not the Microsoft Store `python3` stub). Workspace `chatImport.pythonPath` is ignored; only the user-global setting applies.
+
 ## v0.11.2
 
 ### Fixed

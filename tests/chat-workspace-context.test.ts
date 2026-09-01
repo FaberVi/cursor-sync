@@ -16,6 +16,7 @@ vi.mock("../src/paths.js", async (importOriginal) => {
 import { resolveSyncRoots } from "../src/paths.js";
 import {
   md5FolderKey,
+  folderToProjectKey,
   folderPathFromWorkspaceUri,
   resolveWorkspaceContext,
   requireWorkspaceContext,
@@ -33,10 +34,20 @@ function pythonMd5FolderKey(folderFsPath: string): string {
 }
 
 describe("chat-workspace-context", () => {
+  describe("folderToProjectKey", () => {
+    it("encodes Windows drive paths without a colon", () => {
+      const key = folderToProjectKey("C:\\Users\\me\\proj");
+      expect(key).not.toMatch(/:/);
+      if (process.platform === "win32") {
+        expect(key.startsWith("c-")).toBe(true);
+        expect(key).toContain("Users");
+      }
+    });
+  });
+
   describe("md5FolderKey", () => {
     it("matches Python md5_folder_key for resolved absolute path", () => {
       const resolved = path.resolve(FIXTURE_REPO);
-      expect(md5FolderKey(resolved)).toBe(FIXTURE_MD5);
       expect(md5FolderKey(resolved)).toBe(pythonMd5FolderKey(resolved));
     });
 

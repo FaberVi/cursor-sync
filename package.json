@@ -399,7 +399,7 @@
         "cursorSync.chatImport.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to a Python 3 interpreter for chat-transport scripts. Empty = auto-detect (python3, python)."
+          "description": "Absolute path to a Python 3 interpreter for chat-transport scripts. Empty = auto-detect (py -3 on Windows; python3/python elsewhere). Workspace settings are ignored for security."
         },
         "cursorSync.chatImport.transportChatScriptDir": {
           "type": "string",

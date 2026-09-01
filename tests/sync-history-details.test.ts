@@ -138,9 +138,9 @@ describe("dispatchSidebarMessage - history:details", () => {
 
     expect(showQuickPick).toHaveBeenCalledOnce();
     const [items, options] = showQuickPick.mock.calls[0]!;
-    expect(items).toEqual([
-      { label: "settings.json" },
-      { label: "keybindings.json" },
+    expect(items).toMatchObject([
+      { label: "settings.json", syncKey: "settings.json" },
+      { label: "keybindings.json", syncKey: "keybindings.json" },
     ]);
     expect(options).toMatchObject({
       title: "Pull · 2 files",

@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("vscode", () => import("./__mocks__/vscode.js"));
+
 import type { ChatBundle } from "../src/chat-persistence.js";
 import {
   aggregateChatSyncFidelity,

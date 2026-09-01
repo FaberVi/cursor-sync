@@ -2,6 +2,13 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
+const mockHomedir = vi.hoisted(() => ({ current: "" }));
+
+vi.mock("node:os", async () => {
+  const actual = await vi.importActual<typeof import("node:os")>("node:os");
+  return { ...actual, homedir: () => mockHomedir.current || actual.homedir() };
+});
+
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -104,6 +111,8 @@ vi.mock("../src/paths.js", () => ({
 
 describe("chat-import-sidebar-writeback", () => {
   let tempHome: string;
+  let savedHome: string | undefined;
+  let savedUserProfile: string | undefined;
   let globalStateStore: Record<string, unknown>;
   let context: import("vscode").ExtensionContext;
   let flushPendingSidebarWriteback: typeof import("../src/chat-import-sidebar-writeback.js").flushPendingSidebarWriteback;
@@ -111,7 +120,11 @@ describe("chat-import-sidebar-writeback", () => {
 
   beforeEach(async () => {
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-writeback-"));
+    mockHomedir.current = tempHome;
+    savedHome = process.env.HOME;
+    savedUserProfile = process.env.USERPROFILE;
     process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
     vi.resetModules();
     const mod = await import("../src/chat-import-sidebar-writeback.js");
     flushPendingSidebarWriteback = mod.flushPendingSidebarWriteback;
@@ -138,7 +151,17 @@ describe("chat-import-sidebar-writeback", () => {
   });
 
   afterEach(async () => {
-    delete process.env.HOME;
+    if (savedHome !== undefined) {
+      process.env.HOME = savedHome;
+    } else {
+      delete process.env.HOME;
+    }
+    if (savedUserProfile !== undefined) {
+      process.env.USERPROFILE = savedUserProfile;
+    } else {
+      delete process.env.USERPROFILE;
+    }
+    mockHomedir.current = "";
     await fs.rm(tempHome, { recursive: true, force: true });
   });
 

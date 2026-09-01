@@ -38,6 +38,14 @@ vi.mock("node:fs/promises", () => ({
   readdir: vi.fn().mockResolvedValue([]),
   rename: vi.fn().mockResolvedValue(undefined),
   unlink: vi.fn().mockResolvedValue(undefined),
+  access: vi.fn().mockResolvedValue(undefined),
+  rm: vi.fn().mockResolvedValue(undefined),
+  copyFile: vi.fn().mockResolvedValue(undefined),
+  lstat: vi.fn().mockResolvedValue({
+    isDirectory: () => true,
+    isFile: () => true,
+    size: 100,
+  }),
 }));
 
 function mockContext(): import("vscode").ExtensionContext {
@@ -392,7 +400,7 @@ describe("sync now debug wiring", () => {
       reason: "no_token",
     });
 
-    const { executeSyncNow } = await import("../src/extension.js");
+    const { executeSyncNow } = await import("../src/sync-now.js");
     await executeSyncNow(mockContext());
 
     expect(showSyncFailureWithDebugMock).toHaveBeenCalled();
@@ -423,7 +431,7 @@ describe("sync now debug wiring", () => {
       .spyOn(vscode.commands, "executeCommand")
       .mockResolvedValue(undefined);
 
-    const { executeSyncNow } = await import("../src/extension.js");
+    const { executeSyncNow } = await import("../src/sync-now.js");
     await executeSyncNow(mockContext());
 
     expect(showSyncFailureWithDebugMock).toHaveBeenCalled();
@@ -451,7 +459,7 @@ describe("sync now debug wiring", () => {
   it("calls showSyncFailureWithDebug when executeSyncNow catches", async () => {
     determineSyncActionMock.mockRejectedValue(new Error("scheduler blew up"));
 
-    const { executeSyncNow } = await import("../src/extension.js");
+    const { executeSyncNow } = await import("../src/sync-now.js");
     await executeSyncNow(mockContext());
 
     expect(showSyncFailureWithDebugMock).toHaveBeenCalledTimes(1);
@@ -511,7 +519,7 @@ describe("sync now debug wiring", () => {
       dotCursor: "/tmp/.cursor",
     });
 
-    const { executeSyncNow } = await import("../src/extension.js");
+    const { executeSyncNow } = await import("../src/sync-now.js");
     await executeSyncNow(mockContext());
 
     expect(showSyncFailureWithDebugMock).toHaveBeenCalledTimes(1);

@@ -140,5 +140,6 @@ export function projectQuickPickLabel(
   map: Map<string, string>,
   homeDir?: string
 ): string {
-  return projectGroupSidebarLabel(projectFolderName, map, homeDir).label;
+  const grouped = projectGroupSidebarLabel(projectFolderName, map, homeDir);
+  return grouped.pathHint ?? grouped.label;
 }

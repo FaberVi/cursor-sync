@@ -31,13 +31,18 @@ vi.mock("../src/paths.js", () => ({
   },
 }));
 
-vi.mock("vscode", () => ({
-  window: {
-    showQuickPick: showQuickPickMock,
-    showErrorMessage: showErrorMessageMock,
-    showInformationMessage: showInformationMessageMock,
-  },
-}));
+vi.mock("vscode", async () => {
+  const base = await import("./__mocks__/vscode.js");
+  return {
+    ...base,
+    window: {
+      ...base.window,
+      showQuickPick: showQuickPickMock,
+      showErrorMessage: showErrorMessageMock,
+      showInformationMessage: showInformationMessageMock,
+    },
+  };
+});
 
 vi.mock("node:os", async () => {
   const actual = await vi.importActual<typeof import("node:os")>("node:os");

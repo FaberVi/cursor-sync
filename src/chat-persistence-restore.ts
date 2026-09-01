@@ -1,23 +1,8 @@
-import * as vscode from "vscode";
+import type * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import * as os from "node:os";
-import { getLogger } from "./diagnostics.js";
 import { pruneOldBackups } from "./rollback.js";
-import {
-  chatManifestFromBundle,
-  hydrateGoldenStoreTemplate,
-} from "./store-template-hydrate.js";
-import {
-  discoverProjects,
-  findProjectMatchingOpenWorkspaceFolder,
-} from "./transcripts.js";
-import { resolveChatsRoot } from "./transcripts-cursor-paths.js";
-import {
-  folderToProjectKey,
-  requireWorkspaceContext,
-  buildChatsKeyToFolderMap,
-} from "./chat-workspace-context.js";
+import { requireWorkspaceContext } from "./chat-workspace-context.js";
 import { emitChatImportProgress } from "./chat-progress-events.js";
 import { resolveSyncRoots } from "./paths.js";
 import {
@@ -29,11 +14,7 @@ import {
   parsePythonInspectStdout,
   summarizeBundleFidelity,
 } from "./chat-bundle-fidelity.js";
-import {
-  resolveTransportChatScript,
-  runPythonBundleInspect,
-  runPythonDiskImport,
-} from "./chat-transport-scripts.js";
+import { runPythonBundleInspect } from "./chat-transport-scripts.js";
 import {
   formatVerifyCheckLine,
   formatVerifyReport,
@@ -43,7 +24,6 @@ import {
   type VerifyCheck,
 } from "./chat-import-verify.js";
 import { pickImportWorkspaceFolder } from "./chat-import-ux.js";
-import { humanWorkspaceLabel, projectQuickPickLabel } from "./chat-workspace-label.js";
 import { parseChatBundleOrCollection } from "./chat-bundle-format.js";
 import {
   fidelityFieldsForImportHistory,
@@ -51,26 +31,30 @@ import {
 } from "./sidebar/chats-tab-fidelity.js";
 import { recordImport as recordImportEntry } from "./sidebar/import-history.js";
 import type { ChatBundle, LoadChatResult, RestoreChatBundleOptions } from "./chat-persistence.js";
-import type { WorkspaceContext } from "./chat-workspace-context.js";
-import { enrichBundleWithLiveDiskKv } from "./chat-disk-kv-export.js";
 import {
   applyImmediateSidebarWriteback,
   queueSidebarWriteback,
 } from "./chat-import-sidebar-writeback.js";
+import {
+  bundleArtifactsDebug,
+  logChatRestoreDebug,
+} from "./chat-restore-debug.js";
+import { restoreChatBundleDisk } from "./chat-restore-disk.js";
+import {
+  promptForTargetProject,
+  resolveRestoreProjectMapping,
+} from "./chat-restore-mapping.js";
 
-function parseSidebarMergedFromPythonOutput(pyText: string): boolean {
-  const match = pyText.match(/sidebar_merged=(true|false)/i);
-  if (match?.[1]?.toLowerCase() === "true") {
-    return true;
-  }
-  if (/Merged composer state into/i.test(pyText)) {
-    return true;
-  }
-  if (/No sidebarSnapshot|sidebar merge skipped/i.test(pyText)) {
-    return false;
-  }
-  return false;
-}
+export {
+  logChatRestoreDebug,
+  composerPayloadDebug,
+  bundleArtifactsDebug,
+} from "./chat-restore-debug.js";
+export { resolveProjectsRoot } from "./chat-restore-mapping.js";
+export {
+  ensurePythonReady,
+  ensureNativeChatStoreDb,
+} from "./chat-restore-disk.js";
 
 function sidebarVisibleOnDiskFromVerify(checks: VerifyCheck[]): boolean {
   const globalHeaders = checks.find((c) => c.name === "global.composerHeaders");
@@ -81,189 +65,12 @@ function sidebarVisibleOnDiskFromVerify(checks: VerifyCheck[]): boolean {
   return wsHeaders?.status === "OK";
 }
 
-let pythonInterpreterMemo: string | null | undefined;
-
-export async function ensurePythonReady(): Promise<string> {
-  if (pythonInterpreterMemo !== undefined) {
-    if (pythonInterpreterMemo === null) {
-      throw new Error(
-        "Python 3 not available; set cursorSync.chatImport.pythonPath or install python3."
-      );
-    }
-    return pythonInterpreterMemo;
-  }
-  const config = vscode.workspace.getConfiguration("cursorSync");
-  const configured = config.get<string>("chatImport.pythonPath")?.trim();
-  const candidates = configured ? [configured] : ["python3", "python"];
-  for (const cand of candidates) {
-    try {
-      const { spawnSync } = await import("node:child_process");
-      const res = spawnSync(cand, ["--version"], { encoding: "utf-8" });
-      if (res.status === 0) {
-        pythonInterpreterMemo = cand;
-        return cand;
-      }
-    } catch { /* try next */ }
-  }
-  pythonInterpreterMemo = null;
-  throw new Error(
-    "Python 3 not available; set cursorSync.chatImport.pythonPath or install python3."
-  );
-}
-
-export function logChatRestoreDebug(line: string): void {
-  getLogger().appendLine(`[${new Date().toISOString()}] [chat-restore-debug] ${line}`);
-}
-
-export function composerPayloadDebug(payload: Record<string, unknown> | undefined): string {
-  if (!payload) {
-    return "absent";
-  }
-  const list = payload.allComposers;
-  if (!Array.isArray(list)) {
-    return "present keys=" + Object.keys(payload).join(",");
-  }
-  const ids = list
-    .filter((c): c is Record<string, unknown> => !!c && typeof c === "object" && !Array.isArray(c))
-    .map((c) => (typeof c.composerId === "string" ? c.composerId : ""))
-    .filter((id) => id.length > 0);
-  return `allComposers=${list.length} composerIds=[${ids.join(",")}]`;
-}
-
-export function bundleArtifactsDebug(bundle: ChatBundle): string {
-  const tfSummary =
-    bundle.transcriptFiles.length === 0
-      ? "none"
-      : bundle.transcriptFiles
-          .map((t) => `${path.basename(t.relativePath)}:${t.sizeBytes}b`)
-          .join(",");
-  const store = bundle.storeSnapshot
-    ? `present ${bundle.storeSnapshot.sizeBytes}b src=${bundle.storeSnapshot.sourceWorkspaceKey}`
-    : "absent";
-  const sidebar = bundle.sidebarSnapshot
-    ? `present keys=${Object.keys(bundle.sidebarSnapshot).join(",")}`
-    : "absent";
-  return `transcriptFiles=${bundle.transcriptFiles.length} [${tfSummary}] storeSnapshot=${store} sidebarSnapshot=${sidebar}`;
-}
-
-async function resolveImportProjectMapping(
-  sourceProjectKeys: string[],
-  folderFsPath: string
-): Promise<Map<string, string>> {
-  const mapping = new Map<string, string>();
-  if (sourceProjectKeys.length === 0) {
-    return mapping;
-  }
-
-  const localProjects = await discoverProjects();
-  const encoded = folderToProjectKey(folderFsPath);
-  let targetKey =
-    localProjects.find((p) => path.resolve(p.fullPath) === path.resolve(folderFsPath))
-      ?.folderName ??
-    localProjects.find((p) => p.folderName === encoded)?.folderName;
-
-  if (!targetKey) {
-    const openFolders = vscode.workspace.workspaceFolders;
-    const openMatchesDest =
-      openFolders?.some((wf) => path.resolve(wf.uri.fsPath) === path.resolve(folderFsPath)) ??
-      false;
-    const matched = openMatchesDest
-      ? findProjectMatchingOpenWorkspaceFolder(localProjects, openFolders)
-      : undefined;
-    targetKey = matched?.folderName ?? encoded;
-  }
-
-  for (const sourceKey of sourceProjectKeys) {
-    mapping.set(sourceKey, targetKey);
-  }
-  return mapping;
-}
-
-async function ensureGoldenStoreDb(
-  context: vscode.ExtensionContext,
-  bundle: ChatBundle,
-  storeWorkspaceKey: string,
-  dryRun: boolean
-): Promise<{ storeWritten: boolean; warnings: string[] }> {
-  const warnings: string[] = [];
-  if (bundle.storeSnapshot) {
-    return { storeWritten: false, warnings };
-  }
-
-  const extensionRoot = context.extensionUri?.fsPath;
-  if (!extensionRoot) {
-    warnings.push(
-      "Extension path unavailable; cannot synthesize store.db for activation."
-    );
-    return { storeWritten: false, warnings };
-  }
-  const templatePath = path.join(
-    extensionRoot,
-    "resources",
-    "golden-chat-store.template.db"
-  );
+export function safeJsonParse(value: string): unknown {
   try {
-    await fs.access(templatePath);
+    return JSON.parse(value);
   } catch {
-    warnings.push(
-      "Golden store template missing from extension; cannot synthesize store.db for activation."
-    );
-    return { storeWritten: false, warnings };
+    return value;
   }
-
-  const storeDbPath = path.join(
-    resolveChatsRoot(),
-    storeWorkspaceKey,
-    bundle.conversationId,
-    "store.db"
-  );
-
-  if (dryRun) {
-    logChatRestoreDebug(
-      `[dry-run] would hydrate golden store.db at ${storeDbPath} from bundle transcripts`
-    );
-    return { storeWritten: true, warnings };
-  }
-
-  const chat = chatManifestFromBundle(bundle);
-  const hw = await hydrateGoldenStoreTemplate({
-    templatePath,
-    outputPath: storeDbPath,
-    chat,
-  });
-  warnings.push(...hw.warnings);
-  warnings.push(
-    "Synthesized store.db from golden template (bundle had no store.db snapshot)."
-  );
-  logChatRestoreDebug(
-    `golden store.db hydrated conversationId=${bundle.conversationId} path=${storeDbPath}`
-  );
-  return { storeWritten: true, warnings };
-}
-
-/** @see AGENTS.md — writes store.db from golden template when export lacks store snapshot. */
-export const ensureNativeChatStoreDb = ensureGoldenStoreDb;
-
-function applyProjectMappingToBundle(
-  bundle: ChatBundle,
-  projectMapping: Map<string, string>
-): ChatBundle {
-  if (projectMapping.size === 0) {
-    return bundle;
-  }
-  const transcriptFiles = bundle.transcriptFiles.map((tf) => {
-    const segments = tf.relativePath.split("/");
-    if (segments.length === 0) {
-      return tf;
-    }
-    const sourceKey = segments[0]!;
-    const mappedKey = projectMapping.get(sourceKey) ?? sourceKey;
-    return {
-      ...tf,
-      relativePath: [mappedKey, ...segments.slice(1)].join("/"),
-    };
-  });
-  return { ...bundle, transcriptFiles };
 }
 
 export async function restoreChatBundle(
@@ -281,7 +88,7 @@ export async function restoreChatBundle(
 
   const warnings: string[] = [];
   const verifyChecks: VerifyCheck[] = [];
-  let conversationId = bundle.conversationId;
+  const conversationId = bundle.conversationId;
   let transcriptsWritten = 0;
   let storeWritten = false;
   let sidebarMerged = false;
@@ -315,44 +122,23 @@ export async function restoreChatBundle(
     }
   }
 
-  let projectMapping = await resolveImportProjectMapping(
+  const projectMapping = await resolveRestoreProjectMapping(
     [...sourceProjectKeys].sort(),
-    wsCtx.folderFsPath
+    wsCtx.folderFsPath,
+    bundle.transcriptFiles.length,
+    progress
   );
-  const cfg = vscode.workspace.getConfiguration("cursorSync");
-  const autoMapImport =
-    cfg.get<boolean>("chatImport.autoMapToOpenWorkspace") ?? true;
-  const needsPrompt =
-    sourceProjectKeys.size > 0 &&
-    bundle.transcriptFiles.length > 0 &&
-    (!autoMapImport ||
-      [...sourceProjectKeys].some((k) => !projectMapping.has(k)));
-
-  if (needsPrompt) {
-    progress.report({ message: "Mapping projects..." });
-    const mapping = await promptForTargetProject([...sourceProjectKeys].sort());
-    if (mapping === null) {
-      logChatRestoreDebug(`restoreChatBundle cancelled project mapping conversationId=${conversationId}`);
-      return {
-        conversationId,
-        transcriptsWritten: 0,
-        storeWritten: false,
-        storeWorkspaceKey,
-        sidebarMerged: false,
-        warnings: ["Cancelled by user."],
-      };
-    }
-    projectMapping = mapping;
-  } else if (projectMapping.size > 0) {
-    logChatRestoreDebug(
-      `project mapping auto target=${[...new Set(projectMapping.values())].join(",")} sources=[${[...projectMapping.keys()].join(", ")}]`
-    );
+  if (projectMapping === null) {
+    logChatRestoreDebug(`restoreChatBundle cancelled project mapping conversationId=${conversationId}`);
+    return {
+      conversationId,
+      transcriptsWritten: 0,
+      storeWritten: false,
+      storeWorkspaceKey,
+      sidebarMerged: false,
+      warnings: ["Cancelled by user."],
+    };
   }
-
-  const targetProjectKey =
-    projectMapping.size > 0
-      ? [...new Set(projectMapping.values())][0]
-      : folderToProjectKey(wsCtx.folderFsPath);
 
   const workspaceStateDb = path.join(
     resolveSyncRoots().cursorUser,
@@ -361,91 +147,22 @@ export async function restoreChatBundle(
     "state.vscdb"
   );
 
-  const extensionPath = context.extensionUri?.fsPath;
-
-  try {
-    await ensurePythonReady();
-  } catch (err) {
-    throw new Error(
-      err instanceof Error ? err.message : "Python 3 not available; set cursorSync.chatImport.pythonPath or install python3."
-    );
-  }
-
-  const transportChatIo = await resolveTransportChatScript(
-    "cursor_chat_io.py",
-    extensionPath
-  );
-  if (!transportChatIo) {
-    throw new Error(
-      `transport-chat scripts not found in extension at ${extensionPath}. Reinstall Cursor Sync or set cursorSync.chatImport.transportChatScriptDir.`
-    );
-  }
-
-  let workingBundle = bundle;
-  const { bundle: diskKvEnriched, warnings: enrichWarnings } = await enrichBundleWithLiveDiskKv(
-    workingBundle,
-    { retries: 3, extensionPath }
-  );
-  workingBundle = diskKvEnriched;
-  warnings.push(...enrichWarnings);
-
-  const remappedBundle = applyProjectMappingToBundle(workingBundle, projectMapping);
-  const tmpBundlePath = path.join(
-    os.tmpdir(),
-    `cursor-sync-import-${conversationId}-${Date.now()}.json`
-  );
-  try {
-    await fs.writeFile(tmpBundlePath, JSON.stringify(remappedBundle, null, 2), "utf8");
-    progress.report({ message: "Restoring chat files (transport-chat)..." });
-    emitChatImportProgress({ conversationId, phase: "A", step: "python-disk-import-start" });
-    const diskOutcome = await runPythonDiskImport({
-      bundlePath: tmpBundlePath,
-      workspaceFolder: wsCtx.folderFsPath,
-      targetProject: targetProjectKey,
-      stateDbPath: workspaceStateDb,
-      dryRun,
-      syncGlobal,
-      pinRecent,
-      extensionPath,
-      log: (line) => logChatRestoreDebug(line),
-    });
-    emitChatImportProgress({ conversationId, phase: "A", step: "python-disk-import-done", ok: diskOutcome.ok });
-    if (!diskOutcome.ok) {
-      throw new Error(
-        `Disk import failed (transport-chat): exit ${diskOutcome.exitCode}. ${diskOutcome.stderr.trim() || diskOutcome.stdout.trim()}`
-      );
-    }
-    transcriptsWritten = remappedBundle.transcriptFiles.length;
-    storeWritten = !!remappedBundle.storeSnapshot;
-    const pyText = `${diskOutcome.stdout}\n${diskOutcome.stderr}`;
-    const sidebarMergedMatch = pyText.match(/sidebar_merged=(true|false)/i);
-    sidebarMerged = parseSidebarMergedFromPythonOutput(pyText);
-    if (!storeWritten && !dryRun) {
-      const golden = await ensureGoldenStoreDb(
-        context,
-        remappedBundle,
-        storeWorkspaceKey,
-        dryRun
-      );
-      storeWritten = golden.storeWritten;
-      warnings.push(...golden.warnings);
-    }
-    logChatRestoreDebug(
-      `disk restore via transport-chat conversationId=${conversationId} transcripts=${transcriptsWritten} store=${storeWritten}`
-    );
-  } finally {
-    try {
-      await fs.unlink(tmpBundlePath);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  if (workingBundle.storeSnapshot && !storeWritten) {
-    throw new Error(
-      "Bundle contained storeSnapshot but store.db was not written (required for import parity)."
-    );
-  }
+  progress.report({ message: "Restoring chat files (transport-chat)..." });
+  const disk = await restoreChatBundleDisk(context, bundle, wsCtx, {
+    projectMapping,
+    workspaceStateDb,
+    dryRun,
+    syncGlobal,
+    pinRecent,
+    storeWorkspaceKey,
+  });
+  warnings.push(...disk.warnings);
+  transcriptsWritten = disk.transcriptsWritten;
+  storeWritten = disk.storeWritten;
+  sidebarMerged = disk.sidebarMerged;
+  const workingBundle = disk.workingBundle;
+  const remappedBundle = disk.remappedBundle;
+  const extensionPath = disk.extensionPath;
 
   if (!dryRun) {
     progress.report({ message: "Verifying import..." });
@@ -464,7 +181,6 @@ export async function restoreChatBundle(
     }
 
     const sidebarOnDisk = sidebarVisibleOnDiskFromVerify(diskChecks);
-    const hadPythonSidebarFlag = sidebarMerged;
     if (
       !sidebarMerged &&
       sidebarOnDisk &&
@@ -671,78 +387,10 @@ export async function loadChat(
       "This file contains multiple conversations. Use Cursor Sync: Import Chat Bundle to import them."
     );
   }
-  const bundle =
+  const parsedBundle =
     parsed.kind === "single" ? parsed.bundle : parsed.collection.bundles[0]!;
-  const result = await restoreChatBundle(context, bundle, progress, restoreOptions);
-  return enrichImportResultWithBundleInspect(context, bundlePath, bundle, result);
-}
-
-export function resolveProjectsRoot(): string {
-  return path.join(os.homedir(), ".cursor", "projects");
-}
-
-export function safeJsonParse(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
-async function promptForTargetProject(sourceProjectKeys: string[]): Promise<Map<string, string> | null> {
-  const projectsRoot = resolveProjectsRoot();
-  let projectDirs: import("node:fs").Dirent[];
-  try {
-    projectDirs = await fs.readdir(projectsRoot, { withFileTypes: true });
-  } catch {
-    vscode.window.showErrorMessage(
-      `Cannot read projects directory: ${projectsRoot}. Open a project in Cursor first.`
-    );
-    return null;
-  }
-
-  const localProjects = projectDirs
-    .filter((d) => d.isDirectory())
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  if (localProjects.length === 0) {
-    vscode.window.showErrorMessage(
-      "No local Cursor projects found. Open a project in Cursor first to create a project directory."
-    );
-    return null;
-  }
-
-  const { cursorUser } = resolveSyncRoots();
-  const folderMap = await buildChatsKeyToFolderMap(cursorUser);
-
-  const mapping = new Map<string, string>();
-
-  for (const sourceKey of sourceProjectKeys) {
-    const sourceLabel = humanWorkspaceLabel(sourceKey);
-    const picks: vscode.QuickPickItem[] = localProjects.map((p) => ({
-      label: projectQuickPickLabel(p.name, folderMap),
-      description: p.name,
-      detail: path.join(projectsRoot, p.name),
-    }));
-    picks.unshift({ label: "(Skip)", description: "skip" });
-
-    const selected = await vscode.window.showQuickPick(picks, {
-      title: `Map source project "${sourceLabel}" to a local project`,
-      placeHolder: `Select the local project to receive chat transcripts from "${sourceLabel}"`,
-    });
-
-    if (!selected) {
-      return null;
-    }
-
-    if (selected.description === "skip") {
-      continue;
-    }
-
-    mapping.set(sourceKey, selected.description!);
-  }
-
-  return mapping;
+  const result = await restoreChatBundle(context, parsedBundle, progress, restoreOptions);
+  return enrichImportResultWithBundleInspect(context, bundlePath, parsedBundle, result);
 }
 
 export const __chatPersistenceTestUtils = {

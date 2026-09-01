@@ -193,6 +193,7 @@ export function __resetMessageMocks(): void {
 }
 
 export const env = {
+  language: "en",
   clipboard: {
     writeText: async (text: string) => clipboardWriteTextImpl(text),
   },

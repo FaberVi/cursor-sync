@@ -3,9 +3,9 @@ import {
   DEFAULT_REPO_BRANCH,
 } from "./destination.js";
 import { githubRequest } from "./github-api.js";
-import { joinRemotePath, stripRemotePath } from "./path-map.js";
+import { joinRemotePath } from "./path-map.js";
 import { withRetry } from "../retry.js";
-import type { ApiError, ApiResult } from "../types.js";
+import type { ApiResult } from "../types.js";
 import type {
   RemoteDiscoverResult,
   RemoteSnapshot,
@@ -14,6 +14,8 @@ import type {
   RemoteWriteOptions,
   RemoteWriteResult,
 } from "./types.js";
+import { createGitBlobs, createInitialCommit, type GitTreeEntry } from "./repo-git-write.js";
+import { loadRepoGitSnapshot, type RepoGitSnapshotCache } from "./repo-git-snapshot.js";
 
 interface GitRefResponse {
   object: { sha: string; type: string };
@@ -26,29 +28,6 @@ interface GitCommitResponse {
   tree: { sha: string };
   parents: Array<{ sha: string }>;
 }
-
-interface GitTreeEntry {
-  path: string;
-  mode: string;
-  type: "blob" | "tree";
-  sha?: string | null;
-  content?: string;
-}
-
-interface GitTreeResponse {
-  sha: string;
-  tree: Array<{ path: string; mode: string; type: string; sha: string; size?: number }>;
-  truncated: boolean;
-}
-
-interface GitBlobResponse {
-  content: string;
-  encoding: string;
-  sha: string;
-  size: number;
-}
-
-const BLOB_UPLOAD_CONCURRENCY = 5;
 
 interface RepoResponse {
   full_name: string;
@@ -64,10 +43,10 @@ export class RepoBackend implements RemoteSyncBackend {
   private branch: string;
   private basePath: string;
   /** Ref + tree blobs for this instance (invalidated on write). */
-  private refShaCache: string | undefined;
-  private treeCache:
-    | { refSha: string; blobsByName: Map<string, string> }
-    | undefined;
+  private gitCache: RepoGitSnapshotCache = {
+    refShaCache: undefined,
+    treeCache: undefined,
+  };
 
   constructor(options: {
     pat: string;
@@ -206,105 +185,25 @@ export class RepoBackend implements RemoteSyncBackend {
   async getSnapshot(
     options?: RemoteSnapshotOptions
   ): Promise<ApiResult<RemoteSnapshot>> {
-    let refSha = this.refShaCache;
-    if (!refSha) {
-      const refResult = await this.getBranchRef();
-      if (!refResult.ok) {
-        if (refResult.error.statusCode === 404) {
-          return {
-            ok: true,
-            data: {
-              id: this.getIdentity(),
-              htmlUrl: this.remoteUrl()!,
-              files: {},
-              allFileNames: [],
-            },
-          };
-        }
-        return refResult;
-      }
-      refSha = refResult.data.object.sha;
-      this.refShaCache = refSha;
-    }
-    let blobsByName = this.treeCache?.refSha === refSha ? this.treeCache.blobsByName : undefined;
-
-    if (!blobsByName) {
-      const commitResult = await githubRequest<GitCommitResponse>(
-        "GET",
-        `/repos/${this.owner}/${this.repo}/git/commits/${refSha}`,
-        this.pat
-      );
-      if (!commitResult.ok) {
-        return commitResult;
-      }
-
-      const treeResult = await githubRequest<GitTreeResponse>(
-        "GET",
-        `/repos/${this.owner}/${this.repo}/git/trees/${commitResult.data.tree.sha}?recursive=1`,
-        this.pat
-      );
-      if (!treeResult.ok) {
-        return treeResult;
-      }
-
-      blobsByName = new Map<string, string>();
-      for (const entry of treeResult.data.tree) {
-        if (entry.type !== "blob") {
-          continue;
-        }
-        const flatName = stripRemotePath(this.basePath, entry.path);
-        if (!flatName || flatName.includes("/")) {
-          continue;
-        }
-        blobsByName.set(flatName, entry.sha);
-      }
-      this.treeCache = { refSha, blobsByName };
-    }
-
-    const allFileNames = [...blobsByName.keys()];
-    const only = options?.onlyFiles;
-    const namesToFetch =
-      only && only.length > 0
-        ? only.filter((name) => blobsByName.has(name))
-        : allFileNames;
-
-    const files: Record<string, string> = {};
-    for (const flatName of namesToFetch) {
-      const sha = blobsByName.get(flatName);
-      if (!sha) {
-        continue;
-      }
-      const blobResult = await githubRequest<GitBlobResponse>(
-        "GET",
-        `/repos/${this.owner}/${this.repo}/git/blobs/${sha}`,
-        this.pat
-      );
-      if (!blobResult.ok) {
-        return blobResult;
-      }
-      files[flatName] = decodeBlobContent(
-        blobResult.data.content,
-        blobResult.data.encoding
-      );
-    }
-
-    return {
-      ok: true,
-      data: {
-        id: this.getIdentity(),
-        htmlUrl: this.remoteUrl()!,
-        files,
-        allFileNames,
-      },
-    };
+    return loadRepoGitSnapshot({
+      owner: this.owner,
+      repo: this.repo,
+      pat: this.pat,
+      basePath: this.basePath,
+      identity: this.getIdentity(),
+      htmlUrl: this.remoteUrl()!,
+      cache: this.gitCache,
+      getBranchRef: () => this.getBranchRef(),
+      options,
+    });
   }
 
   async writeFiles(
     files: Record<string, string>,
     options?: RemoteWriteOptions
   ): Promise<ApiResult<RemoteWriteResult>> {
-    this.treeCache = undefined;
-    this.refShaCache = undefined;
+    this.gitCache.treeCache = undefined;
+    this.gitCache.refShaCache = undefined;
     const deleteNames = new Set(options?.deleteNames ?? []);
     const refResult = await this.getBranchRef();
 
@@ -317,12 +216,18 @@ export class RepoBackend implements RemoteSyncBackend {
         return refResult;
       }
       createdBranch = true;
-      const init = await this.createInitialCommit(
+      return createInitialCommit({
+        owner: this.owner,
+        repo: this.repo,
+        pat: this.pat,
+        branch: this.branch,
+        basePath: this.basePath,
+        identity: this.getIdentity(),
+        htmlUrl: this.remoteUrl()!,
         files,
         deleteNames,
-        options?.onBlobProgress
-      );
-      return init;
+        onBlobProgress: options?.onBlobProgress,
+      });
     }
 
     parentCommitSha = refResult.data.object.sha;
@@ -432,163 +337,4 @@ export class RepoBackend implements RemoteSyncBackend {
       this.pat
     );
   }
-
-  private async createInitialCommit(
-    files: Record<string, string>,
-    deleteNames: Set<string>,
-    onBlobProgress?: (completed: number, total: number) => void
-  ): Promise<ApiResult<RemoteWriteResult>> {
-    void deleteNames;
-    const blobResult = await createGitBlobs({
-      owner: this.owner,
-      repo: this.repo,
-      pat: this.pat,
-      files,
-      toPath: (name) => joinRemotePath(this.basePath, name),
-      onBlobProgress,
-    });
-    if (!blobResult.ok) {
-      return blobResult;
-    }
-    const treeItems = blobResult.data;
-
-    if (treeItems.length === 0) {
-      return {
-        ok: false,
-        error: {
-          category: "UNKNOWN",
-          message: "Cannot create empty initial commit for repo sync.",
-        },
-      };
-    }
-
-    const treeResult = await withRetry(() =>
-      githubRequest<{ sha: string }>(
-        "POST",
-        `/repos/${this.owner}/${this.repo}/git/trees`,
-        this.pat,
-        { tree: treeItems }
-      )
-    );
-    if (!treeResult.ok) {
-      return treeResult;
-    }
-
-    const commitResult = await withRetry(() =>
-      githubRequest<{ sha: string }>(
-        "POST",
-        `/repos/${this.owner}/${this.repo}/git/commits`,
-        this.pat,
-        {
-          message: "Cursor Sync: initial settings backup",
-          tree: treeResult.data.sha,
-          parents: [],
-        }
-      )
-    );
-    if (!commitResult.ok) {
-      return commitResult;
-    }
-
-    const refCreate = await withRetry(() =>
-      githubRequest<GitRefResponse>(
-        "POST",
-        `/repos/${this.owner}/${this.repo}/git/refs`,
-        this.pat,
-        {
-          ref: `refs/heads/${this.branch}`,
-          sha: commitResult.data.sha,
-        }
-      )
-    );
-    if (!refCreate.ok) {
-      return refCreate;
-    }
-
-    return {
-      ok: true,
-      data: {
-        id: this.getIdentity(),
-        htmlUrl: this.remoteUrl()!,
-        created: true,
-      },
-    };
-  }
-}
-
-async function createGitBlobs(options: {
-  owner: string;
-  repo: string;
-  pat: string;
-  files: Record<string, string>;
-  toPath: (name: string) => string;
-  onBlobProgress?: (completed: number, total: number) => void;
-}): Promise<ApiResult<GitTreeEntry[]>> {
-  const entries = Object.entries(options.files);
-  const total = entries.length;
-  if (total === 0) {
-    return { ok: true, data: [] };
-  }
-
-  const results: GitTreeEntry[] = new Array(total);
-  let nextIndex = 0;
-  let completed = 0;
-  let firstError: ApiError | undefined;
-  let abort = false;
-
-  const worker = async (): Promise<void> => {
-    while (true) {
-      if (abort) {
-        return;
-      }
-      const i = nextIndex++;
-      if (i >= total) {
-        return;
-      }
-      if (abort) {
-        return;
-      }
-      const file = entries[i];
-      if (!file) {
-        return;
-      }
-      const [name, content] = file;
-      const blobResult = await withRetry(() =>
-        githubRequest<{ sha: string }>(
-          "POST",
-          `/repos/${options.owner}/${options.repo}/git/blobs`,
-          options.pat,
-          { content, encoding: "utf-8" }
-        )
-      );
-      if (!blobResult.ok) {
-        abort = true;
-        firstError = blobResult.error;
-        return;
-      }
-      results[i] = {
-        path: options.toPath(name),
-        mode: "100644",
-        type: "blob",
-        sha: blobResult.data.sha,
-      };
-      completed += 1;
-      options.onBlobProgress?.(completed, total);
-    }
-  };
-
-  const workerCount = Math.min(BLOB_UPLOAD_CONCURRENCY, total);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-
-  if (firstError) {
-    return { ok: false, error: firstError };
-  }
-  return { ok: true, data: results };
-}
-
-function decodeBlobContent(content: string, encoding: string): string {
-  if (encoding === "base64") {
-    return Buffer.from(content.replace(/\n/g, ""), "base64").toString("utf-8");
-  }
-  return content;
 }

@@ -19,6 +19,12 @@ export interface RemoteSnapshotOptions {
    * `allFileNames` still lists every file present on the remote.
    */
   onlyFiles?: string[];
+  /**
+   * Called after each file is successfully downloaded into `files`.
+   * `total` is the number of names scheduled for this snapshot (after `onlyFiles`).
+   * Skipped names (missing blob sha) and failed fetches do not fire this callback.
+   */
+  onFileProgress?: (completed: number, total: number) => void;
 }
 
 export interface RemoteWriteResult {

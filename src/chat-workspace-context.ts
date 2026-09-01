@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { createHash } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveSyncRoots } from "./paths.js";
 
 export function stateDbPathForWorkspaceStorageId(workspaceStorageId: string): string {
@@ -40,16 +40,32 @@ export function md5FolderKey(folderFsPath: string): string {
   return createHash("md5").update(folderFsPath, "utf8").digest("hex");
 }
 
-/** Same encoding as transport-chat `folder_to_project_key` (~/.cursor/projects/<name>). */
+/**
+ * Same encoding as transport-chat `folder_to_project_key` (~/.cursor/projects/<name>).
+ * Windows drive prefixes become `c-Users-...` (no colon) so the name is a valid directory.
+ */
 export function folderToProjectKey(folderFsPath: string): string {
   const resolved = path.resolve(folderFsPath);
-  return resolved.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\//g, "-");
+  return resolved
+    .replace(/\\/g, "/")
+    .replace(/^([A-Za-z]):(?:\/|$)/, (_, letter: string) => `${letter.toLowerCase()}/`)
+    .replace(/:/g, "")
+    .replace(/^\/+/, "")
+    .replace(/\//g, "-");
 }
 
 export function folderPathFromWorkspaceUri(uri: string): string {
   if (uri.startsWith("file://")) {
-    const parsed = new URL(uri);
-    return decodeURIComponent(parsed.pathname);
+    try {
+      return fileURLToPath(uri);
+    } catch {
+      const parsed = new URL(uri);
+      let pathname = decodeURIComponent(parsed.pathname);
+      if (process.platform === "win32" && /^\/[A-Za-z]:/.test(pathname)) {
+        pathname = pathname.slice(1);
+      }
+      return pathname;
+    }
   }
   return uri;
 }

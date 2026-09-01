@@ -28,7 +28,7 @@ export const FILE_ACCESS_TIMEOUT_MS = 12_000;
 /** Above this size, the sqlite3 CLI often stalls on WAL-backed state.vscdb; prefer Python. */
 export const SQLITE_PYTHON_PREFER_BYTES = 256 * 1024 * 1024;
 
-type PythonSqliteInterpreter = {
+export type PythonSqliteInterpreter = {
   command: string;
   argvPrefix: readonly string[];
 };
@@ -38,12 +38,20 @@ let pythonInterpreterResolvePromise: Promise<PythonSqliteInterpreter> | null = n
 async function probePythonInterpreter(): Promise<PythonSqliteInterpreter> {
   const probe = "import sqlite3; raise SystemExit(0)";
   const execOpts = { maxBuffer: 64 * 1024, timeout: 5000 };
-  const candidates: PythonSqliteInterpreter[] = [
-    { command: "python3", argvPrefix: [] },
-    { command: "python", argvPrefix: [] },
-  ];
+  const candidates: PythonSqliteInterpreter[] = [];
   if (process.platform === "win32") {
+    // Microsoft Store python/python3 stubs hang; prefer the launcher.
     candidates.push({ command: "py", argvPrefix: ["-3"] });
+    const localApp = process.env.LOCALAPPDATA;
+    if (localApp) {
+      candidates.push({
+        command: path.join(localApp, "Python", "bin", "python.exe"),
+        argvPrefix: [],
+      });
+    }
+  } else {
+    candidates.push({ command: "python3", argvPrefix: [] });
+    candidates.push({ command: "python", argvPrefix: [] });
   }
   for (const c of candidates) {
     try {
@@ -61,7 +69,7 @@ async function probePythonInterpreter(): Promise<PythonSqliteInterpreter> {
   );
 }
 
-async function resolvePythonInterpreterForSqlite(): Promise<PythonSqliteInterpreter> {
+export async function resolvePythonInterpreterForSqlite(): Promise<PythonSqliteInterpreter> {
   if (!pythonInterpreterResolvePromise) {
     pythonInterpreterResolvePromise = probePythonInterpreter().catch((err) => {
       pythonInterpreterResolvePromise = null;
@@ -69,6 +77,12 @@ async function resolvePythonInterpreterForSqlite(): Promise<PythonSqliteInterpre
     });
   }
   return pythonInterpreterResolvePromise;
+}
+
+export function isMissingSqliteRelationError(error: unknown): boolean {
+  const err = error as { message?: string; stderr?: string };
+  const msg = `${err?.message ?? ""}\n${err?.stderr ?? ""}`;
+  return /no such table/i.test(msg);
 }
 
 export function isExecFileTimeoutError(error: unknown): boolean {
@@ -136,6 +150,9 @@ export async function querySqliteRowsImpl(
         ? parsed.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
         : [];
     } catch (error) {
+      if (isMissingSqliteRelationError(error)) {
+        return [];
+      }
       if (isExecFileTimeoutError(error) && attempt < maxAttempts - 1) {
         const delay = SQLITE_RETRY_BACKOFF_MS * Math.pow(2, attempt);
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -330,95 +347,9 @@ export function filterComposerHeadersByIds(
   };
 }
 
-export async function listGlobalStateVscdbPaths(): Promise<string[]> {
-  const home = os.homedir();
-  const platformGlobal =
-    process.platform === "darwin"
-      ? [
-          path.join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb"),
-          path.join(
-            home,
-            "Library",
-            "Application Support",
-            "Cursor Nightly",
-            "User",
-            "globalStorage",
-            "state.vscdb"
-          ),
-        ]
-      : process.platform === "win32"
-        ? [
-            path.join(home, "AppData", "Roaming", "Cursor", "User", "globalStorage", "state.vscdb"),
-            path.join(
-              home,
-              "AppData",
-              "Roaming",
-              "Cursor Nightly",
-              "User",
-              "globalStorage",
-              "state.vscdb"
-            ),
-          ]
-        : [
-            path.join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
-            path.join(home, ".config", "Cursor Nightly", "User", "globalStorage", "state.vscdb"),
-          ];
-  const out: string[] = [];
-  for (const candidate of platformGlobal) {
-    try {
-      await fs.access(candidate);
-      out.push(candidate);
-    } catch {}
-  }
-  return out;
-}
-
-async function listWorkspaceStateVscdbPaths(): Promise<string[]> {
-  const home = os.homedir();
-  const roots =
-    process.platform === "darwin"
-      ? [
-          path.join(home, "Library", "Application Support", "Cursor", "User", "workspaceStorage"),
-          path.join(home, "Library", "Application Support", "Cursor Nightly", "User", "workspaceStorage"),
-        ]
-      : process.platform === "win32"
-        ? [
-            path.join(home, "AppData", "Roaming", "Cursor", "User", "workspaceStorage"),
-            path.join(home, "AppData", "Roaming", "Cursor Nightly", "User", "workspaceStorage"),
-          ]
-        : [
-            path.join(home, ".config", "Cursor", "User", "workspaceStorage"),
-            path.join(home, ".config", "Cursor Nightly", "User", "workspaceStorage"),
-          ];
-  const out: string[] = [];
-  for (const root of roots) {
-    let entries: import("node:fs").Dirent[];
-    try {
-      entries = await fs.readdir(root, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const ent of entries) {
-      if (!ent.isDirectory()) continue;
-      const p = path.join(root, ent.name, "state.vscdb");
-      try {
-        await fs.access(p);
-        out.push(p);
-      } catch {}
-    }
-  }
-  return out.sort((a, b) => a.localeCompare(b));
-}
-
-export async function resolveStateDbCandidates(): Promise<string[]> {
-  const workspaceDbs = await listWorkspaceStateVscdbPaths();
-  const globalDbs = await listGlobalStateVscdbPaths();
-  return [...new Set([...workspaceDbs, ...globalDbs])];
-}
-
-export async function resolveImportMergeStateDbCandidates(): Promise<string[]> {
-  const workspaceDbs = await listWorkspaceStateVscdbPaths();
-  const globalDbs = await listGlobalStateVscdbPaths();
-  return [...new Set([...globalDbs, ...workspaceDbs])];
-}
+export {
+  listGlobalStateVscdbPaths,
+  resolveImportMergeStateDbCandidates,
+  resolveStateDbCandidates,
+} from "./transcripts-sqlite-paths.js";
 

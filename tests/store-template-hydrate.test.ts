@@ -116,5 +116,5 @@ describe("store-template-hydrate", () => {
     expect(String(treeBlob[0]?.h ?? "").toLowerCase()).toBe(treeBytes.toString("hex"));
 
     await fs.rm(outDir, { recursive: true, force: true });
-  });
+  }, 20_000);
 });

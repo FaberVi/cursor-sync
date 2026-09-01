@@ -103,9 +103,14 @@ export class GistBackend implements RemoteSyncBackend {
         ? only.filter((name) => Object.prototype.hasOwnProperty.call(result.data.files, name))
         : allFileNames;
     const files: Record<string, string> = {};
+    const total = namesToFetch.length;
+    let completed = 0;
 
     for (const name of namesToFetch) {
       const file = result.data.files[name];
+      if (!file) {
+        continue;
+      }
       try {
         files[name] = await fetchGistFileContent(file, this.pat);
       } catch (err) {
@@ -120,6 +125,8 @@ export class GistBackend implements RemoteSyncBackend {
           },
         };
       }
+      completed += 1;
+      options?.onFileProgress?.(completed, total);
     }
 
     return {
