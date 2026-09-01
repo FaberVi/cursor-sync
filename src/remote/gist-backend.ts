@@ -5,6 +5,7 @@ import type {
   RemoteSnapshot,
   RemoteSnapshotOptions,
   RemoteSyncBackend,
+  RemoteWriteOptions,
   RemoteWriteResult,
 } from "./types.js";
 
@@ -150,7 +151,7 @@ export class GistBackend implements RemoteSyncBackend {
 
   async writeFiles(
     files: Record<string, string>,
-    options?: { deleteNames?: string[] }
+    options?: RemoteWriteOptions
   ): Promise<ApiResult<RemoteWriteResult>> {
     this.cachedGist = undefined;
     const payload: Record<string, { content: string } | null> = {};

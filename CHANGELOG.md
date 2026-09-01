@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## v0.11.2
+
+### Fixed
+- Repo push no longer syncs `node_modules` or `.git` path segments (and skips walking those directories). A stuck-looking sidebar at ~40% while “Uploading N changed file(s)…” was uploading thousands of skill `node_modules` blobs one-by-one with a fake progress bar.
+- Repo Git Data blob uploads use concurrency 5 with per-blob retry. A late blob failure no longer restarts the entire write. Sidebar progress shows `Uploading n/total` with an absolute percent during the upload phase.
+
 ## v0.11.1
 
 ### Fixed

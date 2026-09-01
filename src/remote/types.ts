@@ -27,6 +27,12 @@ export interface RemoteWriteResult {
   created: boolean;
 }
 
+export interface RemoteWriteOptions {
+  deleteNames?: string[];
+  /** Repo Git Data blob uploads only; Gist ignores this. */
+  onBlobProgress?: (completed: number, total: number) => void;
+}
+
 export interface RemoteDiscoverResult {
   id: string;
   htmlUrl: string;
@@ -50,7 +56,7 @@ export interface RemoteSyncBackend {
    */
   writeFiles(
     files: Record<string, string>,
-    options?: { deleteNames?: string[] }
+    options?: RemoteWriteOptions
   ): Promise<ApiResult<RemoteWriteResult>>;
 }
 

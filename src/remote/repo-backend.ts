@@ -1,15 +1,17 @@
-import type { ApiResult } from "../types.js";
 import {
   DEFAULT_REPO_BASE_PATH,
   DEFAULT_REPO_BRANCH,
 } from "./destination.js";
 import { githubRequest } from "./github-api.js";
 import { joinRemotePath, stripRemotePath } from "./path-map.js";
+import { withRetry } from "../retry.js";
+import type { ApiError, ApiResult } from "../types.js";
 import type {
   RemoteDiscoverResult,
   RemoteSnapshot,
   RemoteSnapshotOptions,
   RemoteSyncBackend,
+  RemoteWriteOptions,
   RemoteWriteResult,
 } from "./types.js";
 
@@ -45,6 +47,8 @@ interface GitBlobResponse {
   sha: string;
   size: number;
 }
+
+const BLOB_UPLOAD_CONCURRENCY = 5;
 
 interface RepoResponse {
   full_name: string;
@@ -297,7 +301,7 @@ export class RepoBackend implements RemoteSyncBackend {
 
   async writeFiles(
     files: Record<string, string>,
-    options?: { deleteNames?: string[] }
+    options?: RemoteWriteOptions
   ): Promise<ApiResult<RemoteWriteResult>> {
     this.treeCache = undefined;
     this.refShaCache = undefined;
@@ -313,7 +317,11 @@ export class RepoBackend implements RemoteSyncBackend {
         return refResult;
       }
       createdBranch = true;
-      const init = await this.createInitialCommit(files, deleteNames);
+      const init = await this.createInitialCommit(
+        files,
+        deleteNames,
+        options?.onBlobProgress
+      );
       return init;
     }
 
@@ -328,24 +336,18 @@ export class RepoBackend implements RemoteSyncBackend {
     }
     baseTreeSha = commitResult.data.tree.sha;
 
-    const treeItems: GitTreeEntry[] = [];
-    for (const [name, content] of Object.entries(files)) {
-      const blobResult = await githubRequest<{ sha: string }>(
-        "POST",
-        `/repos/${this.owner}/${this.repo}/git/blobs`,
-        this.pat,
-        { content, encoding: "utf-8" }
-      );
-      if (!blobResult.ok) {
-        return blobResult;
-      }
-      treeItems.push({
-        path: joinRemotePath(this.basePath, name),
-        mode: "100644",
-        type: "blob",
-        sha: blobResult.data.sha,
-      });
+    const blobResult = await createGitBlobs({
+      owner: this.owner,
+      repo: this.repo,
+      pat: this.pat,
+      files,
+      toPath: (name) => joinRemotePath(this.basePath, name),
+      onBlobProgress: options?.onBlobProgress,
+    });
+    if (!blobResult.ok) {
+      return blobResult;
     }
+    const treeItems: GitTreeEntry[] = [...blobResult.data];
 
     for (const name of deleteNames) {
       if (name in files) {
@@ -370,38 +372,44 @@ export class RepoBackend implements RemoteSyncBackend {
       };
     }
 
-    const treeResult = await githubRequest<{ sha: string }>(
-      "POST",
-      `/repos/${this.owner}/${this.repo}/git/trees`,
-      this.pat,
-      {
-        base_tree: baseTreeSha,
-        tree: treeItems,
-      }
+    const treeResult = await withRetry(() =>
+      githubRequest<{ sha: string }>(
+        "POST",
+        `/repos/${this.owner}/${this.repo}/git/trees`,
+        this.pat,
+        {
+          base_tree: baseTreeSha,
+          tree: treeItems,
+        }
+      )
     );
     if (!treeResult.ok) {
       return treeResult;
     }
 
-    const newCommit = await githubRequest<{ sha: string }>(
-      "POST",
-      `/repos/${this.owner}/${this.repo}/git/commits`,
-      this.pat,
-      {
-        message: "Cursor Sync: update settings backup",
-        tree: treeResult.data.sha,
-        parents: [parentCommitSha],
-      }
+    const newCommit = await withRetry(() =>
+      githubRequest<{ sha: string }>(
+        "POST",
+        `/repos/${this.owner}/${this.repo}/git/commits`,
+        this.pat,
+        {
+          message: "Cursor Sync: update settings backup",
+          tree: treeResult.data.sha,
+          parents: [parentCommitSha],
+        }
+      )
     );
     if (!newCommit.ok) {
       return newCommit;
     }
 
-    const updateRef = await githubRequest<GitRefResponse>(
-      "PATCH",
-      `/repos/${this.owner}/${this.repo}/git/refs/heads/${this.branch}`,
-      this.pat,
-      { sha: newCommit.data.sha }
+    const updateRef = await withRetry(() =>
+      githubRequest<GitRefResponse>(
+        "PATCH",
+        `/repos/${this.owner}/${this.repo}/git/refs/heads/${this.branch}`,
+        this.pat,
+        { sha: newCommit.data.sha }
+      )
     );
     if (!updateRef.ok) {
       return updateRef;
@@ -427,27 +435,22 @@ export class RepoBackend implements RemoteSyncBackend {
 
   private async createInitialCommit(
     files: Record<string, string>,
-    deleteNames: Set<string>
+    deleteNames: Set<string>,
+    onBlobProgress?: (completed: number, total: number) => void
   ): Promise<ApiResult<RemoteWriteResult>> {
     void deleteNames;
-    const treeItems: GitTreeEntry[] = [];
-    for (const [name, content] of Object.entries(files)) {
-      const blobResult = await githubRequest<{ sha: string }>(
-        "POST",
-        `/repos/${this.owner}/${this.repo}/git/blobs`,
-        this.pat,
-        { content, encoding: "utf-8" }
-      );
-      if (!blobResult.ok) {
-        return blobResult;
-      }
-      treeItems.push({
-        path: joinRemotePath(this.basePath, name),
-        mode: "100644",
-        type: "blob",
-        sha: blobResult.data.sha,
-      });
+    const blobResult = await createGitBlobs({
+      owner: this.owner,
+      repo: this.repo,
+      pat: this.pat,
+      files,
+      toPath: (name) => joinRemotePath(this.basePath, name),
+      onBlobProgress,
+    });
+    if (!blobResult.ok) {
+      return blobResult;
     }
+    const treeItems = blobResult.data;
 
     if (treeItems.length === 0) {
       return {
@@ -459,38 +462,44 @@ export class RepoBackend implements RemoteSyncBackend {
       };
     }
 
-    const treeResult = await githubRequest<{ sha: string }>(
-      "POST",
-      `/repos/${this.owner}/${this.repo}/git/trees`,
-      this.pat,
-      { tree: treeItems }
+    const treeResult = await withRetry(() =>
+      githubRequest<{ sha: string }>(
+        "POST",
+        `/repos/${this.owner}/${this.repo}/git/trees`,
+        this.pat,
+        { tree: treeItems }
+      )
     );
     if (!treeResult.ok) {
       return treeResult;
     }
 
-    const commitResult = await githubRequest<{ sha: string }>(
-      "POST",
-      `/repos/${this.owner}/${this.repo}/git/commits`,
-      this.pat,
-      {
-        message: "Cursor Sync: initial settings backup",
-        tree: treeResult.data.sha,
-        parents: [],
-      }
+    const commitResult = await withRetry(() =>
+      githubRequest<{ sha: string }>(
+        "POST",
+        `/repos/${this.owner}/${this.repo}/git/commits`,
+        this.pat,
+        {
+          message: "Cursor Sync: initial settings backup",
+          tree: treeResult.data.sha,
+          parents: [],
+        }
+      )
     );
     if (!commitResult.ok) {
       return commitResult;
     }
 
-    const refCreate = await githubRequest<GitRefResponse>(
-      "POST",
-      `/repos/${this.owner}/${this.repo}/git/refs`,
-      this.pat,
-      {
-        ref: `refs/heads/${this.branch}`,
-        sha: commitResult.data.sha,
-      }
+    const refCreate = await withRetry(() =>
+      githubRequest<GitRefResponse>(
+        "POST",
+        `/repos/${this.owner}/${this.repo}/git/refs`,
+        this.pat,
+        {
+          ref: `refs/heads/${this.branch}`,
+          sha: commitResult.data.sha,
+        }
+      )
     );
     if (!refCreate.ok) {
       return refCreate;
@@ -505,6 +514,76 @@ export class RepoBackend implements RemoteSyncBackend {
       },
     };
   }
+}
+
+async function createGitBlobs(options: {
+  owner: string;
+  repo: string;
+  pat: string;
+  files: Record<string, string>;
+  toPath: (name: string) => string;
+  onBlobProgress?: (completed: number, total: number) => void;
+}): Promise<ApiResult<GitTreeEntry[]>> {
+  const entries = Object.entries(options.files);
+  const total = entries.length;
+  if (total === 0) {
+    return { ok: true, data: [] };
+  }
+
+  const results: GitTreeEntry[] = new Array(total);
+  let nextIndex = 0;
+  let completed = 0;
+  let firstError: ApiError | undefined;
+  let abort = false;
+
+  const worker = async (): Promise<void> => {
+    while (true) {
+      if (abort) {
+        return;
+      }
+      const i = nextIndex++;
+      if (i >= total) {
+        return;
+      }
+      if (abort) {
+        return;
+      }
+      const file = entries[i];
+      if (!file) {
+        return;
+      }
+      const [name, content] = file;
+      const blobResult = await withRetry(() =>
+        githubRequest<{ sha: string }>(
+          "POST",
+          `/repos/${options.owner}/${options.repo}/git/blobs`,
+          options.pat,
+          { content, encoding: "utf-8" }
+        )
+      );
+      if (!blobResult.ok) {
+        abort = true;
+        firstError = blobResult.error;
+        return;
+      }
+      results[i] = {
+        path: options.toPath(name),
+        mode: "100644",
+        type: "blob",
+        sha: blobResult.data.sha,
+      };
+      completed += 1;
+      options.onBlobProgress?.(completed, total);
+    }
+  };
+
+  const workerCount = Math.min(BLOB_UPLOAD_CONCURRENCY, total);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  if (firstError) {
+    return { ok: false, error: firstError };
+  }
+  return { ok: true, data: results };
 }
 
 function decodeBlobContent(content: string, encoding: string): string {

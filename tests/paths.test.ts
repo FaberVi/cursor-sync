@@ -156,6 +156,30 @@ describe("paths", () => {
       expect(keys).not.toContain("dot-cursor/logs/app.log");
     });
 
+    it("excludes nested node_modules and .git path segments", async () => {
+      const skillRoot = path.join(tmpDir, "dotCursor", "skills", "coding");
+      const nodeModules = path.join(skillRoot, "node_modules", "leftpad");
+      const gitDir = path.join(skillRoot, ".git");
+      await fs.mkdir(nodeModules, { recursive: true });
+      await fs.mkdir(gitDir, { recursive: true });
+      await fs.writeFile(path.join(nodeModules, "index.js"), "module.exports = 1;\n");
+      await fs.writeFile(path.join(gitDir, "config"), "[core]\n");
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const files = await enumerateSyncFiles(roots);
+      const keys = files.map((f) => f.relativeSyncKey);
+
+      expect(keys).not.toContain(
+        "dot-cursor/skills/coding/node_modules/leftpad/index.js"
+      );
+      expect(keys).not.toContain("dot-cursor/skills/coding/.git/config");
+      expect(keys).toContain("dot-cursor/skills/coding/SKILL.md");
+    });
+
     it("excludes nested __pycache__ and .pyc files", async () => {
       const pycache = path.join(tmpDir, "dotCursor", "skills", "coding", "__pycache__");
       await fs.mkdir(pycache, { recursive: true });
@@ -357,6 +381,15 @@ describe("paths", () => {
       expect(isExcludedSyncKey("cursor-user/settings.json", [])).toBe(false);
       expect(
         isExcludedSyncKey("dot-cursor/skills/coding/notes.md", ["skills/**/notes.md"])
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey(
+          "dot-cursor/skills/foo/node_modules/leftpad/index.js",
+          []
+        )
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey("dot-cursor/skills/foo/.git/config", [])
       ).toBe(true);
     });
   });

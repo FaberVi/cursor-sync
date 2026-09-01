@@ -76,4 +76,25 @@ describe("createSidebarSyncProgress elapsed", () => {
       sub.dispose();
     }
   });
+
+  it("uses an absolute percent without the +6 message bump", () => {
+    const events: SyncProgressEvent[] = [];
+    const sub = onSyncProgress((event) => events.push(event));
+    const reporter = createSidebarSyncProgress("push");
+    try {
+      reporter.report({ message: "Packaging local files…" });
+      const afterMessage = events.at(-1)?.percent;
+      expect(afterMessage).toBe(10);
+
+      reporter.report({
+        message: "Uploading 2/10 changed file(s)…",
+        percent: 40,
+      });
+      expect(events.at(-1)?.percent).toBe(40);
+      expect(events.at(-1)?.message).toBe("Uploading 2/10 changed file(s)…");
+    } finally {
+      reporter.complete(true);
+      sub.dispose();
+    }
+  });
 });

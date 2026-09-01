@@ -39,7 +39,7 @@ const DENYLIST_GLOBS = [
 ];
 
 /** Path segments that must never be synced (matched anywhere in the relative path). */
-const DENYLIST_PATH_SEGMENTS = ["__pycache__"];
+const DENYLIST_PATH_SEGMENTS = ["__pycache__", "node_modules", ".git"];
 
 /** skill-creator / skill-forge backup folder names (matched as path segments). */
 const SKILL_BACKUP_SEGMENT_RE = /^skill-.+-backup$/;
@@ -297,6 +297,9 @@ async function walkDirectory(dir: string): Promise<string[]> {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (DENYLIST_PATH_SEGMENTS.includes(entry.name)) {
+        continue;
+      }
       const sub = await walkDirectory(fullPath);
       results.push(...sub);
     } else if (entry.isFile()) {

@@ -148,6 +148,7 @@ describe("RepoBackend", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.useRealTimers();
   });
 
   it("writes files via Git Data API", async () => {
@@ -429,5 +430,215 @@ describe("RepoBackend", () => {
     expect(counts.commit).toBe(1);
     expect(counts.tree).toBe(1);
     expect(counts.blob).toBe(2);
+  });
+
+  it("uploads blobs with concurrency 5 and reports progress", async () => {
+    let inflight = 0;
+    let maxInflight = 0;
+    const progress: Array<[number, number]> = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url.includes("/git/ref/heads/main") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit1", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/commit1") && method === "GET") {
+        return new Response(
+          JSON.stringify({ sha: "commit1", tree: { sha: "tree1" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs") && method === "POST") {
+        inflight += 1;
+        maxInflight = Math.max(maxInflight, inflight);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        inflight -= 1;
+        return new Response(JSON.stringify({ sha: "blob1" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/trees") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "tree2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/commits") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "commit2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/refs/heads/main") && method === "PATCH") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit2", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected" }), { status: 500 });
+    }) as typeof fetch;
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+      branch: "main",
+      basePath: "cursor-sync",
+    });
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 6; i++) {
+      files[`file-${i}.json`] = `{"i":${i}}`;
+    }
+    const result = await backend.writeFiles(files, {
+      onBlobProgress: (completed, total) => {
+        progress.push([completed, total]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(maxInflight).toBe(5);
+    expect(progress.at(-1)).toEqual([6, 6]);
+    expect(progress).toHaveLength(6);
+  });
+
+  it("retries a single blob without posting a tree until blobs succeed", async () => {
+    vi.useFakeTimers();
+    let blobPosts = 0;
+    let treePosts = 0;
+    let failedOnce = false;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url.includes("/git/ref/heads/main") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit1", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/commit1") && method === "GET") {
+        return new Response(
+          JSON.stringify({ sha: "commit1", tree: { sha: "tree1" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs") && method === "POST") {
+        blobPosts += 1;
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        if (body.content === "retry-me" && !failedOnce) {
+          failedOnce = true;
+          return new Response(JSON.stringify({ message: "server" }), { status: 500 });
+        }
+        return new Response(JSON.stringify({ sha: "blob1" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/trees") && method === "POST") {
+        treePosts += 1;
+        return new Response(JSON.stringify({ sha: "tree2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/commits") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "commit2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/refs/heads/main") && method === "PATCH") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit2", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected" }), { status: 500 });
+    }) as typeof fetch;
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+      branch: "main",
+    });
+    const pending = backend.writeFiles({
+      "a.json": "retry-me",
+      "b.json": "ok",
+    });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    vi.useRealTimers();
+    expect(result.ok).toBe(true);
+    expect(blobPosts).toBe(3);
+    expect(treePosts).toBe(1);
+  });
+
+  it("does not create a tree after a non-retryable blob error", async () => {
+    let treePosts = 0;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url.includes("/git/ref/heads/main") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit1", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/commit1") && method === "GET") {
+        return new Response(
+          JSON.stringify({ sha: "commit1", tree: { sha: "tree1" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs") && method === "POST") {
+        return new Response(JSON.stringify({ message: "bad credentials" }), {
+          status: 401,
+        });
+      }
+      if (url.includes("/git/trees") && method === "POST") {
+        treePosts += 1;
+        return new Response(JSON.stringify({ sha: "tree2" }), { status: 201 });
+      }
+      return new Response(JSON.stringify({ message: "unexpected" }), { status: 500 });
+    }) as typeof fetch;
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+      branch: "main",
+    });
+    const result = await backend.writeFiles({
+      "a.json": "1",
+      "b.json": "2",
+    });
+    expect(result.ok).toBe(false);
+    expect(treePosts).toBe(0);
   });
 });

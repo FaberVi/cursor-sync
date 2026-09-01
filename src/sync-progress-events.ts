@@ -69,10 +69,18 @@ export function emitSyncActionsIdle(): void {
  * Nested reporters (e.g. Sync Now → Pull → Push) keep buttons locked
  * until the outermost `complete` runs.
  */
+export interface SyncProgressReport {
+  message?: string;
+  increment?: number;
+  /** Absolute 0–100. When set, skip the +6-per-message bump. */
+  percent?: number;
+}
+
 export function createSidebarSyncProgress(
   operation: SyncProgressOperation
-): vscode.Progress<{ message?: string; increment?: number }> & {
+): vscode.Progress<SyncProgressReport> & {
   complete: (ok: boolean) => void;
+  readonly percent: number;
 } {
   let percent = 4;
   let held = false;
@@ -117,9 +125,14 @@ export function createSidebarSyncProgress(
   };
 
   return {
-    report({ message, increment }) {
+    get percent() {
+      return percent;
+    },
+    report({ message, increment, percent: absolutePercent }) {
       ensureHeld();
-      if (typeof increment === "number" && increment > 0) {
+      if (typeof absolutePercent === "number" && Number.isFinite(absolutePercent)) {
+        percent = Math.min(95, Math.max(0, absolutePercent));
+      } else if (typeof increment === "number" && increment > 0) {
         percent = Math.min(99, percent + increment);
       } else if (message) {
         percent = Math.min(95, percent + 6);

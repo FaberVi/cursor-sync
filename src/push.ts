@@ -47,6 +47,7 @@ import {
 import { ensureRepoExistsInteractive } from "./remote/ensure-repo.js";
 import { selectPushDelta } from "./push-delta.js";
 import { createSidebarSyncProgress } from "./sync-progress-events.js";
+import type { SyncProgressReport } from "./sync-progress-events.js";
 import { formatElapsedPrecise } from "./elapsed.js";
 import { ensureParentDirectory } from "./rollback.js";
 import type { ManifestFileEntry, SyncState } from "./types.js";
@@ -101,7 +102,7 @@ export async function executePush(
 async function doPush(
   context: vscode.ExtensionContext,
   trigger: PushTrigger = "manual",
-  progress: vscode.Progress<{ message?: string; increment?: number }> = {
+  progress: vscode.Progress<SyncProgressReport> & { percent?: number } = {
     report: () => {},
   }
 ): Promise<boolean> {
@@ -573,9 +574,23 @@ async function doPush(
   progress.report({
     message: `Uploading ${delta.uploadedSyncKeys.length} changed file(s)…`,
   });
-  const writeResult = await withRetry(() =>
-    backend.writeFiles(remoteFiles, { deleteNames: delta.deleteNames })
-  );
+  const uploadFloor =
+    typeof progress.percent === "number" ? progress.percent : 0;
+  const writeResult =
+    backend instanceof RepoBackend
+      ? await backend.writeFiles(remoteFiles, {
+          deleteNames: delta.deleteNames,
+          onBlobProgress: (completed, total) => {
+            const ratio = total > 0 ? completed / total : 1;
+            progress.report({
+              message: `Uploading ${completed}/${total} changed file(s)…`,
+              percent: uploadFloor + ratio * (95 - uploadFloor),
+            });
+          },
+        })
+      : await withRetry(() =>
+          backend.writeFiles(remoteFiles, { deleteNames: delta.deleteNames })
+        );
   if (!writeResult.ok) {
     void showSyncFailureWithDebug(
       context,
