@@ -12,7 +12,7 @@ import { syncKeyToAbsolutePath } from "../sync-local-deletes.js";
 
 export type SidebarMessage =
   | {
-      command: "syncNow" | "push" | "pull" | "pullMirror" | "export" | "import" | "configure";
+      command: "syncNow" | "push" | "pull" | "pullMirror" | "export" | "import" | "configure" | "openCursorFolder";
       destination?: {
         type?: string;
         repo?: string;
@@ -50,6 +50,8 @@ export type SidebarMessage =
   | { command: "chats:revealTranscripts"; conversationId: string; workspaceKey?: string; projectKey?: string }
   | { command: "chats:clearHistory" }
   | { command: "history:details"; timestamp: string }
+  | { command: "history:delete"; timestamp: string; page?: number }
+  | { command: "history:clearAll" }
   | { command: "history:page"; page: number }
   | { command: "settings:get" }
   | { command: "settings:set"; key: string; value: unknown }
@@ -64,6 +66,7 @@ const KNOWN_COMMANDS = new Set<string>([
   "pullMirror",
   "export",
   "import",
+  "openCursorFolder",
   "configure",
   "chats:listLocal",
   "chats:loadGroup",
@@ -78,6 +81,8 @@ const KNOWN_COMMANDS = new Set<string>([
   "chats:revealTranscripts",
   "chats:clearHistory",
   "history:details",
+  "history:delete",
+  "history:clearAll",
   "history:page",
   "settings:get",
   "settings:set",
@@ -146,6 +151,11 @@ export async function dispatchSidebarMessage(
     case "import":
       await vscode.commands.executeCommand("cursorSync.import");
       break;
+    case "openCursorFolder": {
+      const { executeOpenCursorFolder } = await import("../open-cursor-folder.js");
+      await executeOpenCursorFolder({ folder: "dotCursor" });
+      break;
+    }
     case "configure": {
       if (msg.destination) {
         const { persistDestinationSettings } = await import("../remote/destination.js");
@@ -165,17 +175,39 @@ export async function dispatchSidebarMessage(
       break;
     }
     case "chats:loadGroup": {
-      if (typeof msg.projectKey !== "string" || !isSafePathSegment(msg.projectKey)) {
+      const projectKey =
+        typeof msg.projectKey === "string" ? msg.projectKey : "";
+      if (!projectKey || !isSafePathSegment(projectKey)) {
         void vscode.window.showWarningMessage(t("invalidProjectKey"));
+        await webview.postMessage({
+          type: "chats:groupRows",
+          projectKey,
+          rows: [],
+        });
         break;
       }
-      const { loadConversationGroupRows } = await import("./chats-tab.js");
-      const rows = await loadConversationGroupRows(msg.projectKey);
-      await webview.postMessage({
-        type: "chats:groupRows",
-        projectKey: msg.projectKey,
-        rows,
-      });
+      try {
+        const { loadConversationGroupRows } = await import("./chats-tab.js");
+        const rows = await loadConversationGroupRows(projectKey);
+        await webview.postMessage({
+          type: "chats:groupRows",
+          projectKey,
+          rows,
+        });
+      } catch (err) {
+        const logger = (await import("../diagnostics.js")).getLogger();
+        logger.appendLine(
+          `[${new Date().toISOString()}] chats:loadGroup failed for ${projectKey}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        await webview.postMessage({
+          type: "chats:groupRows",
+          projectKey,
+          rows: [],
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       break;
     }
     case "chats:listImports": {
@@ -319,6 +351,44 @@ export async function dispatchSidebarMessage(
           t("historyFileNotFound", { path: picked.syncKey })
         );
       }
+      break;
+    }
+    case "history:delete": {
+      const deleteLabel = t("historyDelete");
+      const confirmed = await vscode.window.showWarningMessage(
+        t("historyDeleteConfirm"),
+        { modal: true },
+        deleteLabel,
+        t("cancel")
+      );
+      if (confirmed !== deleteLabel) {
+        break;
+      }
+      const { removeSyncHistoryEntry } = await import("../diagnostics.js");
+      const removed = await removeSyncHistoryEntry(context, msg.timestamp);
+      if (!removed) {
+        void vscode.window.showWarningMessage(t("historyEntryNotFound"));
+        break;
+      }
+      const { refreshSidebar } = await import("./index.js");
+      refreshSidebar();
+      break;
+    }
+    case "history:clearAll": {
+      const clearLabel = t("clear");
+      const confirmed = await vscode.window.showWarningMessage(
+        t("historyClearAllConfirm"),
+        { modal: true },
+        clearLabel,
+        t("cancel")
+      );
+      if (confirmed !== clearLabel) {
+        break;
+      }
+      const { clearSyncHistory } = await import("../diagnostics.js");
+      await clearSyncHistory(context);
+      const { refreshSidebar } = await import("./index.js");
+      refreshSidebar();
       break;
     }
     case "history:page": {

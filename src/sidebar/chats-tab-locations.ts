@@ -1,8 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import * as vscode from "vscode";
+import { revealFsPathInOs } from "../reveal-fs-path.js";
 import { createHash } from "node:crypto";
 import {
   discoverProjects,
@@ -28,7 +27,6 @@ export interface ConversationFileTargets {
 }
 
 const TRANSCRIPT_SCAN_MAX_BYTES = 256 * 1024 * 1024;
-const execFileAsync = promisify(execFile);
 
 export { isComposerConversationId } from "../composer-id.js";
 
@@ -150,56 +148,6 @@ export async function resolveConversationFileTargets(
   };
 }
 
-async function revealPathInOsShell(fsPath: string): Promise<boolean> {
-  const normalized = path.normalize(fsPath);
-  try {
-    const stat = await fs.stat(normalized);
-    if (process.platform === "win32") {
-      if (stat.isDirectory()) {
-        await execFileAsync("explorer.exe", [normalized], { windowsHide: true });
-      } else {
-        await execFileAsync("explorer.exe", [`/select,${normalized}`], { windowsHide: true });
-      }
-      return true;
-    }
-    if (process.platform === "darwin") {
-      if (stat.isDirectory()) {
-        await execFileAsync("open", [normalized], { windowsHide: true });
-      } else {
-        await execFileAsync("open", ["-R", normalized], { windowsHide: true });
-      }
-      return true;
-    }
-    const target = stat.isDirectory() ? normalized : path.dirname(normalized);
-    await execFileAsync("xdg-open", [target], { windowsHide: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function revealFsPath(fsPath: string): Promise<void> {
-  const uri = vscode.Uri.file(fsPath);
-  // Cursor chat assets live under ~/.cursor (outside workspace): prefer OS reveal.
-  const commands = ["revealFileInOS", "revealInExplorer"] as const;
-  for (const commandId of commands) {
-    try {
-      await vscode.commands.executeCommand(commandId, uri);
-      return;
-    } catch {
-      continue;
-    }
-  }
-  if (await revealPathInOsShell(fsPath)) {
-    return;
-  }
-  try {
-    await vscode.env.openExternal(uri);
-  } catch {
-    void vscode.window.showWarningMessage(`Could not open folder in file manager: ${fsPath}`);
-  }
-}
-
 async function pathExists(fsPath: string): Promise<boolean> {
   try {
     await fs.stat(fsPath);
@@ -257,30 +205,30 @@ export async function revealConversationFiles(
     projectKeyHint
   );
   if (targets.primaryJsonl && (await pathExists(targets.primaryJsonl))) {
-    await revealFsPath(targets.primaryJsonl);
+    await revealFsPathInOs(targets.primaryJsonl);
     return;
   }
   if (targets.storeDbPath && (await pathExists(targets.storeDbPath))) {
-    await revealFsPath(targets.storeDbPath);
+    await revealFsPathInOs(targets.storeDbPath);
     return;
   }
   if (targets.transcriptDir && (await pathExists(targets.transcriptDir))) {
-    await revealFsPath(targets.transcriptDir);
+    await revealFsPathInOs(targets.transcriptDir);
     return;
   }
   if (targets.chatDataDir && (await pathExists(targets.chatDataDir))) {
-    await revealFsPath(targets.chatDataDir);
+    await revealFsPathInOs(targets.chatDataDir);
     return;
   }
 
   if (targets.agentTranscriptsDir && (await pathExists(targets.agentTranscriptsDir))) {
-    await revealFsPath(targets.agentTranscriptsDir);
+    await revealFsPathInOs(targets.agentTranscriptsDir);
     void vscode.window.showInformationMessage(t("revealHeaderOnlyAgentTranscripts"));
     return;
   }
 
   if (targets.projectDir && (await pathExists(targets.projectDir))) {
-    await revealFsPath(targets.projectDir);
+    await revealFsPathInOs(targets.projectDir);
     void vscode.window.showInformationMessage(t("revealNoTranscriptProject"));
     return;
   }
@@ -288,12 +236,12 @@ export async function revealConversationFiles(
   if (projectKeyHint) {
     const paths = projectPaths(projectKeyHint);
     if (await pathExists(paths.agentTranscriptsDir)) {
-      await revealFsPath(paths.agentTranscriptsDir);
+      await revealFsPathInOs(paths.agentTranscriptsDir);
       void vscode.window.showInformationMessage(t("revealComposerOnlyAgentTranscripts"));
       return;
     }
     if (await pathExists(paths.projectDir)) {
-      await revealFsPath(paths.projectDir);
+      await revealFsPathInOs(paths.projectDir);
       void vscode.window.showInformationMessage(t("revealComposerOnlyProject"));
       return;
     }
@@ -311,7 +259,7 @@ export async function revealConversationFiles(
     fallbackDirRaw &&
     assertPathUnderRoot(fallbackDirRaw, resolveChatsRoot());
   if (fallbackDir && (await pathExists(fallbackDir))) {
-    await revealFsPath(fallbackDir);
+    await revealFsPathInOs(fallbackDir);
     return;
   }
 

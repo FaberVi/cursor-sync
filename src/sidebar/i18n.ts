@@ -17,6 +17,32 @@ export type MessageKey =
   | "pull"
   | "pullMirror"
   | "pullMirrorHint"
+  | "syncNowHint"
+  | "pushHint"
+  | "pullHint"
+  | "exportHint"
+  | "importHint"
+  | "openCursorFolder"
+  | "openCursorFolderHint"
+  | "openCursorFolderPick"
+  | "openCursorFolderDotCursor"
+  | "openCursorFolderUser"
+  | "stopSyncHint"
+  | "tabSyncHint"
+  | "tabChatsHint"
+  | "tabSettingsHint"
+  | "clearHint"
+  | "openChatHint"
+  | "revealFilesHint"
+  | "importBundleHint"
+  | "prevHint"
+  | "nextHint"
+  | "conflictsKeepLocalHint"
+  | "conflictsKeepRemoteHint"
+  | "conflictsSkipHint"
+  | "conflictsApplyAllLocalHint"
+  | "conflictsApplyAllRemoteHint"
+  | "conflictsApplyAllSkipHint"
   | "conflictsTitle"
   | "conflictsKeepLocal"
   | "conflictsKeepRemote"
@@ -24,6 +50,7 @@ export type MessageKey =
   | "conflictsApplyAllLocal"
   | "conflictsApplyAllRemote"
   | "conflictsApplyAllSkip"
+  | "conflictsResolvedBanner"
   | "couldNotResolveChatFolder"
   | "filesTracked"
   | "fileTracked"
@@ -99,6 +126,7 @@ export type MessageKey =
   | "clear"
   | "loading"
   | "noLocalChats"
+  | "groupLoadEmpty"
   | "noImportHistory"
   | "noBundleFiles"
   | "chatsCount"
@@ -131,6 +159,11 @@ export type MessageKey =
   | "couldNotRevealFiles"
   | "historyEntryNotFound"
   | "historyNoFileListRecorded"
+  | "historyClearHint"
+  | "historyDeleteHint"
+  | "historyDelete"
+  | "historyDeleteConfirm"
+  | "historyClearAllConfirm"
   | "openAnyway"
   | "cancel"
   | "stopSync"
@@ -252,10 +285,13 @@ export function webviewI18nPayload(lang: UiLanguage = readUiLanguage()): Record<
   const keys: MessageKey[] = [
     "loading",
     "noLocalChats",
+    "groupLoadEmpty",
     "noImportHistory",
     "noBundleFiles",
     "connectRepository",
     "connectGithub",
+    "connectRepoHint",
+    "connectGistHint",
     "chatsCount",
     "prev",
     "next",
@@ -264,6 +300,18 @@ export function webviewI18nPayload(lang: UiLanguage = readUiLanguage()): Record<
     "push",
     "pull",
     "pullMirror",
+    "pullMirrorHint",
+    "syncNowHint",
+    "pushHint",
+    "pullHint",
+    "exportHint",
+    "importHint",
+    "stopSyncHint",
+    "openChatHint",
+    "revealFilesHint",
+    "importBundleHint",
+    "prevHint",
+    "nextHint",
     "stopSync",
     "import",
     "open",

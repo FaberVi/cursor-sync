@@ -105,6 +105,13 @@ body {
   border-color: rgba(125, 211, 252, 0.25);
   box-shadow: 0 0 20px rgba(125, 211, 252, 0.08);
 }
+.status-card.loading {
+  background: linear-gradient(135deg, rgba(125, 211, 252, 0.04) 0%, #1c1a13 100%);
+  border-color: rgba(125, 211, 252, 0.1);
+}
+.status-card.loading:hover {
+  border-color: rgba(125, 211, 252, 0.18);
+}
 .status-card.error {
   background: linear-gradient(135deg, rgba(248, 113, 113, 0.06) 0%, #1c1a13 100%);
   border-color: rgba(248, 113, 113, 0.15);
@@ -148,6 +155,14 @@ body {
   background: rgba(125, 211, 252, 0.12);
   color: #7dd3fc;
   box-shadow: 0 0 12px rgba(125, 211, 252, 0.15);
+}
+.loading .status-icon-wrapper {
+  background: rgba(125, 211, 252, 0.1);
+  color: #7dd3fc;
+  box-shadow: 0 0 12px rgba(125, 211, 252, 0.1);
+}
+.status-loading {
+  color: rgba(237, 236, 236, 0.55);
 }
 .error .status-icon-wrapper {
   background: rgba(248, 113, 113, 0.12);

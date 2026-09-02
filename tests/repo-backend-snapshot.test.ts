@@ -1,5 +1,5 @@
 import { mockFetch, restoreRemoteFetchAfterEach } from "./remote-backend-harness.js";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { remoteSnapshotFileNames } from "../src/remote/index.js";
 import { RepoBackend } from "../src/remote/repo-backend.js";
 
@@ -529,5 +529,169 @@ describe("RepoBackend snapshot", () => {
       expect(snap.data.allFileNames).toEqual(["cursor-user--settings.json"]);
     }
     expect(backend.hasLeftoverDashed()).toBe(true);
+  });
+
+  it("downloads blobs with concurrency 5 and reports progress", async () => {
+    let inflight = 0;
+    let maxInflight = 0;
+    const progress: Array<[number, number]> = [];
+    const tree = Array.from({ length: 6 }, (_, i) => ({
+      path: `cursor-sync/file-${i}.json`,
+      mode: "100644",
+      type: "blob" as const,
+      sha: `blob-${i}`,
+    }));
+    mockFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/git/ref/heads/main")) {
+        return new Response(
+          JSON.stringify({
+            ref: "refs/heads/main",
+            object: { sha: "refsha", type: "commit" },
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/refsha")) {
+        return new Response(
+          JSON.stringify({ sha: "refsha", tree: { sha: "treesha" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/trees/treesha")) {
+        return new Response(
+          JSON.stringify({ sha: "treesha", truncated: false, tree }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      const blobMatch = url.match(/\/git\/blobs\/blob-(\d+)/);
+      if (blobMatch) {
+        inflight += 1;
+        maxInflight = Math.max(maxInflight, inflight);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        inflight -= 1;
+        const i = blobMatch[1];
+        return new Response(
+          JSON.stringify({
+            sha: `blob-${i}`,
+            encoding: "utf-8",
+            content: `{"i":${i}}`,
+            size: 8,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected " + url }), {
+        status: 500,
+      });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+    });
+    const snap = await backend.getSnapshot({
+      onFileProgress: (completed, total) => {
+        progress.push([completed, total]);
+      },
+    });
+    expect(snap.ok).toBe(true);
+    expect(maxInflight).toBe(5);
+    expect(progress.at(-1)).toEqual([6, 6]);
+    expect(progress).toHaveLength(6);
+  });
+
+  it("retries a single blob GET without re-fetching the others", async () => {
+    vi.useFakeTimers();
+    const blobGets: Record<string, number> = {};
+    let failedOnce = false;
+    mockFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/git/ref/heads/main")) {
+        return new Response(
+          JSON.stringify({
+            ref: "refs/heads/main",
+            object: { sha: "refsha", type: "commit" },
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/refsha")) {
+        return new Response(
+          JSON.stringify({ sha: "refsha", tree: { sha: "treesha" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/trees/treesha")) {
+        return new Response(
+          JSON.stringify({
+            sha: "treesha",
+            truncated: false,
+            tree: [
+              {
+                path: "cursor-sync/a.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-retry",
+              },
+              {
+                path: "cursor-sync/b.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-ok",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-retry")) {
+        blobGets["blob-retry"] = (blobGets["blob-retry"] ?? 0) + 1;
+        if (!failedOnce) {
+          failedOnce = true;
+          return new Response(JSON.stringify({ message: "server" }), { status: 500 });
+        }
+        return new Response(
+          JSON.stringify({
+            sha: "blob-retry",
+            encoding: "utf-8",
+            content: "retried",
+            size: 7,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-ok")) {
+        blobGets["blob-ok"] = (blobGets["blob-ok"] ?? 0) + 1;
+        return new Response(
+          JSON.stringify({
+            sha: "blob-ok",
+            encoding: "utf-8",
+            content: "ok",
+            size: 2,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected " + url }), {
+        status: 500,
+      });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+    });
+    const pending = backend.getSnapshot();
+    await vi.runAllTimersAsync();
+    const snap = await pending;
+    vi.useRealTimers();
+    expect(snap.ok).toBe(true);
+    expect(blobGets["blob-retry"]).toBe(2);
+    expect(blobGets["blob-ok"]).toBe(1);
   });
 });

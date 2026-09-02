@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync (Community)",
   "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub Gist or repository",
-	"version": "0.12.1",
+	"version": "1.0.0",
   "icon": "assets/icon.png",
   "publisher": "FaberVi",
   "author": {
@@ -56,6 +56,11 @@
         {
           "command": "cursorSync.pullMirror",
           "when": "view == cursorSync.sidebar && cursorSync.configured",
+          "group": "1_overflow"
+        },
+        {
+          "command": "cursorSync.openCursorFolder",
+          "when": "view == cursorSync.sidebar",
           "group": "1_overflow"
         }
       ],
@@ -147,6 +152,11 @@
       {
         "command": "cursorSync.import",
         "title": "Cursor Sync: Import Settings from Private Gist"
+      },
+      {
+        "command": "cursorSync.openCursorFolder",
+        "title": "Cursor Sync: Open Cursor Data Folder",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "cursorSync.exportTranscripts",

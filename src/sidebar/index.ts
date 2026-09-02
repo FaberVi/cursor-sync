@@ -94,6 +94,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _hydrateSidebar(): Promise<void> {
+    this._hydrateGeneration += 1;
     const generation = this._hydrateGeneration;
     const view = this._view;
     if (!view) {
@@ -122,10 +123,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _update(): Promise<void> {
-    if (!this._view) {
+    this._hydrateGeneration += 1;
+    const generation = this._hydrateGeneration;
+    const view = this._view;
+    if (!view) {
       return;
     }
     const syncPaneHtml = await renderSyncPaneHtml(this.context);
-    await this._view.webview.postMessage({ type: "sync:update", html: syncPaneHtml });
+    if (generation !== this._hydrateGeneration || this._view !== view) {
+      return;
+    }
+    await view.webview.postMessage({ type: "sync:update", html: syncPaneHtml });
   }
 }

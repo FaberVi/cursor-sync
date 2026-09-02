@@ -67,7 +67,9 @@
       projAttr +
       tierAttr +
       openDisabled +
-      ">" +
+      ' title="' +
+      CSW.escHtml(CSW.tr("openChatHint", "Open this conversation in Composer")) +
+      '">' +
       openLabel +
       "</button>" +
       (CSW.rowShowsFilesButton(r)
@@ -76,7 +78,9 @@
           '"' +
           wsAttr +
           projAttr +
-          ">" +
+          ' title="' +
+          CSW.escHtml(CSW.tr("revealFilesHint", "Reveal transcript and store files in the explorer")) +
+          '">' +
           CSW.escHtml(CSW.tr("files", "Files")) +
           "</button>"
         : "") +
@@ -120,7 +124,10 @@
               return CSW.renderChatRow(r, g.projectKey);
             }).join("");
         if (!isLoading && expanded && rows.length === 0 && (g.conversationCount || 0) > 0) {
-          rowsHtml = '<div class="chat-group-loading">' + CSW.escHtml(CSW.tr("loading", "Loading…")) + '</div>';
+          rowsHtml =
+            '<div class="empty-state">' +
+            CSW.escHtml(CSW.tr("groupLoadEmpty", "No chats could be loaded for this project.")) +
+            "</div>";
         }
         var pagerHtml =
           rows.length > pageSize
@@ -128,6 +135,8 @@
               '<div class="chats-pager">' +
               '<button type="button" class="pager-btn" data-command="chats:groupPrev" data-project-key="' +
               CSW.escHtml(g.projectKey) +
+              '" title="' +
+              CSW.escHtml(CSW.tr("prevHint", "Previous page")) +
               '"' +
               (page <= 0 ? " disabled" : "") +
               ">" +
@@ -140,6 +149,8 @@
               "</span>" +
               '<button type="button" class="pager-btn" data-command="chats:groupNext" data-project-key="' +
               CSW.escHtml(g.projectKey) +
+              '" title="' +
+              CSW.escHtml(CSW.tr("nextHint", "Next page")) +
               '"' +
               (page >= totalPages - 1 ? " disabled" : "") +
               ">" +
@@ -284,6 +295,8 @@
           '<div class="chat-row-actions">' +
           '<button class="chat-action-btn" data-command="chats:importBundle" data-bundle-path="' +
           CSW.escHtml(e.bundlePath) +
+          '" title="' +
+          CSW.escHtml(CSW.tr("importBundleHint", "Import this chat bundle file into the current workspace")) +
           '">' +
           CSW.escHtml(CSW.tr("import", "Import")) +
           "</button>" +

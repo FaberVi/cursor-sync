@@ -351,41 +351,15 @@ export async function discoverConversationsGroupedByProject(): Promise<
   const groups: ConversationProjectGroup[] = [];
 
   for (const project of projects) {
-    const map = new Map<string, MutableDiscovered>();
-    const chatsKey = workspaceKeyForProject(project, folderMap);
-
-    if (chatsKey) {
-      await discoverFromStoreDb(map, chatsRoot, chatsKey);
-    }
-
-    await discoverFromTranscripts(map, projectsRoot, {
-      projectFolderName: project.folderName,
+    const group = await discoverConversationsForProject(project, {
+      projectsRoot,
+      chatsRoot,
+      folderMap,
+      currentProjectFolderName: currentProject?.folderName,
     });
-
-    if (chatsKey) {
-      await discoverFromComposerHeaders(map, folderMap, {
-        chatsKeyForProject: chatsKey,
-        projectKey: project.folderName,
-      });
+    if (group) {
+      groups.push(group);
     }
-
-    await discoverHeaderOnlyTranscriptDirs(map, project);
-
-    await enrichStoreFlagsFromDisk(map);
-
-    const conversations = filterBackupEligibleConversations(finalizeDiscovered(map));
-    if (conversations.length === 0) {
-      continue;
-    }
-
-    const { label, pathHint } = projectGroupSidebarLabel(project.folderName, folderMap);
-    groups.push({
-      projectKey: project.folderName,
-      label,
-      pathHint,
-      isCurrentWorkspace: currentProject?.folderName === project.folderName,
-      conversations,
-    });
   }
 
   return groups.sort((a, b) => {
@@ -394,6 +368,53 @@ export async function discoverConversationsGroupedByProject(): Promise<
     }
     return a.label.localeCompare(b.label);
   });
+}
+
+/** Discover backup-eligible chats for a single ~/.cursor/projects/<key> folder. */
+export async function discoverConversationsForProject(
+  project: ProjectInfo,
+  options: {
+    projectsRoot: string;
+    chatsRoot: string;
+    folderMap: Map<string, string>;
+    currentProjectFolderName?: string;
+  }
+): Promise<ConversationProjectGroup | undefined> {
+  const map = new Map<string, MutableDiscovered>();
+  const chatsKey = workspaceKeyForProject(project, options.folderMap);
+
+  if (chatsKey) {
+    await discoverFromStoreDb(map, options.chatsRoot, chatsKey);
+  }
+
+  await discoverFromTranscripts(map, options.projectsRoot, {
+    projectFolderName: project.folderName,
+  });
+
+  if (chatsKey) {
+    await discoverFromComposerHeaders(map, options.folderMap, {
+      chatsKeyForProject: chatsKey,
+      projectKey: project.folderName,
+    });
+  }
+
+  await discoverHeaderOnlyTranscriptDirs(map, project);
+
+  await enrichStoreFlagsFromDisk(map);
+
+  const conversations = filterBackupEligibleConversations(finalizeDiscovered(map));
+  if (conversations.length === 0) {
+    return undefined;
+  }
+
+  const { label, pathHint } = projectGroupSidebarLabel(project.folderName, options.folderMap);
+  return {
+    projectKey: project.folderName,
+    label,
+    pathHint,
+    isCurrentWorkspace: options.currentProjectFolderName === project.folderName,
+    conversations,
+  };
 }
 
 export { discoveredToExportRows } from "./chat-discovery-export.js";

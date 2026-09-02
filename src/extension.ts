@@ -42,6 +42,7 @@ import {
   notifyPendingStateBundleIfAny,
 } from "./state-reconciliation.js";
 import { executePrepareSyncFromLandingZone } from "./sync-engine.js";
+import { executeOpenCursorFolder } from "./open-cursor-folder.js";
 import {
   disposeActivationWatcher,
   registerActivationWatcher,
@@ -139,6 +140,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.import", () =>
       executeImport(context)
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.openCursorFolder", () =>
+      executeOpenCursorFolder({ pick: true })
     )
   );
 

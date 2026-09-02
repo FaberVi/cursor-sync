@@ -21,6 +21,8 @@ export interface SyncProgressEvent {
 let emitterInstance: vscode.EventEmitter<SyncProgressEvent> | undefined;
 let busyDepth = 0;
 const tickTimers = new Set<ReturnType<typeof setInterval>>();
+/** Innermost reporter is last; only that one emits elapsed ticks. */
+const liveReporters: object[] = [];
 
 function getEmitter(): vscode.EventEmitter<SyncProgressEvent> {
   if (!emitterInstance) {
@@ -44,6 +46,7 @@ export function disposeSyncProgress(): void {
     clearInterval(timer);
   }
   tickTimers.clear();
+  liveReporters.length = 0;
   emitterInstance?.dispose();
   emitterInstance = undefined;
   busyDepth = 0;
@@ -88,11 +91,15 @@ export function createSidebarSyncProgress(
   let lastMessage = "";
   const startedAt = Date.now();
   let tickTimer: ReturnType<typeof setInterval> | undefined;
+  const self = {};
 
   const elapsedFields = (): { elapsedMs: number; elapsedLabel: string } => {
     const elapsedMs = Math.max(0, Date.now() - startedAt);
     return { elapsedMs, elapsedLabel: formatElapsedMs(elapsedMs) };
   };
+
+  const isInnermost = (): boolean =>
+    liveReporters[liveReporters.length - 1] === self;
 
   const stopTick = () => {
     if (tickTimer !== undefined) {
@@ -117,11 +124,27 @@ export function createSidebarSyncProgress(
     if (!held) {
       held = true;
       busyDepth += 1;
+      liveReporters.push(self);
       tickTimer = setInterval(() => {
+        if (!isInnermost()) {
+          return;
+        }
         emitBusy(lastMessage, percent);
       }, 1000);
       tickTimers.add(tickTimer);
     }
+  };
+
+  const releaseHeld = () => {
+    if (!held) {
+      return;
+    }
+    const idx = liveReporters.lastIndexOf(self);
+    if (idx >= 0) {
+      liveReporters.splice(idx, 1);
+    }
+    busyDepth = Math.max(0, busyDepth - 1);
+    held = false;
   };
 
   return {
@@ -149,11 +172,13 @@ export function createSidebarSyncProgress(
       finished = true;
       ensureHeld();
       stopTick();
-      if (held) {
-        busyDepth = Math.max(0, busyDepth - 1);
-        held = false;
-      }
+      releaseHeld();
       const stillBusy = busyDepth > 0;
+      if (stillBusy && ok) {
+        // Nested success: keep the inner phase text (e.g. Fetching n/m)
+        // instead of flashing Done / the parent's Pulling… tick.
+        return;
+      }
       emitSyncProgress({
         operation,
         message: ok ? "Done" : "Failed",

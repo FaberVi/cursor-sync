@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.0
+
+### Added
+- Sync tab history: delete a single entry (trash icon per row) or clear all entries via the control to the right of the History title; both actions require modal confirmation
+
+## v0.12.2
+
+### Fixed
+- Sync-tab conflict panel: Keep Local/Remote highlights and keeps rows visible; push/pull/Sync Now wait for sidebar decisions; banner and toast prompt Sync Now after all keep* choices
+- Sync Now progress no longer alternates between Pulling… and Fetching n/m when a nested pull runs
+- Repo push builds Git trees in chunks (100 entries) chained with `base_tree` so large backups avoid GitHub POST /git/trees timeouts
+
 ## v0.12.1
 
 ### Changed

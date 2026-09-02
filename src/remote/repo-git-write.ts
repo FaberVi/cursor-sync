@@ -19,6 +19,12 @@ export interface GitTreeEntry {
 }
 
 const BLOB_UPLOAD_CONCURRENCY = 5;
+/**
+ * GitHub POST /git/trees times out when the `tree` array is too large.
+ * Chain smaller creates with `base_tree` (Retool used 1000; 100 stays
+ * well under the processing timeout we already hit in production).
+ */
+export const TREE_CHUNK_SIZE = 100;
 
 /** GitHub GET /git/ref on a repo with no commits: HTTP 409 Git Repository is empty. */
 export function isEmptyGitHubRepositoryError(error: {
@@ -101,6 +107,53 @@ export async function createGitBlobs(options: {
   return { ok: true, data: results };
 }
 
+export async function createGitTreesIncremental(options: {
+  owner: string;
+  repo: string;
+  pat: string;
+  treeItems: GitTreeEntry[];
+  /** Parent commit tree SHA, or the previous chunk's tree SHA. */
+  baseTreeSha?: string;
+  onTreeProgress?: (completed: number, total: number) => void;
+}): Promise<ApiResult<{ sha: string }>> {
+  if (options.treeItems.length === 0) {
+    return {
+      ok: false,
+      error: {
+        category: "UNKNOWN",
+        message: "Cannot create an empty Git tree.",
+      },
+    };
+  }
+
+  const totalChunks = Math.ceil(options.treeItems.length / TREE_CHUNK_SIZE);
+  let baseTreeSha = options.baseTreeSha;
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+    const start = chunkIndex * TREE_CHUNK_SIZE;
+    const chunk = options.treeItems.slice(start, start + TREE_CHUNK_SIZE);
+    const body: { tree: GitTreeEntry[]; base_tree?: string } = { tree: chunk };
+    if (baseTreeSha) {
+      body.base_tree = baseTreeSha;
+    }
+    const treeResult = await withRetry(() =>
+      githubRequest<{ sha: string }>(
+        "POST",
+        `/repos/${options.owner}/${options.repo}/git/trees`,
+        options.pat,
+        body
+      )
+    );
+    if (!treeResult.ok) {
+      return treeResult;
+    }
+    baseTreeSha = treeResult.data.sha;
+    options.onTreeProgress?.(chunkIndex + 1, totalChunks);
+  }
+
+  return { ok: true, data: { sha: baseTreeSha! } };
+}
+
 /**
  * Tree mutations that migrate leftover dashed files at `basePath` root.
  * Dashed-only files are retargeted to the nested path (reuse blob SHA).
@@ -161,6 +214,7 @@ export async function createInitialCommit(options: {
   files: Record<string, string>;
   deleteNames: Set<string>;
   onBlobProgress?: (completed: number, total: number) => void;
+  onTreeProgress?: (completed: number, total: number) => void;
 }): Promise<ApiResult<RemoteWriteResult>> {
   void options.deleteNames;
   const blobResult = await createGitBlobs({
@@ -186,14 +240,13 @@ export async function createInitialCommit(options: {
     };
   }
 
-  const treeResult = await withRetry(() =>
-    githubRequest<{ sha: string }>(
-      "POST",
-      `/repos/${options.owner}/${options.repo}/git/trees`,
-      options.pat,
-      { tree: treeItems }
-    )
-  );
+  const treeResult = await createGitTreesIncremental({
+    owner: options.owner,
+    repo: options.repo,
+    pat: options.pat,
+    treeItems,
+    onTreeProgress: options.onTreeProgress,
+  });
   if (!treeResult.ok) {
     return treeResult;
   }

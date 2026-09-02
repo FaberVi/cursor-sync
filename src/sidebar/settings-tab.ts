@@ -240,7 +240,9 @@ export function renderSettingsPane(values: SettingsTabValues): string {
           <input type="text" id="destination.path" data-setting-key="destination.path" value="${escapeHtml(String(values["destination.path"]))}" class="settings-input settings-input-text settings-input-wide" />
         </div>
       </div>
-      <button type="button" class="configure-btn settings-connect-btn" data-command="configure">
+      <button type="button" class="configure-btn settings-connect-btn" data-command="configure" title="${escapeHtml(
+        destType === "repo" ? t("connectRepoHint") : t("connectGistHint")
+      )}">
         <span class="codicon codicon-github-alt"></span>
         ${escapeHtml(destType === "repo" ? t("connectRepository") : t("connectGithub"))}
       </button>

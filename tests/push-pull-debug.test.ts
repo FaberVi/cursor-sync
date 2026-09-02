@@ -348,6 +348,35 @@ describe("push/pull debug wiring", () => {
     await conflicts.clearConflicts();
   });
 
+  it("does not record Unresolved conflicts when sidebar wait applies keepLocal", async () => {
+    const { addHistory, conflicts } = await setupPushConflictBase();
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.commands, "executeCommand").mockImplementation(
+      async (cmd: string) => {
+        if (cmd === "cursorSync.resolveConflicts") {
+          await conflicts.registerPendingConflicts([sampleConflict]);
+          await conflicts.applyConflictResolution(
+            sampleConflict.relativeSyncKey,
+            "keepLocal"
+          );
+        }
+      }
+    );
+
+    const { executePush } = await import("../src/push.js");
+    const result = await executePush(mockContext(), { trigger: "manual" });
+
+    expect(result).toBe(false);
+    expect(conflicts.getPendingConflicts()).toHaveLength(1);
+    expect(
+      addHistory.mock.calls.some(
+        (call) =>
+          (call[1] as { error?: string }).error === "Unresolved conflicts"
+      )
+    ).toBe(false);
+    await conflicts.clearConflicts();
+  });
+
   it("records Unresolved conflicts history after push skip/cancel", async () => {
     const { addHistory, conflicts } = await setupPushConflictBase();
     const vscode = await import("vscode");
@@ -886,6 +915,46 @@ describe("sync now debug wiring", () => {
     const { executeSyncNow } = await import("../src/sync-now.js");
     await executeSyncNow(mockContext());
 
+    expect(
+      showSyncFailureWithDebugMock.mock.calls.some(
+        (call) => (call[1] as { category?: string }).category === "CONFLICT"
+      )
+    ).toBe(false);
+    await conflicts.clearConflicts();
+  });
+
+  it("does not toast CONFLICT on syncNow after keepLocal with rows still pending", async () => {
+    determineSyncActionMock.mockResolvedValue({
+      action: "conflict",
+      keys: ["cursor-user/settings.json"],
+    });
+
+    const conflicts = await import("../src/conflicts.js");
+    await conflicts.registerPendingConflicts([
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        localChecksum: "a",
+        remoteChecksum: "b",
+        baseChecksum: "c",
+      },
+    ]);
+
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.commands, "executeCommand").mockImplementation(
+      async (cmd: string) => {
+        if (cmd === "cursorSync.resolveConflicts") {
+          await conflicts.applyConflictResolution(
+            "cursor-user/settings.json",
+            "keepLocal"
+          );
+        }
+      }
+    );
+
+    const { executeSyncNow } = await import("../src/sync-now.js");
+    await executeSyncNow(mockContext());
+
+    expect(conflicts.getPendingConflicts()).toHaveLength(1);
     expect(
       showSyncFailureWithDebugMock.mock.calls.some(
         (call) => (call[1] as { category?: string }).category === "CONFLICT"

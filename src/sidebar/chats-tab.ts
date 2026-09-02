@@ -6,9 +6,20 @@ import type { ChatImportHistoryEntry } from "./import-history.js";
 import { t } from "./i18n.js";
 import {
   discoverConversationsGroupedByProject,
+  discoverConversationsForProject,
   discoveredToExportRows,
+  resolveProjectsRoot,
   type ConversationExportRow,
 } from "../chat-discovery.js";
+import { discoverProjects } from "../transcripts-discovery.js";
+import { buildChatsKeyToFolderMap } from "../chat-workspace-context.js";
+import { resolveSyncRoots } from "../paths.js";
+import { resolveChatsRoot } from "../transcripts-cursor-paths.js";
+import {
+  clearGroupedDiscoveryCache,
+  getGroupedDiscoveryCache,
+  setGroupedDiscoveryCache,
+} from "./chats-group-cache.js";
 import {
   openTranscriptForConversation,
   revealConversationFiles,
@@ -49,20 +60,41 @@ export interface ChatsBundlesResult {
 export async function loadConversationGroupRows(
   projectKey: string
 ): Promise<ConversationExportRow[]> {
-  const groups = await discoverConversationsGroupedByProject();
-  const group = groups.find((g) => g.projectKey === projectKey);
+  let group = getGroupedDiscoveryCache()?.find((g) => g.projectKey === projectKey);
   if (!group) {
-    return [];
+    const projectsRoot = resolveProjectsRoot();
+    const project = (await discoverProjects(projectsRoot)).find(
+      (p) => p.folderName === projectKey
+    );
+    if (!project) {
+      return [];
+    }
+    const { cursorUser } = resolveSyncRoots();
+    const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+    const discovered = await discoverConversationsForProject(project, {
+      projectsRoot,
+      chatsRoot: resolveChatsRoot(),
+      folderMap,
+    });
+    if (!discovered) {
+      return [];
+    }
+    group = discovered;
+    const cache = getGroupedDiscoveryCache() ?? [];
+    const next = cache.filter((g) => g.projectKey !== projectKey);
+    next.push(discovered);
+    setGroupedDiscoveryCache(next);
   }
   return discoveredToExportRows(group.conversations, {
     projectKey: group.projectKey,
-    probeDiskKv: true,
+    probeDiskKv: false,
   });
 }
 
 export async function listLocalConversationsGrouped(): Promise<ChatsGroupedResult> {
   try {
     const groups = await discoverConversationsGroupedByProject();
+    setGroupedDiscoveryCache(groups);
     const built: ChatsProjectGroup[] = [];
     let totalConversations = 0;
     for (const group of groups) {
@@ -78,6 +110,7 @@ export async function listLocalConversationsGrouped(): Promise<ChatsGroupedResul
     }
     return { groups: built, totalConversations };
   } catch {
+    clearGroupedDiscoveryCache();
     return { groups: [], totalConversations: 0 };
   }
 }

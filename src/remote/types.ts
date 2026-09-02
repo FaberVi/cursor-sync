@@ -37,6 +37,8 @@ export interface RemoteWriteOptions {
   deleteNames?: string[];
   /** Repo Git Data blob uploads only; Gist ignores this. */
   onBlobProgress?: (completed: number, total: number) => void;
+  /** Repo Git Data tree-create chunks only; Gist ignores this. */
+  onTreeProgress?: (completed: number, total: number) => void;
 }
 
 export interface RemoteDiscoverResult {

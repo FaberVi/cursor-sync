@@ -17,6 +17,7 @@ import type {
 } from "./types.js";
 import {
   createGitBlobs,
+  createGitTreesIncremental,
   createInitialCommit,
   isEmptyGitHubRepositoryError,
   leftoverDashedTreeEntries,
@@ -251,6 +252,7 @@ export class RepoBackend implements RemoteSyncBackend {
         files,
         deleteNames,
         onBlobProgress: options?.onBlobProgress,
+        onTreeProgress: options?.onTreeProgress,
       });
       if (initial.ok) {
         this.leftoverDashed = [];
@@ -321,17 +323,14 @@ export class RepoBackend implements RemoteSyncBackend {
       deleteNames.size === 0 &&
       leftovers.length > 0;
 
-    const treeResult = await withRetry(() =>
-      githubRequest<{ sha: string }>(
-        "POST",
-        `/repos/${this.owner}/${this.repo}/git/trees`,
-        this.pat,
-        {
-          base_tree: baseTreeSha,
-          tree: treeItems,
-        }
-      )
-    );
+    const treeResult = await createGitTreesIncremental({
+      owner: this.owner,
+      repo: this.repo,
+      pat: this.pat,
+      treeItems,
+      baseTreeSha,
+      onTreeProgress: options?.onTreeProgress,
+    });
     if (!treeResult.ok) {
       return treeResult;
     }

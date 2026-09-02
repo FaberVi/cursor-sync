@@ -112,17 +112,68 @@ export async function loadSyncHistory(
   }
 }
 
-export async function addSyncHistoryEntry(
+let historyWriteChain: Promise<void> = Promise.resolve();
+
+async function writeSyncHistoryFile(
   context: vscode.ExtensionContext,
-  entry: SyncHistoryEntry
+  history: SyncHistoryEntry[]
 ): Promise<void> {
-  const history = await loadSyncHistory(context);
-  history.unshift(entry);
-  if (history.length > MAX_HISTORY_ENTRIES) {
-    history.length = MAX_HISTORY_ENTRIES;
-  }
   const filePath = getSyncHistoryPath(context);
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(filePath, JSON.stringify(history, null, 2), "utf-8");
+}
+
+export async function addSyncHistoryEntry(
+  context: vscode.ExtensionContext,
+  entry: SyncHistoryEntry
+): Promise<void> {
+  const run = historyWriteChain.then(async () => {
+    const history = await loadSyncHistory(context);
+    history.unshift(entry);
+    if (history.length > MAX_HISTORY_ENTRIES) {
+      history.length = MAX_HISTORY_ENTRIES;
+    }
+    await writeSyncHistoryFile(context, history);
+  });
+  historyWriteChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  await run;
+}
+
+export async function removeSyncHistoryEntry(
+  context: vscode.ExtensionContext,
+  timestamp: string
+): Promise<boolean> {
+  let removed = false;
+  const run = historyWriteChain.then(async () => {
+    const history = await loadSyncHistory(context);
+    const next = history.filter((e) => e.timestamp !== timestamp);
+    removed = next.length < history.length;
+    if (!removed) {
+      return;
+    }
+    await writeSyncHistoryFile(context, next);
+  });
+  historyWriteChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  await run;
+  return removed;
+}
+
+export async function clearSyncHistory(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  const run = historyWriteChain.then(async () => {
+    await writeSyncHistoryFile(context, []);
+  });
+  historyWriteChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  await run;
 }

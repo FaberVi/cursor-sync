@@ -5,7 +5,7 @@ import { formatRelativeTime, t } from "./i18n.js";
 export const HISTORY_PAGE_SIZE = 5;
 
 export interface SyncTabState {
-  status: "synced" | "not-synced" | "syncing" | "error";
+  status: "synced" | "not-synced" | "syncing" | "error" | "loading";
   lastSyncTime: string | undefined;
   lastSyncDirection: "push" | "pull" | undefined;
   fileCount: number;
@@ -18,6 +18,8 @@ export interface SyncTabState {
   /** Extension package version (e.g. 0.10.0). */
   extensionVersion: string;
   history: SyncHistoryEntry[];
+  /** True while sync history is still being loaded (startup shell). */
+  historyLoading?: boolean;
   chatsSyncEnabled: boolean;
   localChatCount: number;
   remoteChatCount: number | undefined;
@@ -33,6 +35,8 @@ export function relativeTime(isoString: string): string {
 export function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+
+const HISTORY_DELETE_ICON = `<svg class="history-delete-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" d="M10 2h1a1 1 0 0 1 1 1v1h2.5a.5.5 0 0 1 0 1H12.2l-.72 9.67A1.5 1.5 0 0 1 9.99 15H6.01a1.5 1.5 0 0 1-1.49-1.33L3.8 5H2.5a.5.5 0 0 1 0-1H5V3a1 1 0 0 1 1-1h1V1.5A1.5 1.5 0 0 1 8.5 0h-1A1.5 1.5 0 0 0 6 1.5V2zm-1 0V1.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5V2H9zM4.37 14l.7-8.5h6.86l.7 8.5H4.37zM6 6.75a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 6 6.75zm4 0a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 6.75z"/></svg>`;
 
 export function historyPageCount(
   totalEntries: number,
@@ -110,6 +114,9 @@ export function renderHistoryEntry(entry: SyncHistoryEntry): string {
     <div class="history-entry-right">
       <span class="history-detail">${detail}</span>
       <span class="history-time">${time}</span>
+      <button type="button" class="history-delete-btn" data-command="history:delete" data-timestamp="${escapeHtml(entry.timestamp)}" title="${escapeHtml(t("historyDeleteHint"))}" aria-label="${escapeHtml(t("historyDeleteHint"))}">
+        ${HISTORY_DELETE_ICON}
+      </button>
       <span class="codicon codicon-chevron-right history-chevron" aria-hidden="true"></span>
     </div>
   </div>`;
@@ -127,11 +134,11 @@ export function renderHistoryPager(
   const safePage = clampHistoryPage(page, totalEntries, pageSize);
   return `<div class="history-pager" data-history-page="${safePage}" data-history-total="${totalEntries}" data-history-page-size="${pageSize}">
     <div class="chats-pager">
-      <button type="button" class="pager-btn" data-command="history:prev"${
+      <button type="button" class="pager-btn" data-command="history:prev" title="${escapeHtml(t("prevHint"))}"${
         safePage <= 0 ? " disabled" : ""
       }>${escapeHtml(t("prev"))}</button>
       <span class="pager-label">${safePage + 1} / ${totalPages}</span>
-      <button type="button" class="pager-btn" data-command="history:next"${
+      <button type="button" class="pager-btn" data-command="history:next" title="${escapeHtml(t("nextHint"))}"${
         safePage >= totalPages - 1 ? " disabled" : ""
       }>${escapeHtml(t("next"))}</button>
     </div>
@@ -140,8 +147,14 @@ export function renderHistoryPager(
 
 export function renderHistorySection(
   history: SyncHistoryEntry[],
-  page: number = 0
+  page: number = 0,
+  options: { loading?: boolean } = {}
 ): string {
+  if (options.loading) {
+    return `<div class="history-list" data-history-page="0" data-history-page-size="${HISTORY_PAGE_SIZE}">
+      <div class="empty-state">${escapeHtml(t("loading"))}</div>
+    </div>`;
+  }
   if (history.length === 0) {
     return `<div class="history-list" data-history-page="0" data-history-page-size="${HISTORY_PAGE_SIZE}">
       <div class="empty-state">${escapeHtml(t("noHistory"))}</div>
@@ -158,16 +171,19 @@ export function renderHistorySection(
 }
 
 export function renderSyncPane(state: SyncTabState, historyPage: number = 0): string {
+  const isLoading = state.status === "loading";
   const statusIconMap = {
     synced: "check",
     "not-synced": "warning",
     syncing: "sync~spin",
+    loading: "sync~spin",
     error: "error",
   };
   const statusLabelMap = {
     synced: t("synced"),
     "not-synced": t("notSynced"),
     syncing: t("syncing"),
+    loading: t("loading"),
     error: t("syncError"),
   };
 
@@ -192,7 +208,9 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
     </g>
   </svg>`;
 
-  const historyHtml = renderHistorySection(state.history, historyPage);
+  const historyHtml = renderHistorySection(state.history, historyPage, {
+    loading: state.historyLoading === true,
+  });
 
   const conflictRows = state.pendingConflicts ?? [];
   const conflictsHtml =
@@ -201,19 +219,26 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
       : `<div class="section conflicts-section">
     <div class="section-header">${escapeHtml(t("conflictsTitle"))} <span class="tab-badge">${conflictRows.length}</span></div>
     <div class="conflict-actions-all">
-      <button type="button" class="action-btn" data-command="conflicts:setAll" data-resolution="keepLocal">${escapeHtml(t("conflictsApplyAllLocal"))}</button>
-      <button type="button" class="action-btn" data-command="conflicts:setAll" data-resolution="keepRemote">${escapeHtml(t("conflictsApplyAllRemote"))}</button>
-      <button type="button" class="action-btn action-btn-secondary" data-command="conflicts:setAll" data-resolution="skip">${escapeHtml(t("conflictsApplyAllSkip"))}</button>
+      <button type="button" class="action-btn" data-command="conflicts:setAll" data-resolution="keepLocal" title="${escapeHtml(t("conflictsApplyAllLocalHint"))}">${escapeHtml(t("conflictsApplyAllLocal"))}</button>
+      <button type="button" class="action-btn" data-command="conflicts:setAll" data-resolution="keepRemote" title="${escapeHtml(t("conflictsApplyAllRemoteHint"))}">${escapeHtml(t("conflictsApplyAllRemote"))}</button>
+      <button type="button" class="action-btn action-btn-secondary" data-command="conflicts:setAll" data-resolution="skip" title="${escapeHtml(t("conflictsApplyAllSkipHint"))}">${escapeHtml(t("conflictsApplyAllSkip"))}</button>
     </div>
+    ${
+      conflictRows.every(
+        (c) => c.resolution === "keepLocal" || c.resolution === "keepRemote"
+      )
+        ? `<div class="conflict-resolved-banner">${escapeHtml(t("conflictsResolvedBanner"))}</div>`
+        : ""
+    }
     ${conflictRows
       .map((c) => {
-        const current = c.resolution ?? "skip";
+        const current = c.resolution;
         return `<div class="conflict-row" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}">
       <div class="conflict-key">${escapeHtml(c.relativeSyncKey)}</div>
       <div class="conflict-buttons">
-        <button type="button" class="pager-btn${current === "keepLocal" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="keepLocal">${escapeHtml(t("conflictsKeepLocal"))}</button>
-        <button type="button" class="pager-btn${current === "keepRemote" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="keepRemote">${escapeHtml(t("conflictsKeepRemote"))}</button>
-        <button type="button" class="pager-btn${current === "skip" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="skip">${escapeHtml(t("conflictsSkip"))}</button>
+        <button type="button" class="pager-btn${current === "keepLocal" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="keepLocal" title="${escapeHtml(t("conflictsKeepLocalHint"))}">${escapeHtml(t("conflictsKeepLocal"))}</button>
+        <button type="button" class="pager-btn${current === "keepRemote" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="keepRemote" title="${escapeHtml(t("conflictsKeepRemoteHint"))}">${escapeHtml(t("conflictsKeepRemote"))}</button>
+        <button type="button" class="pager-btn${current === "skip" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="skip" title="${escapeHtml(t("conflictsSkipHint"))}">${escapeHtml(t("conflictsSkip"))}</button>
       </div>
     </div>`;
       })
@@ -244,12 +269,16 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
         <span class="status-version" title="${escapeHtml(t("extensionVersionTitle"))}">v${escapeHtml(state.extensionVersion)}</span>
       </div>
       <div class="status-meta">
-        <span>${escapeHtml(lastSyncText)}</span>
-        ${directionLabel ? `<span class="codicon codicon-${directionIcon}"></span><span>${escapeHtml(directionLabel)}</span>` : ""}
+        ${
+          isLoading
+            ? `<span class="status-loading">${escapeHtml(t("loading"))}</span>`
+            : `<span>${escapeHtml(lastSyncText)}</span>
+        ${directionLabel ? `<span class="codicon codicon-${directionIcon}"></span><span>${escapeHtml(directionLabel)}</span>` : ""}`
+        }
       </div>
-      ${state.fileCount > 0 ? `<div class="file-count">${state.fileCount} ${state.fileCount !== 1 ? t("filesTracked") : t("fileTracked")}</div>` : ""}
+      ${!isLoading && state.fileCount > 0 ? `<div class="file-count">${state.fileCount} ${state.fileCount !== 1 ? t("filesTracked") : t("fileTracked")}</div>` : ""}
       ${
-        state.remoteLabel || state.destinationKind
+        !isLoading && (state.remoteLabel || state.destinationKind)
           ? `<div class="remote-row">
         ${
           state.remoteLabel
@@ -277,7 +306,7 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
 
   ${conflictsHtml}
 
-  <button class="sync-now-btn" data-command="syncNow">
+  <button class="sync-now-btn" data-command="syncNow" title="${escapeHtml(t("syncNowHint"))}">
     <span class="codicon codicon-sync" aria-hidden="true"></span>
     <span class="sync-now-label">${escapeHtml(t("syncNow"))}</span>
   </button>
@@ -285,16 +314,24 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
   <div class="section">
     <div class="section-header">${escapeHtml(t("actions"))}</div>
     <div class="action-grid">
-      <button class="action-btn" data-command="push"><span class="codicon codicon-cloud-upload"></span> ${escapeHtml(t("push"))}</button>
-      <button class="action-btn" data-command="pull"><span class="codicon codicon-cloud-download"></span> ${escapeHtml(t("pull"))}</button>
+      <button class="action-btn" data-command="push" title="${escapeHtml(t("pushHint"))}"><span class="codicon codicon-cloud-upload"></span> ${escapeHtml(t("push"))}</button>
+      <button class="action-btn" data-command="pull" title="${escapeHtml(t("pullHint"))}"><span class="codicon codicon-cloud-download"></span> ${escapeHtml(t("pull"))}</button>
       <button class="action-btn action-btn-secondary" data-command="pullMirror" title="${escapeHtml(t("pullMirrorHint"))}"><span class="codicon codicon-mirror"></span> ${escapeHtml(t("pullMirror"))}</button>
-      <button class="action-btn" data-command="export"><span class="codicon codicon-export"></span> ${escapeHtml(t("export"))}</button>
-      <button class="action-btn" data-command="import"><span class="codicon codicon-desktop-download"></span> ${escapeHtml(t("import"))}</button>
+      <button class="action-btn" data-command="export" title="${escapeHtml(t("exportHint"))}"><span class="codicon codicon-export"></span> ${escapeHtml(t("export"))}</button>
+      <button class="action-btn action-btn-secondary" data-command="import" title="${escapeHtml(t("importHint"))}"><span class="codicon codicon-desktop-download"></span> ${escapeHtml(t("import"))}</button>
+      <button class="action-btn action-btn-secondary" data-command="openCursorFolder" title="${escapeHtml(t("openCursorFolderHint"))}"><span class="codicon codicon-folder-opened"></span> ${escapeHtml(t("openCursorFolder"))}</button>
     </div>
   </div>
 
   <div class="section">
-    <div class="section-header">${escapeHtml(t("history"))}</div>
+    <div class="section-header history-section-header">
+      <span>${escapeHtml(t("history"))}</span>
+      ${
+        state.history.length > 0
+          ? `<button type="button" class="clear-btn" data-command="history:clearAll" title="${escapeHtml(t("historyClearHint"))}">${escapeHtml(t("clear"))}</button>`
+          : ""
+      }
+    </div>
     <div id="history-section-body">
     ${historyHtml}
     </div>

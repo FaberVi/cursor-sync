@@ -482,8 +482,150 @@ describe("conflicts", () => {
     await applyConflictResolutionToAll("keepLocal");
     expect(getResolutionForKey("cursor-user/settings.json")).toBe("keepLocal");
     expect(getResolutionForKey("cursor-user/keybindings.json")).toBe("keepLocal");
+    expect(getPendingConflicts()).toHaveLength(2);
     expect(getUnresolvedConflicts(getPendingConflicts())).toEqual([]);
     await clearConflicts();
   });
 });
+
+  it("applyConflictResolution keepLocal keeps pending rows visible", async () => {
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
+    const {
+      registerPendingConflicts,
+      applyConflictResolution,
+      getPendingConflicts,
+      getUnresolvedConflicts,
+      clearConflicts,
+    } = await import("../src/conflicts.js");
+    const rows = [
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        localChecksum: "a",
+        remoteChecksum: "b",
+        baseChecksum: "c",
+      },
+      {
+        relativeSyncKey: "cursor-user/keybindings.json",
+        localChecksum: "d",
+        remoteChecksum: "e",
+        baseChecksum: "f",
+      },
+    ];
+    await registerPendingConflicts(rows);
+    await applyConflictResolution("cursor-user/settings.json", "keepLocal");
+    expect(getPendingConflicts()).toHaveLength(2);
+    expect(
+      getUnresolvedConflicts(getPendingConflicts()).map((c) => c.relativeSyncKey)
+    ).toEqual(["cursor-user/keybindings.json"]);
+    await applyConflictResolution("cursor-user/keybindings.json", "keepLocal");
+    expect(getPendingConflicts()).toHaveLength(2);
+    expect(getUnresolvedConflicts(getPendingConflicts())).toEqual([]);
+    await clearConflicts();
+  });
+
+  describe("sidebar conflict waiter", () => {
+    const rows = [
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        localChecksum: "a",
+        remoteChecksum: "b",
+        baseChecksum: "c",
+      },
+      {
+        relativeSyncKey: "cursor-user/keybindings.json",
+        localChecksum: "d",
+        remoteChecksum: "e",
+        baseChecksum: "f",
+      },
+    ];
+
+    async function mockSidebarVisible(): Promise<void> {
+      const sidebar = await import("../src/sidebar/index.js");
+      vi.spyOn(sidebar, "isSidebarVisible").mockReturnValue(true);
+      vi.spyOn(sidebar, "revealSidebar").mockImplementation(() => {});
+      vi.spyOn(sidebar, "refreshSidebar").mockImplementation(() => {});
+    }
+
+    it("waits until the last keepLocal decision then keeps rows", async () => {
+      const vscode = await import("vscode");
+      vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
+      await mockSidebarVisible();
+      const {
+        registerPendingConflicts,
+        resolveConflictsCommand,
+        applyConflictResolution,
+        getPendingConflicts,
+        getUnresolvedConflicts,
+        clearConflicts,
+      } = await import("../src/conflicts.js");
+      await registerPendingConflicts(rows);
+      let settled = false;
+      const cmd = resolveConflictsCommand(makeContext()).then(() => {
+        settled = true;
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(settled).toBe(false);
+      await applyConflictResolution("cursor-user/settings.json", "keepLocal");
+      await new Promise((r) => setTimeout(r, 10));
+      expect(settled).toBe(false);
+      await applyConflictResolution("cursor-user/keybindings.json", "keepLocal");
+      await cmd;
+      expect(settled).toBe(true);
+      expect(getPendingConflicts()).toHaveLength(2);
+      expect(getUnresolvedConflicts(getPendingConflicts())).toEqual([]);
+      await clearConflicts();
+    });
+
+    it("completes on last skip and leaves skip unresolved", async () => {
+      const vscode = await import("vscode");
+      vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
+      await mockSidebarVisible();
+      const {
+        registerPendingConflicts,
+        resolveConflictsCommand,
+        applyConflictResolution,
+        getUnresolvedConflicts,
+        getPendingConflicts,
+        clearConflicts,
+      } = await import("../src/conflicts.js");
+      await registerPendingConflicts(rows);
+      const cmd = resolveConflictsCommand(makeContext());
+      await new Promise((r) => setTimeout(r, 20));
+      await applyConflictResolution("cursor-user/settings.json", "keepLocal");
+      await applyConflictResolution("cursor-user/keybindings.json", "skip");
+      await cmd;
+      expect(
+        getUnresolvedConflicts(getPendingConflicts()).map((c) => c.relativeSyncKey)
+      ).toEqual(["cursor-user/keybindings.json"]);
+      await clearConflicts();
+    });
+
+    it("abort completes the waiter without inventing resolutions", async () => {
+      const vscode = await import("vscode");
+      vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
+      await mockSidebarVisible();
+      const abort = await import("../src/sync-abort.js");
+      const {
+        registerPendingConflicts,
+        resolveConflictsCommand,
+        getResolutionForKey,
+        getPendingConflicts,
+        clearConflicts,
+      } = await import("../src/conflicts.js");
+      await registerPendingConflicts(rows);
+      abort.beginSyncAbort();
+      try {
+        const cmd = resolveConflictsCommand(makeContext());
+        await new Promise((r) => setTimeout(r, 20));
+        expect(abort.requestSyncCancel()).toBe(true);
+        await cmd;
+        expect(getResolutionForKey("cursor-user/settings.json")).toBeUndefined();
+        expect(getPendingConflicts()).toHaveLength(2);
+      } finally {
+        abort.endSyncAbort();
+        await clearConflicts();
+      }
+    });
+  });
 });

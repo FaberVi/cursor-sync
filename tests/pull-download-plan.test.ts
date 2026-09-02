@@ -168,4 +168,34 @@ describe("planPullDownloadNames", () => {
     });
     expect(names).not.toContain("dot-cursor--mcp.json");
   });
+
+  it("omits denylisted skill node_modules and skill-snapshot paths", () => {
+    const nodeModulesKey = "dot-cursor/skills/foo/node_modules/leftpad/index.js";
+    const snapshotKey = "dot-cursor/skills/my-skill-workspace/skill-snapshot/SKILL.md";
+    const nodeModulesName = "dot-cursor--skills--foo--node_modules--leftpad--index.js";
+    const snapshotName =
+      "dot-cursor--skills--my-skill-workspace--skill-snapshot--SKILL.md";
+    const names = planPullDownloadNames({
+      manifestChecksums: {
+        "cursor-user/settings.json": "new",
+        [nodeModulesKey]: "nm-new",
+        [snapshotKey]: "snap-new",
+      },
+      localChecksums: {},
+      allFileNames: [
+        "manifest.json",
+        "cursor-user--settings.json",
+        EXTENSIONS_GIST_FILE_NAME,
+        nodeModulesName,
+        snapshotName,
+      ],
+      keepLocalKeys: new Set(),
+      chatEnabled: false,
+      chatFiles: [],
+    });
+    expect(names).toContain("cursor-user--settings.json");
+    expect(names).toContain(EXTENSIONS_GIST_FILE_NAME);
+    expect(names).not.toContain(nodeModulesName);
+    expect(names).not.toContain(snapshotName);
+  });
 });

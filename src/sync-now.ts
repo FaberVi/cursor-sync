@@ -13,12 +13,13 @@ import {
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
 import { createSidebarSyncProgress } from "./sync-progress-events.js";
-import { getPendingConflicts } from "./conflicts.js";
+import { getPendingConflicts, getUnresolvedConflicts } from "./conflicts.js";
 import {
   beginSyncAbort,
   endSyncAbort,
   getSyncAbortSignal,
   isAbortError,
+  isSyncAborted,
 } from "./sync-abort.js";
 
 export async function executeSyncNow(
@@ -63,7 +64,11 @@ export async function executeSyncNow(
       }
       case "conflict": {
         await vscode.commands.executeCommand("cursorSync.resolveConflicts");
-        const still = getPendingConflicts();
+        if (isSyncAborted()) {
+          progress.complete(false);
+          break;
+        }
+        const still = getUnresolvedConflicts(getPendingConflicts());
         if (still.length > 0) {
           const conflictMessage = `${still.length} conflict(s) detected. Resolve them first.`;
           void showSyncFailureWithDebug(

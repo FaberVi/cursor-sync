@@ -169,6 +169,14 @@ export async function writePushRemote(
               percent: uploadFloor + ratio * (95 - uploadFloor),
             });
           },
+          onTreeProgress: (completed, total) => {
+            if (total <= 1) {
+              return;
+            }
+            progress.report({
+              message: `Building commit tree ${completed}/${total}…`,
+            });
+          },
         })
       : await withRetry(() =>
           backend.writeFiles(remoteFiles, { deleteNames: delta.deleteNames })

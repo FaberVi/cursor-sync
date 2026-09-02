@@ -38,18 +38,18 @@ function extensionVersionForContext(context: vscode.ExtensionContext): string {
 }
 
 function buildSyncTabStateShell(context: vscode.ExtensionContext): SyncTabState {
-  const destSettings = readDestinationSettings();
   return {
-    status: "syncing",
+    status: "loading",
     lastSyncTime: undefined,
     lastSyncDirection: undefined,
     fileCount: 0,
     gistId: undefined,
     remoteLabel: undefined,
     remoteUrl: undefined,
-    destinationKind: destSettings.type,
+    destinationKind: undefined,
     extensionVersion: extensionVersionForContext(context),
     history: [],
+    historyLoading: true,
     chatsSyncEnabled: isChatSyncEnabled(),
     localChatCount: 0,
     remoteChatCount: undefined,
@@ -177,9 +177,9 @@ function assembleSidebarDocument(params: {
 <body>
   <script type="application/json" id="ui-i18n">${JSON.stringify(webviewI18nPayload()).replace(/</g, "\\u003c")}</script>
   <div class="tab-bar">
-    <button class="tab-btn active" data-tab="sync-pane">${escapeHtml(t("tabSync"))}</button>
-    <button class="tab-btn" data-tab="chats-pane">${escapeHtml(t("tabChats"))}</button>
-    <button class="tab-btn" data-tab="settings-pane">${escapeHtml(t("tabSettings"))}</button>
+    <button class="tab-btn active" data-tab="sync-pane" title="${escapeHtml(t("tabSyncHint"))}">${escapeHtml(t("tabSync"))}</button>
+    <button class="tab-btn" data-tab="chats-pane" title="${escapeHtml(t("tabChatsHint"))}">${escapeHtml(t("tabChats"))}</button>
+    <button class="tab-btn" data-tab="settings-pane" title="${escapeHtml(t("tabSettingsHint"))}">${escapeHtml(t("tabSettings"))}</button>
   </div>
 
   ${syncPaneHtml}
@@ -202,7 +202,7 @@ function assembleSidebarDocument(params: {
     <div class="chats-section">
       <div class="chats-section-header">
         <span>${escapeHtml(t("importsAndBundles"))}</span>
-        <button class="clear-btn" data-command="chats:clearHistory">${escapeHtml(t("clear"))}</button>
+        <button class="clear-btn" data-command="chats:clearHistory" title="${escapeHtml(t("clearHint"))}">${escapeHtml(t("clear"))}</button>
       </div>
       <div id="chats-imports" class="chats-list">
         <div class="empty-state">${escapeHtml(t("loading"))}</div>

@@ -68,6 +68,17 @@ export class Disposable {
   }
 }
 
+export class CancellationTokenSource {
+  token = {
+    isCancellationRequested: false,
+    onCancellationRequested: (_listener: () => void) => ({ dispose: () => {} }),
+  };
+  cancel(): void {
+    this.token.isCancellationRequested = true;
+  }
+  dispose(): void {}
+}
+
 export enum ConfigurationTarget {
   Global = 1,
   Workspace = 2,

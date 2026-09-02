@@ -27,19 +27,31 @@ export async function discoveredToExportRows(
 ): Promise<ConversationExportRow[]> {
   const projectsRoot = options.projectsRoot ?? resolveProjectsRoot();
   const globalIndex = options.globalIndex ?? (await loadGlobalComposerNameIndex());
+  const projects = await discoverProjects(projectsRoot);
+  const orderedProjectsForKey = options.projectKey
+    ? projects.filter((p) => p.folderName === options.projectKey)
+    : projects;
+  const workspaceIndexCache = new Map<string, Map<string, string>>();
   const rows: ConversationExportRow[] = [];
   for (const item of discovered) {
     const workspaceIndex =
       options.workspaceIndex ??
       (item.workspaceKey
-        ? await loadComposerNameIndexForChatsWorkspaceKey(item.workspaceKey)
+        ? await (async () => {
+            const cached = workspaceIndexCache.get(item.workspaceKey);
+            if (cached) {
+              return cached;
+            }
+            const loaded = await loadComposerNameIndexForChatsWorkspaceKey(item.workspaceKey);
+            workspaceIndexCache.set(item.workspaceKey, loaded);
+            return loaded;
+          })()
         : new Map<string, string>());
     let transcriptContent: string | null = null;
     const projectKey = item.projectKey ?? options.projectKey;
     if (item.jsonlCount > 0) {
-      const projects = await discoverProjects(projectsRoot);
       const orderedProjects = projectKey
-        ? projects.filter((p) => p.folderName === projectKey)
+        ? orderedProjectsForKey
         : projects;
       for (const proj of orderedProjects) {
         const convDir = path.join(

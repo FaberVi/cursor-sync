@@ -6,8 +6,12 @@ import {
   type LeftoverDashedFile,
 } from "./path-map.js";
 import { isEmptyGitHubRepositoryError } from "./repo-git-write.js";
-import type { ApiResult } from "../types.js";
+import { withRetry } from "../retry.js";
+import { getLogger } from "../diagnostics.js";
+import type { ApiError, ApiResult } from "../types.js";
 import type { RemoteSnapshot, RemoteSnapshotOptions } from "./types.js";
+
+const BLOB_DOWNLOAD_CONCURRENCY = 5;
 
 interface GitRefResponse {
   object: { sha: string; type: string };
@@ -169,25 +173,62 @@ export async function loadRepoGitSnapshot(params: {
   const files: Record<string, string> = {};
   const total = namesToFetch.length;
   let completed = 0;
-  for (const flatName of namesToFetch) {
-    const sha = blobsByName.get(flatName);
-    if (!sha) {
-      continue;
-    }
-    const blobResult = await githubRequest<GitBlobResponse>(
-      "GET",
-      `/repos/${owner}/${repo}/git/blobs/${sha}`,
-      pat
+
+  if (total > 0) {
+    getLogger().appendLine(
+      `[Cursor Sync] Downloading ${total} file(s) from repo (concurrency ${BLOB_DOWNLOAD_CONCURRENCY}).`
     );
-    if (!blobResult.ok) {
-      return blobResult;
+  }
+
+  let nextIndex = 0;
+  let firstError: ApiError | undefined;
+  let abort = false;
+
+  const worker = async (): Promise<void> => {
+    while (true) {
+      if (abort) {
+        return;
+      }
+      const i = nextIndex++;
+      if (i >= total) {
+        return;
+      }
+      const flatName = namesToFetch[i];
+      if (!flatName) {
+        return;
+      }
+      const sha = blobsByName.get(flatName);
+      if (!sha) {
+        continue;
+      }
+      const blobResult = await withRetry(() =>
+        githubRequest<GitBlobResponse>(
+          "GET",
+          `/repos/${owner}/${repo}/git/blobs/${sha}`,
+          pat
+        )
+      );
+      if (!blobResult.ok) {
+        abort = true;
+        firstError = blobResult.error;
+        return;
+      }
+      files[flatName] = decodeBlobContent(
+        blobResult.data.content,
+        blobResult.data.encoding
+      );
+      completed += 1;
+      options?.onFileProgress?.(completed, total);
     }
-    files[flatName] = decodeBlobContent(
-      blobResult.data.content,
-      blobResult.data.encoding
-    );
-    completed += 1;
-    options?.onFileProgress?.(completed, total);
+  };
+
+  if (total > 0) {
+    const workerCount = Math.min(BLOB_DOWNLOAD_CONCURRENCY, total);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  }
+
+  if (firstError) {
+    return { ok: false, error: firstError };
   }
 
   return {

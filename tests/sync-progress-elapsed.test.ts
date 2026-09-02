@@ -47,6 +47,35 @@ describe("createSidebarSyncProgress elapsed", () => {
     }
   });
 
+  it("nested pull does not swap the elapsed tick back to Pulling…", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-16T12:00:00.000Z"));
+
+    const events: SyncProgressEvent[] = [];
+    const sub = onSyncProgress((event) => events.push(event));
+    const outer = createSidebarSyncProgress("syncNow");
+    const inner = createSidebarSyncProgress("pull");
+    try {
+      outer.report({ message: "Pulling…" });
+      inner.report({
+        message: "Fetching 100/250 changed file(s)…",
+        percent: 40,
+      });
+
+      const afterFetch = events.length;
+      vi.advanceTimersByTime(3000);
+      const duringFetch = events.slice(afterFetch);
+      expect(duringFetch.length).toBeGreaterThan(0);
+      expect(duringFetch.every((e) => e.message !== "Pulling…")).toBe(true);
+      expect(events.at(-1)?.message).toBe("Fetching 100/250 changed file(s)…");
+      expect(events.at(-1)?.operation).toBe("pull");
+    } finally {
+      inner.complete(true);
+      outer.complete(true);
+      sub.dispose();
+    }
+  });
+
   it("stops the inner reporter tick without leaving nested Sync Now busy", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-16T12:00:00.000Z"));

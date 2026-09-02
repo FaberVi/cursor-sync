@@ -150,3 +150,18 @@ describe("dispatchSidebarMessage - chats:listLocal", () => {
     expect(call.totalConversations).toBe(0);
   });
 });
+
+describe("dispatchSidebarMessage - chats:loadGroup", () => {
+  it("posts empty groupRows when project key is invalid (clears sidebar loading)", async () => {
+    const ctx = mockContext();
+    const wv = mockWebview();
+    await dispatchSidebarMessage(ctx, wv, {
+      command: "chats:loadGroup",
+      projectKey: "../escape",
+    });
+    expect(wv.postMessage).toHaveBeenCalledOnce();
+    const call = wv.postMessage.mock.calls[0]![0];
+    expect(call.type).toBe("chats:groupRows");
+    expect(call.rows).toEqual([]);
+  });
+});

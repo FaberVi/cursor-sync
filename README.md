@@ -4,7 +4,7 @@ Community fork of [**Cursor Sync**](https://github.com/Marcelo-Barella/cursor-sy
 
 Sync user-level Cursor settings and selected `~/.cursor` assets to a **private GitHub Gist** or a **GitHub repository**, with manual push/pull, optional scheduled sync, one-shot Gist export/import, extension list sync, and a **Chats** sidebar for discovering, exporting, importing, and syncing Composer conversations across machines.
 
-Current version: **0.12.1**. Development happens on the **`dev`** branch; **`main`** tracks stable releases. Requires **VS Code / Cursor 1.128+** (`engines.vscode`).
+Current version: **1.0.0**. Development happens on the **`dev`** branch; **`main`** tracks stable releases. Requires **VS Code / Cursor 1.128+** (`engines.vscode`).
 
 ## Upstream
 
@@ -45,7 +45,7 @@ This runs the production build (`esbuild`) and packages with `@vscode/vsce`. Out
 cursor-sync-<version>.vsix
 ```
 
-For example: `cursor-sync-0.12.1.vsix` in the repository root.
+For example: `cursor-sync-1.0.0.vsix` in the repository root.
 
 On macOS or Linux you can also run `./package-vsix.sh`.
 
@@ -54,21 +54,21 @@ On macOS or Linux you can also run `./package-vsix.sh`.
 **Cursor** (recommended):
 
 ```bash
-cursor --install-extension ./cursor-sync-0.12.1.vsix --force
+cursor --install-extension ./cursor-sync-1.0.0.vsix --force
 ```
 
 **VS Code**:
 
 ```bash
-code --install-extension ./cursor-sync-0.12.1.vsix --force
+code --install-extension ./cursor-sync-1.0.0.vsix --force
 ```
 
-Replace `0.12.1` with the version from `package.json`. Use `--force` to upgrade an existing install.
+Replace `1.0.0` with the version from `package.json`. Use `--force` to upgrade an existing install.
 
 **Windows (PowerShell)**:
 
 ```powershell
-cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-0.12.1.vsix" --force
+cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-1.0.0.vsix" --force
 ```
 
 ### 4. Reload the window
@@ -83,7 +83,7 @@ Run **Developer: Reload Window** from the Command Palette so Cursor loads the ne
 | `npm run watch` | Rebuild on file changes |
 | `npm run package` | Build + create `.vsix` |
 | `npm run lint` | TypeScript check (`tsc --noEmit`) |
-| `npm test` | Run Vitest (`618` tests) |
+| `npm test` | Run Vitest (`648` tests) |
 
 For day-to-day development, open this folder in Cursor and press **F5** (Extension Development Host) instead of packaging a VSIX each time.
 
@@ -133,7 +133,7 @@ When `cursorSync.chats.syncEnabled` is true (**default off**), Push/Pull/Sync No
 - **Push Now** uploads to your configured Gist or repo folder.
 - **Pull Now** applies remote changes without deleting files that exist only on this machine.
 - **Mirror from Remote** (Command Palette or secondary sidebar button) aligns this machine to the remote and can delete local-only synced files after a confirmation.
-- **Sync Now** merges both directions. Conflicts show in the Sync tab (Keep Local / Keep Remote / Skip); scheduled sync uses a badge instead of a success toast.
+- **Sync Now** merges both directions. Conflicts show in the Sync tab (Keep Local / Keep Remote / Skip); resolve every row before push/pull continues. After a full Keep Local/Remote choice, a banner and toast prompt you to run **Sync Now** again. Scheduled sync uses a badge instead of a success toast.
 - **Stop Sync** (progress Stop button, Command Palette, or status bar while syncing) aborts the in-flight run and restores local files that run changed. Remote GitHub writes already completed and chat/composer databases are not reverted.
 
 Configure destination in the sidebar **Settings** tab or via `cursorSync.destination.*` (`gist` or `repo`).
@@ -174,11 +174,11 @@ The **Cursor Sync** activity bar view has three tabs:
 
 ### Sync
 
-- Status card (relative last sync, direction, file count)
+- Status card (relative last sync, direction, file count). On first open the tab shows **Loading…** until sync metadata is hydrated — not a false “never synced” state.
 - **Sync Now**, Push, Pull (incremental), Mirror, Export, Import
-- Pending conflicts with Keep Local / Keep Remote / Skip (badge on the Sync tab)
-- Sync history (click a row to open the file when it still exists on disk)
-- Live progress with elapsed time and absolute percent on pull/push
+- Pending conflicts with Keep Local / Keep Remote / Skip (badge on the Sync tab); rows stay visible while you decide
+- Sync history: click a row to open files when recorded; delete one entry (trash icon) or **Clear** all via the control next to the History title (both ask for modal confirmation)
+- Live progress with elapsed time and absolute percent on pull/push; large repo pushes upload Git trees in chunks to avoid GitHub timeouts
 
 ### Chats
 
@@ -251,7 +251,7 @@ Push writes `extensions.json` (non-builtin extensions). **`syncExtensions.autoIn
 
 ## Conflict resolution
 
-If the same file changed locally and remotely, push/pull is blocked until you resolve the files in the **Sync** tab (Keep Local / Keep Remote / Skip) or run **Resolve Conflicts** (focuses that panel; falls back to one QuickPick for all files if the sidebar is hidden). After a full resolution, run **Sync Now** once.
+If the same file changed locally and remotely, push/pull is blocked until you resolve every file in the **Sync** tab (Keep Local / Keep Remote / Skip) or run **Resolve Conflicts** (focuses that panel; falls back to one QuickPick for all files if the sidebar is hidden). After a full Keep Local/Remote resolution, run **Sync Now** once.
 
 ## Recovery
 

@@ -11,13 +11,21 @@ import { enumerateSyncFiles, isMcpSyncEnabled, isMcpSyncKey } from "./paths.js";
 import { ensureExtensionsJsonOnDisk } from "./extensions.js";
 import { loadSyncState } from "./diagnostics.js";
 import { getLogger } from "./diagnostics.js";
-import { notifySyncQuiet } from "./sync-notify.js";
+import { notifySyncQuiet, notifySyncActionRequired } from "./sync-notify.js";
+import { getSyncAbortSignal } from "./sync-abort.js";
 
 const PENDING_RESOLUTIONS_KEY = "cursorSync.pendingConflictResolutions";
 
 let pendingResolutions: ResolvedConflict[] = [];
 let pendingConflicts: ConflictEntry[] = [];
 let resolutionsContext: vscode.ExtensionContext | undefined;
+
+type SidebarConflictWaiter = {
+  promise: Promise<void>;
+  resolve: () => void;
+};
+
+let sidebarConflictWaiter: SidebarConflictWaiter | undefined;
 
 export function getPendingConflicts(): ConflictEntry[] {
   return pendingConflicts;
@@ -91,6 +99,7 @@ async function persistPendingResolutions(): Promise<void> {
 export async function clearConflicts(): Promise<void> {
   pendingConflicts = [];
   pendingResolutions = [];
+  completeSidebarConflictWaiter();
   await persistPendingResolutions();
   await vscode.commands.executeCommand(
     "setContext",
@@ -213,30 +222,74 @@ export async function applyConflictResolutionToAll(
   await maybeFinishResolvedConflicts();
 }
 
+function allPendingHaveExplicitResolution(): boolean {
+  if (pendingConflicts.length === 0) {
+    return true;
+  }
+  return pendingConflicts.every((c) => {
+    const resolution = getResolutionForKey(c.relativeSyncKey);
+    return (
+      resolution === "keepLocal" ||
+      resolution === "keepRemote" ||
+      resolution === "skip"
+    );
+  });
+}
+
+function completeSidebarConflictWaiter(): void {
+  const waiter = sidebarConflictWaiter;
+  sidebarConflictWaiter = undefined;
+  waiter?.resolve();
+}
+
+function maybeCompleteSidebarConflictWaiter(): void {
+  if (getSyncAbortSignal()?.aborted || allPendingHaveExplicitResolution()) {
+    completeSidebarConflictWaiter();
+  }
+}
+
+function waitForSidebarConflictDecisions(): Promise<void> {
+  if (getSyncAbortSignal()?.aborted || allPendingHaveExplicitResolution()) {
+    return Promise.resolve();
+  }
+  if (sidebarConflictWaiter) {
+    return sidebarConflictWaiter.promise;
+  }
+  let resolveFn!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolveFn = resolve;
+  });
+  sidebarConflictWaiter = { promise, resolve: resolveFn };
+  const signal = getSyncAbortSignal();
+  signal?.addEventListener("abort", completeSidebarConflictWaiter, {
+    once: true,
+  });
+  if (signal?.aborted || allPendingHaveExplicitResolution()) {
+    completeSidebarConflictWaiter();
+  }
+  return promise;
+}
+
 async function syncConflictContext(): Promise<void> {
   const unresolved = getUnresolvedConflicts(pendingConflicts);
-  if (unresolved.length === 0) {
-    pendingConflicts = [];
-    await vscode.commands.executeCommand(
-      "setContext",
-      "cursorSync.hasConflicts",
-      false
-    );
-    return;
-  }
-  pendingConflicts = unresolved;
   await vscode.commands.executeCommand(
     "setContext",
     "cursorSync.hasConflicts",
-    true
+    unresolved.length > 0
   );
 }
 
 async function maybeFinishResolvedConflicts(): Promise<void> {
+  maybeCompleteSidebarConflictWaiter();
+  if (pendingConflicts.length === 0) {
+    return;
+  }
   if (getUnresolvedConflicts(pendingConflicts).length > 0) {
     return;
   }
-  notifySyncQuiet("Conflicts resolved. Run Sync Now to finish.");
+  void notifySyncActionRequired(
+    "Conflicts resolved. Press Sync Now to apply."
+  );
 }
 
 export async function resolveConflictsCommand(
@@ -256,23 +309,34 @@ export async function resolveConflictsCommand(
   revealSidebar();
   if (isSidebarVisible()) {
     refreshSidebar();
-    notifySyncQuiet(
-      `${pendingConflicts.length} conflict(s) — use the Sync tab to Keep Local, Keep Remote, or Skip.`
-    );
+    await waitForSidebarConflictDecisions();
     return;
   }
 
-  const allChoice = await vscode.window.showQuickPick(
-    [
-      { label: "Keep Local (all files)", value: "keepLocal" as ConflictResolution },
-      { label: "Keep Remote (all files)", value: "keepRemote" as ConflictResolution },
-      { label: "Skip all (decide later)", value: "skip" as ConflictResolution },
-    ],
-    {
-      title: `Resolve ${pendingConflicts.length} conflict(s)`,
-      placeHolder: "Apply one decision to every conflicted file",
-    }
-  );
+  const cts = new vscode.CancellationTokenSource();
+  const signal = getSyncAbortSignal();
+  const onAbort = (): void => cts.cancel();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  let allChoice:
+    | { label: string; value: ConflictResolution }
+    | undefined;
+  try {
+    allChoice = await vscode.window.showQuickPick(
+      [
+        { label: "Keep Local (all files)", value: "keepLocal" as ConflictResolution },
+        { label: "Keep Remote (all files)", value: "keepRemote" as ConflictResolution },
+        { label: "Skip all (decide later)", value: "skip" as ConflictResolution },
+      ],
+      {
+        title: `Resolve ${pendingConflicts.length} conflict(s)`,
+        placeHolder: "Apply one decision to every conflicted file",
+      },
+      cts.token
+    );
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    cts.dispose();
+  }
   if (!allChoice) {
     return;
   }

@@ -1,4 +1,28 @@
 (function (CSW) {
+  CSW.updateConnectButton = function (isRepo) {
+    var connectBtn = document.querySelector(
+      ".settings-connect-btn[data-command='configure']"
+    );
+    if (!connectBtn) return;
+    connectBtn.innerHTML =
+      '<span class="codicon codicon-github-alt"></span> ' +
+      (isRepo
+        ? CSW.tr("connectRepository", "Connect repository")
+        : CSW.tr("connectGithub", "Connect GitHub"));
+    connectBtn.setAttribute(
+      "title",
+      isRepo
+        ? CSW.tr(
+            "connectRepoHint",
+            "Connect verifies the PAT and repo access."
+          )
+        : CSW.tr(
+            "connectGistHint",
+            "Saves a PAT with gist scope and discovers an existing Cursor Sync Gist if present."
+          )
+    );
+  };
+
   CSW.onDocumentClick = function (ev) {
     var t = ev.target;
     var el = t && t.nodeType === 1 ? t : t && t.parentElement;
@@ -91,6 +115,12 @@
       CSW.renderGroupedChats();
       return;
     }
+    if (cmd === "history:delete") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      CSW.post(cmd, extra);
+      return;
+    }
     if (cmd === "history:prev" || cmd === "history:next") {
       var pager = document.querySelector(".history-pager");
       var list = document.querySelector(".history-list");
@@ -142,11 +172,7 @@
         ".settings-connect-btn[data-command='configure']"
       );
       if (connectBtnLive) {
-        connectBtnLive.innerHTML =
-          '<span class="codicon codicon-github-alt"></span> ' +
-          (value === "repo"
-            ? CSW.tr("connectRepository", "Connect repository")
-            : CSW.tr("connectGithub", "Connect GitHub"));
+        CSW.updateConnectButton(value === "repo");
       }
     }
     CSW.onSettingChange(key, value);
@@ -246,12 +272,7 @@
         ".settings-connect-btn[data-command='configure']"
       );
       if (connectBtn && vals["destination.type"]) {
-        var isRepo = vals["destination.type"] === "repo";
-        connectBtn.innerHTML =
-          '<span class="codicon codicon-github-alt"></span> ' +
-          (isRepo
-            ? CSW.tr("connectRepository", "Connect repository")
-            : CSW.tr("connectGithub", "Connect GitHub"));
+        CSW.updateConnectButton(vals["destination.type"] === "repo");
       }
     }
   };
