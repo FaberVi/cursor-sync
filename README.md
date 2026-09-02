@@ -1,15 +1,16 @@
 # Cursor Sync
 
-Sync user-level Cursor settings and `~/.cursor` assets to a private GitHub Gist **or** a classic GitHub repository, with manual push/pull, optional scheduled sync, export/import via private Gists (anyone with the gist URL can still open it), and configurable extension sync.
+Sync user-level Cursor settings and selected `~/.cursor` assets to a **private GitHub Gist** or a **GitHub repository**, with manual push/pull, optional scheduled sync, one-shot Gist export/import, extension list sync, and a **Chats** sidebar for discovering, exporting, importing, and syncing Composer conversations across machines.
+
+Current version: **0.11.3**.
 
 ## Build and Install
-
-Use these steps to build a `.vsix` from this repository and install it in Cursor (or VS Code).
 
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+ and npm
 - [Cursor](https://cursor.com/) or [VS Code](https://code.visualstudio.com/) with the `cursor` / `code` CLI on your `PATH`
+- **Python 3** for chat disk import (auto-detected: `py -3` on Windows, `python3` elsewhere). Optional override: user-global `cursorSync.chatImport.pythonPath` in Cursor Settings
 
 ### 1. Install dependencies
 
@@ -25,53 +26,53 @@ npm ci
 npm run package
 ```
 
-This runs the production build (`esbuild`) and packages the extension with `@vscode/vsce`. The output file is:
+This runs the production build (`esbuild`) and packages with `@vscode/vsce`. Output:
 
 ```
 cursor-sync-<version>.vsix
 ```
 
-For example, at version `0.9.0`: `cursor-sync-0.9.0.vsix` in the repository root.
+For example: `cursor-sync-0.11.3.vsix` in the repository root.
 
-On macOS or Linux you can also run `./package-vsix.sh` (installs dependencies if needed, then runs `npm run package`).
+On macOS or Linux you can also run `./package-vsix.sh`.
 
 ### 3. Install the extension
 
 **Cursor** (recommended):
 
 ```bash
-cursor --install-extension ./cursor-sync-0.9.0.vsix --force
+cursor --install-extension ./cursor-sync-0.11.3.vsix --force
 ```
 
 **VS Code**:
 
 ```bash
-code --install-extension ./cursor-sync-0.9.0.vsix --force
+code --install-extension ./cursor-sync-0.11.3.vsix --force
 ```
 
-Replace `0.9.0` with the version from `package.json`. Use `--force` to upgrade an existing install.
+Replace `0.11.3` with the version from `package.json`. Use `--force` to upgrade an existing install.
 
-**Windows (PowerShell)** — use the full path if you are not in the repo directory:
+**Windows (PowerShell)**:
 
 ```powershell
-cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-0.9.0.vsix" --force
+cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-0.11.3.vsix" --force
 ```
 
 ### 4. Reload the window
 
-After installation, run **Developer: Reload Window** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) so Cursor loads the new build.
+Run **Developer: Reload Window** from the Command Palette so Cursor loads the new build.
 
 ### Development workflow
 
 | Command | Description |
 |---------|-------------|
-| `npm run build` | Compile `dist/extension.js` only (no VSIX) |
+| `npm run build` | Compile `dist/extension.js` only |
 | `npm run watch` | Rebuild on file changes |
 | `npm run package` | Build + create `.vsix` |
 | `npm run lint` | TypeScript check (`tsc --noEmit`) |
-| `npm test` | Run the test suite |
+| `npm test` | Run Vitest (`538` tests) |
 
-To iterate quickly during development, open this folder in Cursor and press **F5** to launch an Extension Development Host instead of packaging a VSIX each time.
+For day-to-day development, open this folder in Cursor and press **F5** (Extension Development Host) instead of packaging a VSIX each time.
 
 ## What Is Synced
 
@@ -83,188 +84,156 @@ To iterate quickly during development, open this folder in Cursor and press **F5
 | macOS    | `~/Library/Application Support/Cursor/User/` |
 | Linux    | `~/.config/Cursor/User/` |
 
-Files included from this root (configurable via `cursorSync.enabledPaths`):
-- `settings.json`
-- `keybindings.json`
-- `snippets/**`
-- `extensions.json` (auto-generated list of installed extensions on push)
+Default `cursorSync.enabledPaths` includes `settings.json`, `keybindings.json`, `snippets/**`, `extensions.json`, `vsix/**`, `skills/**`, `commands/**/*.md`, `rules/*.mdc`, and `agents/*.md`.
 
-### Cursor User Data (`~/.cursor`)
+### Cursor user data (`~/.cursor`)
 
-Files included from this root:
-- `skills/**`
-- `commands/**/*.md`
-- `rules/*.mdc`
-- `agents/*.md` (user-level subagents)
+Skill-creator / skill-forge eval artifacts (`skill-snapshot/`, `skill-*-backup/`, and `iteration-*` / `eval-*` / `outputs` under eval workspaces) are **never** synced. On activate and after push/pull/import, Cursor Sync can merge missing files from snapshots into live skills, relocate orphan snapshots, and publish recovered skills without a full settings push.
 
-Skill-creator / skill-forge eval artifacts (`skill-snapshot/`, `skill-*-backup/`, and `iteration-*` / `eval-*` / `outputs` under `*-workspace/`) are never synced. Cursor treats each `SKILL.md` parent folder as the skill name, so syncing those snapshots would register skills named `skill-snapshot`. A real skill whose folder merely ends with `-workspace` is still synced. On activate (and after push/pull/import), Cursor Sync merges missing files from snapshots/backups into the live skill (never overwrites live files), only deletes disposable artifact-only workspaces, relocates orphan top-level `skill-snapshot` folders, and publishes recovered skills in the same remote write that removes artifact keys — never a full settings push and never purge-before-publish.
+### Always excluded
 
-### Always Excluded
+Extension caches, logs, databases, cookies, `node_modules`, `.git`, and other denylisted paths are skipped. Skill-creator artifact folders under `.cursor/skills/` are excluded. Files above `cursorSync.maxFileSizeKB` (default 512 KB) are skipped.
 
-The following are always excluded from sync:
-- `.cursor/extensions/`, `.cursor/logs/`, `.cursor/CachedData/`, `.cursor/CachedExtensions/`
-- `.cursor/CachedProfilesData/`, `.cursor/Crashpad/`, `.cursor/DawnCache/`, `.cursor/GPUCache/`
-- `.cursor/blob_storage/`, `.cursor/Local Storage/`, `.cursor/Session Storage/`
-- `.cursor/Network/`, `.cursor/shared_proto_db/`, `.cursor/databases/`
-- `.cursor/TransportSecurity`, `.cursor/Cookies*`, `.cursor/*.db`, `.cursor/*.log`
-- skill-creator artifacts under `.cursor/skills/` (`skill-snapshot/`, `skill-*-backup/`, and `iteration-*` / `eval-*` / `outputs` under `*-workspace/`)
-- Any file exceeding the configurable size limit (default 512 KB)
+### Optional chat collection
+
+When `cursorSync.chats.syncEnabled` is true (default), Push/Pull/Sync Now also sync a `chat-bundles.json` collection to your settings Gist (native chat JSON payloads, optionally encrypted).
 
 ## Setup
 
 ### 1. Create a GitHub Personal Access Token
 
-1. Go to [GitHub Settings > Developer settings > Personal access tokens > Fine-grained tokens](https://github.com/settings/personal-access-tokens/new).
-2. Create a fine-grained token:
-   - For **Gist** destination: grant **Account permissions > Gists: Read and write**.
-   - For **Repository** destination: grant access to the target repository (Contents: Read and write), or use a classic PAT with `repo` scope.
-3. Copy the token.
+1. [Fine-grained token](https://github.com/settings/personal-access-tokens/new) or classic PAT with appropriate scopes.
+2. **Gist** destination: account permission **Gists: Read and write**.
+3. **Repository** destination: **Contents: Read and write** on the target repo.
 
-### 2. Configure the Extension
+### 2. Configure the extension
 
-1. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
-2. Run **Cursor Sync: Configure GitHub**.
-3. Paste your token when prompted.
-4. The token is validated and stored in VS Code SecretStorage.
+1. Command Palette → **Cursor Sync: Configure GitHub**.
+2. Paste your token (stored in VS Code SecretStorage).
 
-### 3. Push Your Settings
+### 3. Push and pull
 
-1. Run **Cursor Sync: Push Now** from the Command Palette or from the Cursor Sync sidebar (Actions → Push Now).
-2. Files are uploaded to the configured destination (private Gist, or a folder in a GitHub repository).
+- **Push Now** uploads to your configured Gist or repo folder.
+- **Pull Now** mirrors remote synced files locally (with safe-mode confirmation when enabled).
+- **Sync Now** merges both directions and resolves or blocks on conflicts.
 
-### 4. Pull on Another Machine
-
-1. Install the extension on the target machine (see [Build and Install](#build-and-install) or install from a shared `.vsix`).
-2. Configure your GitHub token (step 2).
-3. Push first from the source machine, then run **Cursor Sync: Pull Now** on the target.
-4. If safe mode is enabled (default), you will be shown a list of files that will change and must confirm.
+Configure destination in the sidebar **Settings** tab or via `cursorSync.destination.*` (`gist` or `repo`).
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `Cursor Sync: Sync Now` | Merge both ways: pull remote changes (including remote deletions), push local new/changed files; ask Keep Local / Keep Remote on conflicts |
-| `Cursor Sync: Configure GitHub` | Set or update your GitHub Personal Access Token |
-| `Cursor Sync: Push Now` | Upload local settings to the configured remote (Gist or repository) |
-| `Cursor Sync: Pull Now` | Replace local synced files with the remote (mirror). Confirms before deleting local-only synced files |
-| `Cursor Sync: Show Status` | Display last sync time, direction, file count, and remote URL |
-| `Cursor Sync: Resolve Conflicts` | Resolve files that changed both locally and remotely (shown when conflicts exist) |
-| `Cursor Sync: Reset Extension State` | Clear token, sync state, and reset extension settings to defaults |
-| `Cursor Sync: Export Settings to Private Gist` | Export selected files to a new **private** Gist; requires token; anyone with the URL can open the gist |
-| `Cursor Sync: Import Settings from Private Gist` | Import settings from a Gist by URL or ID using the GitHub API (configure a token for private gists) |
+| `Cursor Sync: Sync Now` | Bidirectional sync; conflicts block until resolved |
+| `Cursor Sync: Configure GitHub` | Set or update PAT |
+| `Cursor Sync: Push Now` / `Pull Now` | One-way sync |
+| `Cursor Sync: Show Status` | Last sync metadata |
+| `Cursor Sync: Resolve Conflicts` | Per-file keep local / keep remote |
+| `Cursor Sync: Reset Extension State` | Clear token, sync state, and reset core settings |
+| `Cursor Sync: Export Settings to Private Gist` | One-shot settings export |
+| `Cursor Sync: Import Settings from Private Gist` | One-shot settings import |
+| `Cursor Sync: Export Agent Transcripts to Private Gist` | Transcript manifest v2 export |
+| `Cursor Sync: Import Agent Transcripts from Private Gist` | Map projects and restore transcripts/store/sidebar |
+| `Cursor Sync: Save Chat Locally` / `Load Chat from Local Bundle` | Local `chat-persistence` bundle files |
+| `Cursor Sync: Export Chat Bundle` / `Import Chat Bundle` | Workspace chat bundle I/O |
+| `Cursor Sync: Export Current Chat Bundle` | From open Composer tab |
+| `Cursor Sync: Export Chat to Private Gist` / `Import Chat from Private Gist` | Single-chat Gist (`chat-bundle.json`) |
+| `Cursor Sync: Export Current Chat Bundle to Gist` | Gist export from Composer tab |
+| `Cursor Sync: Import Chat Bundle (Activate)` | Import with Phase B activation |
+| `Cursor Sync: Verify Chat Import` | Post-import disk/activation checks |
+| `Cursor Sync: Validate Chat Backups` | Inspect local backup tier coverage |
+| `Cursor Sync: Set Chat Encryption Password` | Password for encrypted chat Gist files |
 
-> Transport-chat Python scripts are bundled inside the extension (`resources/transport-chat/scripts/`) starting in v0.7.0. The previous `Cursor Sync: Install Skill - Transport Chat` command was removed; no separate install step is required.
+Sync failures (push, pull, Sync Now, scheduled) offer **Debug with Cursor** when available: a sanitized debug prompt with optional Composer prefill.
+
+> **Transport-chat scripts** ship inside the extension (`resources/transport-chat/scripts/`). Chat import uses bundled `cursor_chat_io.py` via the extension — no separate `~/.cursor/skills/transport-chat` install is required (legacy skill workflow removed in v0.7.0).
 
 ## Sidebar
 
-The **Cursor Sync** view in the activity bar is a tabbed webview:
+The **Cursor Sync** activity bar view has three tabs:
 
-### Sync tab
-- **Status card** — Shows whether settings are synced, last sync time as a relative timestamp (e.g. "5m ago"), sync direction (push/pull), and the number of tracked files.
-- **Sync Now** — A primary button that automatically determines the right action (push, pull, or both).
-- **Actions** — Quick-access grid with Push, Pull, Export, and Import.
-- **History** — Past sync operations (up to 50 entries) with direction, trigger, file count, status, and relative timestamps.
-- **Configure GitHub** — Token setup link.
+### Sync
 
-### Chats tab
-- **Local chats by project** — Conversations grouped by Cursor project folder under `~/.cursor/projects/<project>/agent-transcripts/<uuid>/` (`.jsonl` transcripts, including nested `subagents/`). Optional `~/.cursor/chats/<md5(workspace)>/<uuid>/store.db` when present. Each project group is collapsible; the current workspace project is expanded by default. Per-group pagination (20 chats/page) with **Open** and **Files** actions.
-- **Imports & bundles** — `cursorSync.chatImports` history (max 200 entries) plus ad-hoc bundle files discovered under `/tmp/chat-transport-*.json` and `<globalStorage>/chat-bundles/*.json`. Each import row offers **Re-activate** (re-runs Phase B without re-writing disk) and **Reveal Transcripts**.
-- **Active operation** — Live Phase A / Phase B status while an import runs, driven by the `onChatImportProgress` event emitter.
+- Status card (relative last sync, direction, file count)
+- **Sync Now**, Push, Pull, Export, Import
+- Sync history (click a row to open the file when it still exists on disk)
+- Live progress with elapsed time and absolute percent on pull/push
 
-### Settings tab
-Surfaces auto-sync (enable + interval/unit), sync destination (Gist vs GitHub repository), and the most-used `cursorSync.chatImport.*` knobs as editable controls that call `vscode.workspace.getConfiguration().update(...)`.
+### Chats
 
-Commands such as Resolve Conflicts and Reset are available from the Command Palette when applicable. The standalone "Imported Transcripts" tree view (`cursorSync.transcriptBrowser`) was removed in v0.7.0; the three commands remain as one-release deprecation stubs.
+- **Local chats by project** — conversations under `~/.cursor/projects/<project>/agent-transcripts/<uuid>/`, grouped by project with collapsible headers, pagination, backup tier badges (full / resume / partial / archive), **Open**, and **Files**
+- **Imports & bundles** — import history, re-activate, reveal transcripts
+- **Active operation** — Phase A (disk) / Phase B (activation) progress during import
 
-## Settings
+Use this tab for chat transport across machines or repos (not the deprecated standalone transport-chat skill).
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `cursorSync.enabledPaths` | `string[]` | *(see path matrix above)* | Glob patterns for included sync paths |
-| `cursorSync.excludeGlobs` | `string[]` | `[]` | Additional glob patterns to exclude |
-| `cursorSync.schedule.enabled` | `boolean` | `true` | Enable periodic auto-sync (pull and push); also in sidebar Settings |
-| `cursorSync.schedule.interval` | `number` | `30` | Interval between scheduled syncs (see `intervalUnit`; minimum 30 seconds) |
-| `cursorSync.schedule.intervalUnit` | `string` | `"minutes"` | `seconds` or `minutes` |
-| `cursorSync.schedule.intervalMin` | `number` | `30` | **Deprecated** — use `interval` + `intervalUnit` |
-| `cursorSync.destination.type` | `string` | `"gist"` | Remote for Push/Pull/scheduler: `gist` or `repo` |
-| `cursorSync.destination.repo` | `string` | `""` | `owner/name` when type is `repo` |
-| `cursorSync.destination.branch` | `string` | `"main"` | Branch for repository sync |
-| `cursorSync.destination.path` | `string` | `"cursor-sync"` | Directory inside the repo for sync files |
-| `cursorSync.maxFileSizeKB` | `number` | `512` | Skip files larger than this size in KB |
-| `cursorSync.syncProfileName` | `string` | `"default"` | Profile name written to the sync manifest |
-| `cursorSync.safeMode` | `boolean` | `true` | On **soft** pull (not mirror Pull Now), require multi-select confirmation before overwriting local files |
-| `cursorSync.syncExtensions.autoInstall` | `boolean` | `false` | On pull/sync, prompt to install extensions that are in the synced list but not installed locally. Installs always require confirmation (never silent) |
-| `cursorSync.syncExtensions.allowedPublishers` | `string[]` | `[]` | When non-empty, only offer to install extensions whose publisher (id prefix before `.`) is in this list |
-| `cursorSync.syncExtensions.autoUninstall` | `boolean` | `false` | On pull, auto-uninstall extensions that are installed locally but not in the synced list (use with caution) |
+### Settings
 
-## Export and Import
+Editable controls for schedule, destination (Gist vs repo), chat import defaults, chat Gist encryption, chat pull policy, extension sync options, and UI language (English / Italian). `cursorSync.chatImport.pythonPath` is shown read-only — set it in Cursor Settings for security.
 
-- **Export**: Run **Cursor Sync: Export Settings to Private Gist**. You choose which synced files to include; a new **private** Gist is created and the URL can be copied to share (e.g. with others or for backup). Requires a configured GitHub token. Anyone with the link can open the gist.
-- **Import**: Run **Cursor Sync: Import Settings from Private Gist** and enter a Gist URL or ID. You choose which files to apply locally. The extension uses your configured token to fetch the gist via the GitHub API (required for private gists).
+## Settings (highlights)
 
-## Chat Export and Import
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `cursorSync.destination.type` | `gist` | `gist` or `repo` |
+| `cursorSync.destination.repo` | `""` | `owner/name` for repo sync |
+| `cursorSync.schedule.enabled` | `true` | Periodic pull + push |
+| `cursorSync.schedule.interval` | `30` | With `intervalUnit` (`seconds` or `minutes`) |
+| `cursorSync.safeMode` | `true` | Confirm before overwriting on soft pull |
+| `cursorSync.ui.language` | `en` | Sidebar UI: `en` or `it` |
+| `cursorSync.chats.syncEnabled` | `true` | Include chat collection in sync |
+| `cursorSync.chats.pullUpdatePolicy` | `skip` | How pull handles existing local chats |
+| `cursorSync.chatGist.encrypt` | `true` | Encrypt chat Gist payloads (Argon2id + AES-GCM) |
+| `cursorSync.chatImport.activateDefault` | `false` | Offer activation after import |
+| `cursorSync.chatImport.useProtobufHydration` | `true` | TS protobuf hydration for native import |
+| `cursorSync.chatImport.pythonPath` | `""` | User-global Python path (workspace values ignored) |
+| `cursorSync.syncExtensions.autoInstall` | `false` | Prompt to install missing extensions on pull |
 
-Single-conversation chat bundles (`type: chat-persistence`, `schemaVersion: 1`) capture transcript JSONL files, an optional `store.db` snapshot, and sidebar metadata for restore into the current workspace.
+See `package.json` `contributes.configuration` for the full list.
 
-### Local bundle
+## Chat export and import
 
-- **Save**: Run **Cursor Sync: Save Chat Locally**. Enter a conversation ID (folder name under `agent-transcripts` or `~/.cursor/chats`). The extension builds a `ChatBundle` JSON file under extension global storage (`chat-bundles/`).
-- **Load**: Run **Cursor Sync: Load Chat from Local Bundle** and pick a saved bundle file. Transcripts, store, and sidebar state are restored; project mapping is prompted when transcript paths span multiple source projects.
+Chat bundles use `type: chat-persistence` with `schemaVersion` 1 or 2:
 
-### Private Gist
+- Transcript JSONL under `~/.cursor/projects/.../agent-transcripts/`
+- Optional `store.db` under `~/.cursor/chats/<md5(workspace)>/<conversationId>/`
+- Sidebar snapshots and optional Layer 4 `diskKvSnapshot` (global `state.vscdb` rows) for tool/MCP fidelity
 
-- **Export**: Run **Cursor Sync: Export Chat to Private Gist** (`cursorSync.exportChatToGist`). Enter a conversation ID; requires a configured GitHub token. Creates a **private** Gist with `chat-bundle.json` only (description: `Cursor Sync - Chat Export`). Copy the URL to share; anyone with the link can open the gist.
-- **Import**: Run **Cursor Sync: Import Chat from Private Gist** (`cursorSync.importChatFromGist`). Enter a Gist URL or ID; uses your token for private gists. Fetches and validates `chat-bundle.json`, then restores the conversation. Gists that contain only a transcript manifest are rejected—use **Import Agent Transcripts from Private Gist** for those. Restores without requiring a window reload; imported chats should appear in the sidebar after import (reload only if Cursor UI is stale).
+**Local**: Save/Load commands store bundles under extension global storage.
 
-## Agent Transcript Export and Import
+**Private Gist**: Export creates `chat-bundle.json` (or encrypted envelope when `cursorSync.chatGist.encrypt` is true). Import validates and restores via bundled Python disk import plus optional in-process Composer activation. Chat bundle import does **not** prompt for Reload Window; transcript import may still offer reload when configured.
 
-- **Export**: Run **Cursor Sync: Export Agent Transcripts to Private Gist**. The extension exports selected `~/.cursor/projects/*/agent-transcripts/**/*.jsonl` files and writes a `transcript-manifest.json` (`schemaVersion: 2`) with transcript/store/sidebar artifact metadata and checksums.
-- **Import**: Run **Cursor Sync: Import Agent Transcripts from Private Gist**. Each source project is mapped to a local Cursor project, then selected conversation artifacts are restored with preflight validation before any writes.
-- **Deterministic restore mapping**: Store artifacts restore to `~/.cursor/chats/<workspace-key>/<conversation-id>/store.db` using explicit `sourceWorkspaceKey` metadata and import-time workspace mapping when needed, not project-folder heuristics.
-- **Sidebar/state behavior**: Sidebar metadata JSON sidecars are restored under `agent-transcripts/<conversation-id>/cursor-sidebar-metadata.json`, and import attempts to merge `composer.composerHeaders` plus optional `composer.composerData` into local `state.vscdb` when payload and DB are available.
-- **Reload after state merge**: When state DB merge succeeds, the extension offers a `Reload Window` action because Cursor may not hot-reload SQLite-backed sidebar state.
-- **Fallback usability**: Use the Chats tab in the Cursor Sync sidebar (Imports & bundles → Reveal Transcripts) to open restored JSONL files even when native composer rows are not immediately visible.
-- **Fidelity guarantee**: Selected transcript JSONL files are preserved as exact UTF-8 bytes across export and import with checksum verification. Import remains backward compatible for `schemaVersion: 1` transcript-only manifests.
-- **Degraded restore visibility**: Completion output reports restored counts for transcript/store/sidebar/state merge and warns when sidebar state merge is partial or skipped.
-- **Verification**: Use [`docs/transcript-simulation-verification.md`](docs/transcript-simulation-verification.md) for checksum checks, path checks, and full-restore verification.
+**From Composer**: Use editor title actions or **Export Current Chat Bundle** when `resourceScheme == cursor.composer`.
 
-## Chat bundle import (import-v2)
+**Gist collection**: Multiple chats export to `chat-bundles.json`; sync can keep the collection aligned across machines when `chats.syncEnabled` is on.
 
-Works with the **transport-chat** skill (`~/.cursor/skills/transport-chat`):
+Details: [`docs/chat-import-activate.md`](docs/chat-import-activate.md).
 
-- **Disk** (transcripts, `store.db`, `state.vscdb`) — Python `cursor_chat_io.py` via `src/chat-transport-scripts.ts`; the extension does not merge `state.vscdb` when the skill is installed.
-- **IDE** (`composer.createComposer`, `pending.json`, `result.json`) — this extension only.
+## Agent transcript export and import
 
-- **Commands**: **Import Chat Bundle**, **Import Chat Bundle (Activate)**, **Export Chat Bundle**, **Verify Chat Import** (Command Palette).
-- **Settings**: `cursorSync.chatImport.*` — mirror transport-chat `import` flags for activation timing.
-- **CLI agents**: use `/transport-chat` or `transport_chat.py run`; Phase B completes via the extension watcher. Details: [`docs/chat-import-activate.md`](docs/chat-import-activate.md).
+Export selected `agent-transcripts/**/*.jsonl` (and related artifacts) to a `transcript-manifest.json` (`schemaVersion: 2`) on a private Gist. Import maps source projects to local Cursor projects, validates checksums, restores store paths under `~/.cursor/chats/`, and merges composer headers into `state.vscdb` when possible. May offer **Reload Window** after state merge.
 
-## Extension List Sync
+Fidelity notes: [`docs/transcript-fidelity-matrix.md`](docs/transcript-fidelity-matrix.md).
 
-On push, the extension generates an `extensions.json` file listing all installed non-builtin extensions with their IDs and versions. On pull and Sync Now:
+## Extension list sync
 
-- Missing extensions (in the synced list, not installed locally) always show an **Install / Skip** confirmation. Nothing is installed unless you choose **Install**.
-- After upgrading, run **Pull Now** once so the remote list is cached; later Sync Now / no-op pulls can offer the same prompt even when files are already in sync.
-- Keep Local on `extensions.json` skips the prompt and clears the cached remote list.
-- Extensions installed locally but not in the synced list: if **Auto-uninstall** is enabled, they are uninstalled; if disabled, a pull prompts to confirm removal (Sync Now “already in sync” does not ask to uninstall).
-
-Extensions are installed at the latest available version; the synced list records versions for reference only.
+Push writes `extensions.json` (non-builtin extensions). Pull and Sync Now can prompt **Install / Skip** for missing extensions (always confirmed; default auto-install is off). Optional auto-uninstall for extensions not in the synced list.
 
 ## Security
 
-- Your GitHub PAT is stored exclusively in VS Code SecretStorage. It never appears in settings files, logs, or telemetry.
-- Sync uses either a single **private** Gist per token (description "Cursor Sync - Settings Backup") or a folder in a **GitHub repository** you configure. Export one-shot commands still create additional **private** Gists; anyone with those URLs can open them.
-- No data is sent to any service other than the GitHub API for sync and export operations.
-- **Anonymous usage metrics**: The extension may send anonymous usage metrics (e.g. sync completed/failed, feature usage) to improve the extension. No sensitive data—tokens, gist IDs, file paths, or error messages—is included.
+- PAT stored only in VS Code SecretStorage.
+- Sync targets a private settings Gist or a repo path you configure. One-shot export Gists are private but shareable via URL.
+- `cursorSync.chatImport.pythonPath` and `transportChatScriptDir` honor **user-global** values only (workspace overrides are ignored).
+- Optional client-side encryption for chat Gist files (`cursorSync.setChatEncryptionPassword`).
+- Anonymous usage metrics may be sent without tokens, paths, or gist IDs (see extension analytics implementation).
 
-## Conflict Resolution
+## Conflict resolution
 
-If a file has changed both locally and remotely since the last sync, push or pull is blocked. Run **Cursor Sync: Resolve Conflicts** to decide for each conflicted file: keep local, keep remote, or skip (decide later). The command is enabled only when there are pending conflicts.
+If the same file changed locally and remotely, push/pull is blocked until you run **Resolve Conflicts** or use Sync Now’s conflict flow.
 
 ## Recovery
 
-If a pull (or import) fails partway through writing files, all partially written files are automatically rolled back to their pre-pull state using backup snapshots. The extension keeps the last 3 backup snapshots and prunes older ones. Restore from backup is not exposed in the UI; only automatic rollback on failure is performed.
+Failed pull/import rolls back partial file writes from automatic backups (last three snapshots retained).
 
 ## Reset
 
-**Cursor Sync: Reset Extension State** clears your GitHub token, sync state (e.g. Gist ID / repo destination, checksums), the cached remote extension list used for missing-install prompts, and resets the following settings to their defaults: `enabledPaths`, `excludeGlobs`, `schedule.enabled`, `schedule.interval`, `schedule.intervalUnit`, `schedule.intervalMin`, `destination.type`, `destination.repo`, `destination.branch`, `destination.path`, `maxFileSizeKB`, `syncProfileName`, `safeMode`. It does not change `syncExtensions.autoInstall` or `syncExtensions.autoUninstall`. Use this to start over or move to a new machine without reusing the previous remote.
+**Reset Extension State** clears the token, remote linkage, cached extension list, and resets core sync settings to defaults (extension auto-install/uninstall settings are preserved).

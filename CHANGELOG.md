@@ -1,11 +1,19 @@
 # Changelog
 
-## [Unreleased]
+## v0.11.3
+
+### Changed
+- Refactored chat, pull/push, transcript, and sidebar code into smaller modules for maintainability and test coverage
+- Split the sidebar webview into shell, chats, settings, handlers, and progress assets with refreshed styling
+- Split bundled `cursor_chat_io` Python into per-domain modules (import, verify, disk KV, workspace, activation, and related helpers)
+- Sidebar UI strings available in English and Italian (`cursorSync.ui.language`)
 
 ### Fixed
-- Sidebar pull/push progress no longer rebuilds the bar on every elapsed-timer tick (the fill reset and slid forward once a second).
-- Pull reports real `Fetching n/total` and `Writing n/total` progress with an absolute percent, matching repo push uploads.
-- Chat transport and composer-bridge Python on Windows uses `py -3` (not the Microsoft Store `python3` stub). Workspace `chatImport.pythonPath` is ignored; only the user-global setting applies.
+- Sidebar pull/push progress no longer rebuilds the bar on every elapsed-timer tick (the fill reset and slid forward once a second)
+- Pull reports real `Fetching n/total` and `Writing n/total` progress with an absolute percent, matching repo push uploads
+- Chat transport and composer-bridge Python on Windows uses `py -3` (not the Microsoft Store `python3` stub); workspace `chatImport.pythonPath` is ignored — only the user-global setting applies
+- Windows `~/.cursor/projects/<key>` folder names encode drive letters without a colon so chat import can create transcript directories reliably
+- Project picker labels show tilde paths (for example `~/dev/app`) when workspace storage mapping resolves the folder
 
 ## v0.11.2
 
