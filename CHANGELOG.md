@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.12.1
+
+### Changed
+- Raise `engines.vscode` to `^1.128.0` (Cursor 3.18+ / VS Code 1.128 base) and `@types/vscode` to `^1.125.0` (latest npm typings at or below that base; vsce-compatible)
+
 ## v0.12.0
 
 ### Added

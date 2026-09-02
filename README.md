@@ -4,7 +4,7 @@ Community fork of [**Cursor Sync**](https://github.com/Marcelo-Barella/cursor-sy
 
 Sync user-level Cursor settings and selected `~/.cursor` assets to a **private GitHub Gist** or a **GitHub repository**, with manual push/pull, optional scheduled sync, one-shot Gist export/import, extension list sync, and a **Chats** sidebar for discovering, exporting, importing, and syncing Composer conversations across machines.
 
-Current version: **0.12.0**. Development happens on the **`dev`** branch; **`main`** tracks stable releases.
+Current version: **0.12.1**. Development happens on the **`dev`** branch; **`main`** tracks stable releases. Requires **VS Code / Cursor 1.128+** (`engines.vscode`).
 
 ## Upstream
 
@@ -45,7 +45,7 @@ This runs the production build (`esbuild`) and packages with `@vscode/vsce`. Out
 cursor-sync-<version>.vsix
 ```
 
-For example: `cursor-sync-0.12.0.vsix` in the repository root.
+For example: `cursor-sync-0.12.1.vsix` in the repository root.
 
 On macOS or Linux you can also run `./package-vsix.sh`.
 
@@ -54,21 +54,21 @@ On macOS or Linux you can also run `./package-vsix.sh`.
 **Cursor** (recommended):
 
 ```bash
-cursor --install-extension ./cursor-sync-0.12.0.vsix --force
+cursor --install-extension ./cursor-sync-0.12.1.vsix --force
 ```
 
 **VS Code**:
 
 ```bash
-code --install-extension ./cursor-sync-0.12.0.vsix --force
+code --install-extension ./cursor-sync-0.12.1.vsix --force
 ```
 
-Replace `0.12.0` with the version from `package.json`. Use `--force` to upgrade an existing install.
+Replace `0.12.1` with the version from `package.json`. Use `--force` to upgrade an existing install.
 
 **Windows (PowerShell)**:
 
 ```powershell
-cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-0.12.0.vsix" --force
+cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-0.12.1.vsix" --force
 ```
 
 ### 4. Reload the window
