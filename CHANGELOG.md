@@ -1,8 +1,37 @@
 # Changelog
 
+## v0.12.0
+
+### Added
+- Default sync globs for Cursor CLI/user extras: `cli-config.json`, `hooks.json`, and `tasks.json` (scanned under both Cursor User and `~/.cursor`)
+- Opt-in `cursorSync.mcp.syncEnabled` (default off) to sync `mcp.json`. Enabling uploads MCP server URLs, tokens, and headers — use only a **private** Gist or repository. Turning the toggle off does not delete a remote `mcp.json` already uploaded. If you previously listed `mcp.json` in `enabledPaths`, you must also enable this toggle
+- **Stop Sync** (sidebar progress Stop, Command Palette `Cursor Sync: Stop Sync`, status bar while syncing). Cancels in-flight GitHub requests and restores local files written or deleted in that run (not remote commits/Gists, not chat/composer databases)
+- Per-project chat identity: synced chats carry `sourceFolderTilde` (`~/path/to/repo`) plus conversation id so the same id in two workspaces is not merged. Pull restores into that folder's `~/.cursor/chats/<md5>/` when it exists (QuickPick otherwise). `composer.createNew` / openComposer run only for chats that belong to the currently open window
+- Incremental **Pull** (sidebar + palette) vs explicit **Mirror from Remote**. Pull no longer deletes local-only synced files
+- Sync-tab conflict panel (Keep Local / Keep Remote / Skip) with a single multi QuickPick fallback when the sidebar is hidden
+- Manual chat save/export/Gist uses native `cursor-chat.json` (legacy `chat-bundle.json` / `chat-bundles.json` still import)
+
+### Changed
+- Community fork branding: extension display name **Cursor Sync (Community)**, publisher **FaberVi**, maintainer **Vincenzo Fabiano**. Upstream [Marcelo-Barella/cursor-sync](https://github.com/Marcelo-Barella/cursor-sync) remains credited; existing Gist descriptions from upstream are still discovered
+- Dev dependencies: `@types/node` ^26.4.1, `@types/vscode` ^1.74.0, `esbuild` ^0.28.2, `typescript` ^7.0.2, `vitest` ^4.1.11; runtime `minimatch` ^10.2.6. `engines.vscode` remains `^1.74.0` (Cursor-compatible minimum; `@types/vscode` aligned for vsce packaging)
+- `cursorSync.chats.syncEnabled` now defaults to **false**. Existing user settings keep their stored value; new installs and users who never set the key no longer sync chats until they turn it on
+- If you customized `cursorSync.enabledPaths` before this release, add `cli-config.json`, `hooks.json`, and `tasks.json` manually — VS Code does not merge new defaults
+- Chat collection packing is newest-first (store/transcript mtime). Skips over `chats.maxCollectionSizeKB` (default 8192) are named with title, project path, and short id in the Sync history and Output log. Chat sync fingerprint includes store.db size and mtime so a new message can trigger a re-pack
+- Successful Pull/Push/Sync Now outcomes go to the Sync tab (history + status); IDE toasts are reserved for errors and required actions
+- `syncExtensions.autoInstall` defaults **on** (prompt Install/Skip on pull; never silent). Off means no prompt and no install. `autoUninstall` stays off: on means uninstall extras without a second prompt
+- Chat import uses `chatImport.activateDefault` without an extra activation picker; pull no longer asks “Activate in Composer now?”
+- Removed Command Palette contribution `cursorSync.installSkillTransportChat`
+
+### Fixed
+- Union of remote+local chat collections re-applies the size cap after merge
+- A remote chat with folder tilde A is not treated as already local when this machine only has the same id with no tilde or a different tilde
+- Windows chat folder keys hash Cursor’s `workspace.json` path (case-insensitive folder match)
+- Sidebar Open/Reactivate resolves the workspace from `projectKey` / `workspaceKey` instead of always using the first open folder
+
 ## v0.11.3
 
 ### Changed
+- Repo destination stores backup files as real directories under `destination.path` (for example `cursor-sync/cursor-user/settings.json`) instead of Gist-style `--` flattened names. The next repo push migrates leftover dashed files in one GitHub rename commit. Gist layout is unchanged.
 - Refactored chat, pull/push, transcript, and sidebar code into smaller modules for maintainability and test coverage
 - Split the sidebar webview into shell, chats, settings, handlers, and progress assets with refreshed styling
 - Split bundled `cursor_chat_io` Python into per-domain modules (import, verify, disk KV, workspace, activation, and related helpers)
@@ -14,6 +43,8 @@
 - Chat transport and composer-bridge Python on Windows uses `py -3` (not the Microsoft Store `python3` stub); workspace `chatImport.pythonPath` is ignored — only the user-global setting applies
 - Windows `~/.cursor/projects/<key>` folder names encode drive letters without a colon so chat import can create transcript directories reliably
 - Project picker labels show tilde paths (for example `~/dev/app`) when workspace storage mapping resolves the folder
+- First push to a completely empty GitHub repository (HTTP 409 Git Repository is empty) creates the initial commit and branch instead of failing
+- Sync history and the conflict failure toast wait until the user closes the conflict QuickPick; a full Keep Local/Remote resolution no longer writes an Unresolved conflicts failure row
 
 ## v0.11.2
 

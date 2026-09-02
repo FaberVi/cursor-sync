@@ -283,6 +283,369 @@ describe("push/pull debug wiring", () => {
     });
   });
 
+  const sampleConflict = {
+    relativeSyncKey: "cursor-user/settings.json",
+    localChecksum: "local",
+    remoteChecksum: "remote",
+  };
+
+  async function setupPushConflictBase() {
+    const auth = await import("../src/auth.js");
+    vi.spyOn(auth, "validateStoredToken").mockResolvedValue(true);
+    vi.spyOn(auth, "requireToken").mockResolvedValue("ghp_test_token");
+
+    const diagnostics = await import("../src/diagnostics.js");
+    const addHistory = vi
+      .spyOn(diagnostics, "addSyncHistoryEntry")
+      .mockResolvedValue(undefined);
+    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
+      lastSyncTimestamp: new Date().toISOString(),
+      lastSyncDirection: "pull",
+      gistId: "abcdef1234567890abcdef1234567890",
+      localChecksums: { "cursor-user/settings.json": "local" },
+      remoteChecksums: { "cursor-user/settings.json": "remote" },
+    });
+    vi.spyOn(diagnostics, "getLogger").mockReturnValue({
+      appendLine: vi.fn(),
+    } as unknown as import("vscode").OutputChannel);
+
+    const conflicts = await import("../src/conflicts.js");
+    vi.spyOn(conflicts, "detectConflicts").mockResolvedValue([sampleConflict]);
+    return { addHistory, conflicts };
+  }
+
+  it("does not record Unresolved conflicts history when push conflicts are fully resolved in-prompt", async () => {
+    const { addHistory, conflicts } = await setupPushConflictBase();
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.commands, "executeCommand").mockImplementation(
+      async (cmd: string) => {
+        if (cmd === "cursorSync.resolveConflicts") {
+          conflicts.setPendingResolutionsForTests([
+            {
+              relativeSyncKey: sampleConflict.relativeSyncKey,
+              resolution: "keepLocal",
+            },
+          ]);
+        }
+      }
+    );
+
+    const { executePush } = await import("../src/push.js");
+    const result = await executePush(mockContext(), { trigger: "manual" });
+
+    expect(result).toBe(false);
+    expect(
+      addHistory.mock.calls.some(
+        (call) =>
+          (call[1] as { error?: string }).error === "Unresolved conflicts"
+      )
+    ).toBe(false);
+    expect(
+      showSyncFailureWithDebugMock.mock.calls.some(
+        (call) => (call[1] as { category?: string }).category === "CONFLICT"
+      )
+    ).toBe(false);
+    await conflicts.clearConflicts();
+  });
+
+  it("records Unresolved conflicts history after push skip/cancel", async () => {
+    const { addHistory, conflicts } = await setupPushConflictBase();
+    const vscode = await import("vscode");
+    const executeCommand = vi
+      .spyOn(vscode.commands, "executeCommand")
+      .mockResolvedValue(undefined);
+
+    const { executePush } = await import("../src/push.js");
+    const result = await executePush(mockContext(), { trigger: "manual" });
+
+    expect(result).toBe(false);
+    expect(executeCommand).toHaveBeenCalledWith("cursorSync.resolveConflicts");
+    expect(addHistory).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        success: false,
+        error: "Unresolved conflicts",
+        direction: "push",
+      })
+    );
+    expect(showSyncFailureWithDebugMock).toHaveBeenCalled();
+    const toastIdx = showSyncFailureWithDebugMock.mock.invocationCallOrder[0];
+    const resolveIdx = executeCommand.mock.invocationCallOrder.find(
+      (_n, i) =>
+        executeCommand.mock.calls[i]?.[0] === "cursorSync.resolveConflicts"
+    );
+    expect(resolveIdx).toBeDefined();
+    expect(toastIdx).toBeGreaterThan(resolveIdx!);
+    await conflicts.clearConflicts();
+  });
+
+  it("records Unresolved conflicts on scheduled push without prompting", async () => {
+    const { addHistory, conflicts } = await setupPushConflictBase();
+    const vscode = await import("vscode");
+    const executeCommand = vi
+      .spyOn(vscode.commands, "executeCommand")
+      .mockResolvedValue(undefined);
+
+    const { executePush } = await import("../src/push.js");
+    const result = await executePush(mockContext(), { trigger: "scheduled" });
+
+    expect(result).toBe(false);
+    expect(executeCommand).not.toHaveBeenCalledWith(
+      "cursorSync.resolveConflicts"
+    );
+    expect(addHistory).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        error: "Unresolved conflicts",
+        trigger: "scheduled",
+      })
+    );
+    await conflicts.clearConflicts();
+  });
+
+  it("continues push when conflicts were already resolved keepRemote", async () => {
+    const { addHistory, conflicts } = await setupPushConflictBase();
+    conflicts.setPendingResolutionsForTests([
+      {
+        relativeSyncKey: sampleConflict.relativeSyncKey,
+        resolution: "keepRemote",
+      },
+    ]);
+
+    const pkg = await import("../src/push-package.js");
+    const packageSpy = vi.spyOn(pkg, "packagePushFiles").mockResolvedValue({
+      packaged: new Map(),
+      manifest: {
+        schemaVersion: 1,
+        syncProfileName: "default",
+        createdAt: "",
+        sourceMachineId: "",
+        sourceOS: "win32",
+        files: {},
+      },
+      delta: {
+        filesToUpload: {},
+        uploadedSyncKeys: [],
+        unchangedCount: 0,
+        deleteNames: [],
+        isNoOp: true,
+      },
+      chatForDelta: undefined,
+      chatBundleCount: 0,
+    });
+    const write = await import("../src/push-write.js");
+    vi.spyOn(write, "writePushRemote").mockResolvedValue(true);
+
+    const vscode = await import("vscode");
+    const executeCommand = vi
+      .spyOn(vscode.commands, "executeCommand")
+      .mockResolvedValue(undefined);
+
+    const { executePush } = await import("../src/push.js");
+    const result = await executePush(mockContext(), { trigger: "manual" });
+
+    expect(result).toBe(true);
+    expect(executeCommand).not.toHaveBeenCalledWith(
+      "cursorSync.resolveConflicts"
+    );
+    expect(
+      addHistory.mock.calls.some(
+        (call) =>
+          (call[1] as { error?: string }).error === "Unresolved conflicts"
+      )
+    ).toBe(false);
+    expect(packageSpy).toHaveBeenCalled();
+    await conflicts.clearConflicts();
+  });
+
+  async function setupPullConflictBase() {
+    const auth = await import("../src/auth.js");
+    vi.spyOn(auth, "requireToken").mockResolvedValue("ghp_test_token");
+
+    const diagnostics = await import("../src/diagnostics.js");
+    const addHistory = vi
+      .spyOn(diagnostics, "addSyncHistoryEntry")
+      .mockResolvedValue(undefined);
+    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
+      lastSyncTimestamp: new Date().toISOString(),
+      lastSyncDirection: "push",
+      gistId: "abcdef1234567890abcdef1234567890",
+      localChecksums: { "cursor-user/settings.json": "local" },
+      remoteChecksums: { "cursor-user/settings.json": "remote" },
+    });
+    vi.spyOn(diagnostics, "getLogger").mockReturnValue({
+      appendLine: vi.fn(),
+    } as unknown as import("vscode").OutputChannel);
+    vi.spyOn(diagnostics, "saveSyncState").mockResolvedValue(undefined);
+
+    const remote = await import("../src/remote/index.js");
+    vi.spyOn(remote, "createRemoteBackend").mockReturnValue({
+      type: "gist",
+      remoteLabel: () => "gist",
+      remoteUrl: () => "https://gist.github.com/x",
+      discover: async () => ({
+        ok: true as const,
+        data: { id: "abcdef1234567890abcdef1234567890", htmlUrl: "u" },
+      }),
+      getSnapshot: async () => ({
+        ok: true as const,
+        data: {
+          id: "abcdef1234567890abcdef1234567890",
+          htmlUrl: "u",
+          files: {
+            "manifest.json": JSON.stringify({
+              files: {
+                "cursor-user/settings.json": { checksum: "remote" },
+              },
+            }),
+          },
+        },
+      }),
+      writeFiles: async () => ({
+        ok: true as const,
+        data: {
+          id: "abcdef1234567890abcdef1234567890",
+          htmlUrl: "u",
+          created: false,
+        },
+      }),
+    } as import("../src/remote/index.js").RemoteSyncBackend);
+
+    const conflicts = await import("../src/conflicts.js");
+    vi.spyOn(conflicts, "detectConflicts").mockResolvedValue([sampleConflict]);
+    return { addHistory, conflicts };
+  }
+
+  it("does not record Unresolved conflicts history when pull conflicts are fully resolved in-prompt", async () => {
+    const { addHistory, conflicts } = await setupPullConflictBase();
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.commands, "executeCommand").mockImplementation(
+      async (cmd: string) => {
+        if (cmd === "cursorSync.resolveConflicts") {
+          conflicts.setPendingResolutionsForTests([
+            {
+              relativeSyncKey: sampleConflict.relativeSyncKey,
+              resolution: "keepLocal",
+            },
+          ]);
+        }
+      }
+    );
+
+    const { fetchPullRemote } = await import("../src/pull-remote-fetch.js");
+    const result = await fetchPullRemote(
+      mockContext(),
+      "manual",
+      { report: () => {} },
+      false
+    );
+
+    expect(result).toEqual({ ok: false });
+    expect(
+      addHistory.mock.calls.some(
+        (call) =>
+          (call[1] as { error?: string }).error === "Unresolved conflicts"
+      )
+    ).toBe(false);
+    expect(
+      showSyncFailureWithDebugMock.mock.calls.some(
+        (call) => (call[1] as { category?: string }).category === "CONFLICT"
+      )
+    ).toBe(false);
+    await conflicts.clearConflicts();
+  });
+
+  it("records Unresolved conflicts history after pull skip/cancel", async () => {
+    const { addHistory, conflicts } = await setupPullConflictBase();
+    const vscode = await import("vscode");
+    const executeCommand = vi
+      .spyOn(vscode.commands, "executeCommand")
+      .mockResolvedValue(undefined);
+
+    const { fetchPullRemote } = await import("../src/pull-remote-fetch.js");
+    const result = await fetchPullRemote(
+      mockContext(),
+      "manual",
+      { report: () => {} },
+      false
+    );
+
+    expect(result).toEqual({ ok: false });
+    expect(executeCommand).toHaveBeenCalledWith("cursorSync.resolveConflicts");
+    expect(addHistory).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        success: false,
+        error: "Unresolved conflicts",
+        direction: "pull",
+      })
+    );
+    await conflicts.clearConflicts();
+  });
+
+  it("records Unresolved conflicts on scheduled pull without prompting", async () => {
+    const { addHistory, conflicts } = await setupPullConflictBase();
+    const vscode = await import("vscode");
+    const executeCommand = vi
+      .spyOn(vscode.commands, "executeCommand")
+      .mockResolvedValue(undefined);
+
+    const { fetchPullRemote } = await import("../src/pull-remote-fetch.js");
+    const result = await fetchPullRemote(
+      mockContext(),
+      "scheduled",
+      { report: () => {} },
+      false
+    );
+
+    expect(result).toEqual({ ok: false });
+    expect(executeCommand).not.toHaveBeenCalledWith(
+      "cursorSync.resolveConflicts"
+    );
+    expect(addHistory).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        error: "Unresolved conflicts",
+        trigger: "scheduled",
+      })
+    );
+    await conflicts.clearConflicts();
+  });
+
+  it("continues pull when conflicts were already resolved", async () => {
+    const { addHistory, conflicts } = await setupPullConflictBase();
+    conflicts.setPendingResolutionsForTests([
+      {
+        relativeSyncKey: sampleConflict.relativeSyncKey,
+        resolution: "keepLocal",
+      },
+    ]);
+    const vscode = await import("vscode");
+    const executeCommand = vi
+      .spyOn(vscode.commands, "executeCommand")
+      .mockResolvedValue(undefined);
+
+    const { fetchPullRemote } = await import("../src/pull-remote-fetch.js");
+    const result = await fetchPullRemote(
+      mockContext(),
+      "manual",
+      { report: () => {} },
+      false
+    );
+
+    expect(result.ok).toBe(true);
+    expect(executeCommand).not.toHaveBeenCalledWith(
+      "cursorSync.resolveConflicts"
+    );
+    expect(
+      addHistory.mock.calls.some(
+        (call) =>
+          (call[1] as { error?: string }).error === "Unresolved conflicts"
+      )
+    ).toBe(false);
+    await conflicts.clearConflicts();
+  });
+
   it("calls showSyncFailureWithDebug on push auth failure", async () => {
     const auth = await import("../src/auth.js");
     vi.spyOn(auth, "validateStoredToken").mockResolvedValue(false);
@@ -426,10 +789,44 @@ describe("sync now debug wiring", () => {
       keys: ["cursor-user/settings.json", "dot-cursor/mcp.json"],
     });
 
+    const conflicts = await import("../src/conflicts.js");
+    await conflicts.registerPendingConflicts([
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        localChecksum: "a",
+        remoteChecksum: "b",
+        baseChecksum: "c",
+      },
+      {
+        relativeSyncKey: "dot-cursor/mcp.json",
+        localChecksum: "d",
+        remoteChecksum: "e",
+        baseChecksum: "f",
+      },
+    ]);
+
+    const order: string[] = [];
+    const progressMod = await import("../src/sync-progress-events.js");
+    vi.spyOn(progressMod, "createSidebarSyncProgress").mockReturnValue({
+      report: () => {
+        order.push("report");
+      },
+      complete: (ok: boolean) => {
+        order.push(`complete:${ok}`);
+      },
+      get percent() {
+        return 0;
+      },
+    });
+
     const vscode = await import("vscode");
     const executeCommandSpy = vi
       .spyOn(vscode.commands, "executeCommand")
-      .mockResolvedValue(undefined);
+      .mockImplementation(async (cmd: string) => {
+        if (cmd === "cursorSync.resolveConflicts") {
+          order.push("resolve");
+        }
+      });
 
     const { executeSyncNow } = await import("../src/sync-now.js");
     await executeSyncNow(mockContext());
@@ -454,6 +851,47 @@ describe("sync now debug wiring", () => {
       title: "2 conflict(s) detected. Resolve them first.",
     });
     expect(executeCommandSpy).toHaveBeenCalledWith("cursorSync.resolveConflicts");
+    const resolveAt = order.indexOf("resolve");
+    const completeAt = order.indexOf("complete:false");
+    expect(resolveAt).toBeGreaterThanOrEqual(0);
+    expect(completeAt).toBeGreaterThan(resolveAt);
+    await conflicts.clearConflicts();
+  });
+
+  it("does not toast CONFLICT on syncNow after full in-prompt resolve", async () => {
+    determineSyncActionMock.mockResolvedValue({
+      action: "conflict",
+      keys: ["cursor-user/settings.json"],
+    });
+
+    const conflicts = await import("../src/conflicts.js");
+    await conflicts.registerPendingConflicts([
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        localChecksum: "a",
+        remoteChecksum: "b",
+        baseChecksum: "c",
+      },
+    ]);
+
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.commands, "executeCommand").mockImplementation(
+      async (cmd: string) => {
+        if (cmd === "cursorSync.resolveConflicts") {
+          await conflicts.registerPendingConflicts([]);
+        }
+      }
+    );
+
+    const { executeSyncNow } = await import("../src/sync-now.js");
+    await executeSyncNow(mockContext());
+
+    expect(
+      showSyncFailureWithDebugMock.mock.calls.some(
+        (call) => (call[1] as { category?: string }).category === "CONFLICT"
+      )
+    ).toBe(false);
+    await conflicts.clearConflicts();
   });
 
   it("calls showSyncFailureWithDebug when executeSyncNow catches", async () => {

@@ -87,6 +87,43 @@ describe("package menu contributions", () => {
     });
   });
 
+  it("declares incremental Pull and explicit Mirror commands", () => {
+    const pkg = readPackageJson();
+    const commands = pkg.contributes.commands as Array<{ command: string; title: string }>;
+    expect(commands.find((c) => c.command === "cursorSync.pull")?.title).toBe(
+      "Cursor Sync: Pull Now"
+    );
+    expect(commands.find((c) => c.command === "cursorSync.pullMirror")).toEqual({
+      command: "cursorSync.pullMirror",
+      title: "Cursor Sync: Mirror from Remote",
+      icon: "$(mirror)",
+      enablement: "cursorSync.configured",
+    });
+  });
+
+  it("declares cancel sync command", () => {
+    const pkg = readPackageJson();
+    const command = pkg.contributes.commands.find(
+      (entry: { command: string }) => entry.command === "cursorSync.cancelSync"
+    );
+    expect(command).toEqual({
+      command: "cursorSync.cancelSync",
+      title: "Cursor Sync: Stop Sync",
+    });
+  });
+
+  it("defaults chats and MCP sync off and includes extra file globs", () => {
+    const pkg = readPackageJson();
+    const props = pkg.contributes.configuration.properties;
+    expect(props["cursorSync.chats.syncEnabled"].default).toBe(false);
+    expect(props["cursorSync.mcp.syncEnabled"].default).toBe(false);
+    expect(props["cursorSync.syncExtensions.autoInstall"].default).toBe(true);
+    expect(props["cursorSync.enabledPaths"].default).toEqual(
+      expect.arrayContaining(["cli-config.json", "hooks.json", "tasks.json"])
+    );
+    expect(props["cursorSync.enabledPaths"].default).not.toContain("mcp.json");
+  });
+
   it("declares set chat encryption password command", () => {
     const pkg = readPackageJson();
     const command = pkg.contributes.commands.find(

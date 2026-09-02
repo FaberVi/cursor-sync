@@ -3,7 +3,8 @@ import { executePush, isPushLocked } from "./push.js";
 import { executePull, isPullLocked } from "./pull.js";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
-import { loadSyncState, getLogger } from "./diagnostics.js";
+import { loadSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
+import { notifySyncQuiet } from "./sync-notify.js";
 import { sendEvent } from "./analytics.js";
 import {
   buildSyncDebugFailure,
@@ -255,7 +256,7 @@ export async function scheduledTick(
       }
 
       case "conflict": {
-        const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them first.`;
+        const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them in the Sync tab.`;
         logger.appendLine(
           `[${new Date().toISOString()}] Scheduled sync skipped: conflicts on [${result.keys.join(", ")}]`
         );
@@ -263,14 +264,16 @@ export async function scheduledTick(
           reason: "conflict",
           conflict_count: result.keys.length,
         });
-        void showSyncFailureWithDebug(
-          context,
-          buildSyncDebugFailure("scheduler", "scheduled", conflictMessage, {
-            category: "CONFLICT",
-            conflictCount: result.keys.length,
-          }),
-          { level: "warning", title: conflictMessage }
-        );
+        await addSyncHistoryEntry(context, {
+          timestamp: new Date().toISOString(),
+          direction: "pull",
+          trigger: "scheduled",
+          fileCount: result.keys.length,
+          success: false,
+          error: conflictMessage,
+          files: result.keys,
+        });
+        notifySyncQuiet(conflictMessage);
         break;
       }
 

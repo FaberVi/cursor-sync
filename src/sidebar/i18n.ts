@@ -15,6 +15,16 @@ export type MessageKey =
   | "never"
   | "push"
   | "pull"
+  | "pullMirror"
+  | "pullMirrorHint"
+  | "conflictsTitle"
+  | "conflictsKeepLocal"
+  | "conflictsKeepRemote"
+  | "conflictsSkip"
+  | "conflictsApplyAllLocal"
+  | "conflictsApplyAllRemote"
+  | "conflictsApplyAllSkip"
+  | "couldNotResolveChatFolder"
   | "filesTracked"
   | "fileTracked"
   | "notLinked"
@@ -59,6 +69,9 @@ export type MessageKey =
   | "languageEn"
   | "languageIt"
   | "appearance"
+  | "mcpSync"
+  | "includeMcp"
+  | "mcpSyncHint"
   | "chatSync"
   | "includeChats"
   | "syncOnlyFullBackups"
@@ -120,6 +133,7 @@ export type MessageKey =
   | "historyNoFileListRecorded"
   | "openAnyway"
   | "cancel"
+  | "stopSync"
   | "openedTranscriptReload"
   | "couldNotOpenChatDisk"
   | "revealHeaderOnlyAgentTranscripts"
@@ -249,6 +263,8 @@ export function webviewI18nPayload(lang: UiLanguage = readUiLanguage()): Record<
     "syncNow",
     "push",
     "pull",
+    "pullMirror",
+    "stopSync",
     "import",
     "open",
     "opening",

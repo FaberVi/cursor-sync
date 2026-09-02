@@ -9,7 +9,10 @@ import type {
   RemoteWriteResult,
 } from "./types.js";
 
-const SETTINGS_GIST_DESCRIPTION = "Cursor Sync - Settings Backup";
+import {
+  REPO_SETTINGS_BACKUP_DESCRIPTION,
+  SETTINGS_GIST_DESCRIPTION,
+} from "../extension-branding.js";
 
 export class GistBackend implements RemoteSyncBackend {
   readonly type = "gist" as const;

@@ -155,4 +155,25 @@ describe("selectPushDelta", () => {
     expect(result.deleteNames).toEqual([]);
     expect(result.unchangedCount).toBe(1);
   });
+
+  it("does not delete remote mcp.json when it is preserved", () => {
+    const result = selectPushDelta({
+      packaged: new Map([
+        ["cursor-user/settings.json", pkg("{}", "hash-s")],
+      ]),
+      remoteChecksums: {
+        "cursor-user/settings.json": "hash-s",
+        "dot-cursor/mcp.json": "hash-mcp",
+      },
+      existingRemoteNames: [
+        "manifest.json",
+        "cursor-user--settings.json",
+        "dot-cursor--mcp.json",
+      ],
+      forceFullUpload: false,
+      preserveSyncKeys: ["dot-cursor/mcp.json", "cursor-user/mcp.json"],
+    });
+    expect(result.deleteNames).toEqual([]);
+    expect(result.isNoOp).toBe(true);
+  });
 });

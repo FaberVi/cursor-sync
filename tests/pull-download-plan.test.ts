@@ -147,4 +147,25 @@ describe("planPullDownloadNames", () => {
       })
     ).toEqual(["cursor-user--settings.json"]);
   });
+
+  it("skips mcp.json when MCP sync is off", () => {
+    const names = planPullDownloadNames({
+      manifestChecksums: {
+        "cursor-user/settings.json": "aaa",
+        "dot-cursor/mcp.json": "mcp-new",
+      },
+      localChecksums: {
+        "cursor-user/settings.json": "aaa",
+      },
+      allFileNames: [
+        "manifest.json",
+        "cursor-user--settings.json",
+        "dot-cursor--mcp.json",
+      ],
+      keepLocalKeys: new Set(),
+      chatEnabled: false,
+      chatFiles: [],
+    });
+    expect(names).not.toContain("dot-cursor--mcp.json");
+  });
 });

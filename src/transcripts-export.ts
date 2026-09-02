@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { TRANSCRIPTS_EXPORT_GIST_DESCRIPTION } from "./extension-branding.js";
 import { getLogger } from "./diagnostics.js";
 import { withRetry } from "./retry.js";
 import { GistClient } from "./gist.js";
@@ -121,7 +122,7 @@ export async function executeExportTranscripts(
     },
     async () => {
       const result = await withRetry(() =>
-        client.createGist(gistFiles, "Cursor Sync - Agent Transcripts Export")
+        client.createGist(gistFiles, TRANSCRIPTS_EXPORT_GIST_DESCRIPTION)
       );
 
       if (!result.ok) {

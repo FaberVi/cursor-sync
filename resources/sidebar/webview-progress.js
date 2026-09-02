@@ -17,7 +17,11 @@
     if (card) return card;
     el.innerHTML =
       '<div class="progress-card">' +
+      '<div class="progress-phase-row">' +
       '<div class="progress-phase"></div>' +
+      '<button type="button" class="progress-stop-btn" data-command="sync:cancel">' +
+      CSW.escHtml(CSW.tr("stopSync", "Stop")) +
+      "</button></div>" +
       '<div class="progress-message"><span class="progress-message-text"></span><span class="progress-elapsed"></span></div>' +
       '<div class="progress-bar-track"><div class="progress-bar-fill" style="width:' +
       CSW.syncFillWidthPct(pct) +

@@ -5,6 +5,16 @@ import {
   resolveComposerConversationTitle,
 } from "./composer-title.js";
 import type { ChatBundle, ChatBundleDiskKvSnapshot } from "./chat-persistence.js";
+import { chatIdentityKey, sourceFolderTildeOf } from "./chat-identity.js";
+import {
+  chatBundleFromNativeChatJson,
+  isNativeChatCollection,
+  isNativeChatJsonDocument,
+  nativeChatJsonFromBundle,
+  nativeCollectionFromBundles,
+} from "./native-chat-json/index.js";
+
+export const CURSOR_CHAT_GIST_FILE_NAME = "cursor-chat.json";
 
 export function isDiskKvKeyInConversationScope(
   key: string,
@@ -146,6 +156,22 @@ export function parseChatBundleOrCollection(raw: string): ParsedChatExport {
   if (typeof parsed !== "object" || parsed === null) {
     throw new Error("Invalid chat export JSON: expected an object.");
   }
+  if (isNativeChatCollection(parsed)) {
+    const bundles = parsed.chats.map(chatBundleFromNativeChatJson);
+    return {
+      kind: "collection",
+      collection: {
+        schemaVersion: 1,
+        type: "chat-bundles-collection",
+        createdAt: parsed.createdAt,
+        sourceWorkspaceKey: parsed.chats[0]?.storeDb?.sourceWorkspaceKey ?? "",
+        bundles,
+      },
+    };
+  }
+  if (isNativeChatJsonDocument(parsed)) {
+    return { kind: "single", bundle: chatBundleFromNativeChatJson(parsed) };
+  }
   const obj = parsed as Record<string, unknown>;
   if (obj.type === "chat-persistence") {
     return { kind: "single", bundle: validateSingleBundle(obj as Partial<ChatBundle>, "chat bundle") };
@@ -174,7 +200,7 @@ export function parseChatBundleOrCollection(raw: string): ParsedChatExport {
     };
   }
   throw new Error(
-    `Invalid chat export: expected type "chat-persistence" or "chat-bundles-collection", got "${String(obj.type)}".`
+    `Invalid chat export: expected native cursor-chat.json, type "chat-persistence", or "chat-bundles-collection", got "${String(obj.type)}".`
   );
 }
 
@@ -185,26 +211,22 @@ export function selectGistExportFile(
   if (bundleCount <= 1) {
     const bundle = singleOrCollection as ChatBundle;
     return {
-      fileName: CHAT_BUNDLE_GIST_FILE_NAME,
-      content: JSON.stringify(bundle, null, 2),
+      fileName: CURSOR_CHAT_GIST_FILE_NAME,
+      content: JSON.stringify(nativeChatJsonFromBundle(bundle), null, 2),
     };
   }
   const collection = singleOrCollection as ChatBundlesCollection;
   return {
-    fileName: CHAT_BUNDLES_GIST_FILE_NAME,
-    content: JSON.stringify(collection, null, 2),
+    fileName: CURSOR_CHAT_GIST_FILE_NAME,
+    content: JSON.stringify(nativeCollectionFromBundles(collection.bundles), null, 2),
   };
 }
 
 export function defaultLocalExportFilename(
-  conversationIds: string[],
-  timestamp: string
+  _conversationIds: string[],
+  _timestamp: string
 ): string {
-  if (conversationIds.length === 1) {
-    const safe = conversationIds[0]!.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
-    return `${safe}-chat-bundle.json`;
-  }
-  return `chat-bundles-${timestamp}.json`;
+  return CURSOR_CHAT_GIST_FILE_NAME;
 }
 
 export function defaultGlobalStorageFilename(timestamp: string, multi: boolean): string | undefined {
@@ -228,11 +250,16 @@ export async function pickBundleFromCollection(
         workspaceIndex,
         globalIndex,
       });
+      const tilde = sourceFolderTildeOf(b);
+      const identity = chatIdentityKey(b.sourceFolderTilde, b.conversationId);
+      const detailParts = [tilde, b.subtitle].filter((p) => p && p.length > 0);
       return {
         label,
-        description: b.conversationId,
-        detail: b.subtitle,
+        description: tilde ? `${b.conversationId} · ${tilde}` : b.conversationId,
+        detail: detailParts.join(" · ") || b.subtitle,
         picked: true,
+        identity,
+        bundle: b,
       };
     })
   );
@@ -243,12 +270,31 @@ export async function pickBundleFromCollection(
     ignoreFocusOut: true,
   });
   if (!picks?.length) return null;
-  const byId = new Map(collection.bundles.map((b) => [b.conversationId, b]));
+  const byIdentity = new Map(
+    collection.bundles.map((b) => [chatIdentityKey(b.sourceFolderTilde, b.conversationId), b])
+  );
+  const byDescription = new Map(
+    items.map((item) => [item.description, item.bundle] as const)
+  );
   const result: ChatBundle[] = [];
+  const seen = new Set<string>();
   for (const pick of picks) {
-    if (!pick.description) continue;
-    const bundle = byId.get(pick.description);
-    if (bundle) result.push(bundle);
+    const fromItem = (pick as { bundle?: ChatBundle }).bundle;
+    const fromDesc = pick.description ? byDescription.get(pick.description) : undefined;
+    const bundle = fromItem ?? fromDesc;
+    if (!bundle) {
+      continue;
+    }
+    const key = chatIdentityKey(bundle.sourceFolderTilde, bundle.conversationId);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    if (byIdentity.has(key)) {
+      result.push(byIdentity.get(key)!);
+    } else {
+      result.push(bundle);
+    }
   }
   return result.length > 0 ? result : null;
 }

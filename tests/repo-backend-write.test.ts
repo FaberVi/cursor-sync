@@ -116,6 +116,113 @@ describe("RepoBackend write", () => {
     });
   });
 
+  it("creates an initial commit when the repository has no commits (HTTP 409)", async () => {
+    const calls: Array<{ method: string; url: string }> = [];
+    const treeBodies: unknown[] = [];
+    mockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ method, url });
+
+      if (url.includes("/git/ref/heads/main") && method === "GET") {
+        return new Response(
+          JSON.stringify({ message: "Git Repository is empty." }),
+          { status: 409, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "blob1" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/trees") && method === "POST") {
+        treeBodies.push(init?.body ? JSON.parse(String(init.body)) : undefined);
+        return new Response(JSON.stringify({ sha: "tree1" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/commits") && method === "POST") {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        expect(body.parents).toEqual([]);
+        expect(body.message).toContain("initial");
+        return new Response(JSON.stringify({ sha: "commit1" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/refs") && method === "POST") {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        expect(body.ref).toBe("refs/heads/main");
+        expect(body.sha).toBe("commit1");
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit1", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected " + method + " " + url }), {
+        status: 500,
+      });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "empty",
+      branch: "main",
+      basePath: "cursor-sync",
+    });
+    const result = await backend.writeFiles({
+      "manifest.json": "{\"schemaVersion\":1}",
+      "cursor-user--settings.json": "{}",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.created).toBe(true);
+      expect(result.data.id).toBe("acme/empty");
+    }
+    const tree = treeBodies[0] as { tree: Array<{ path: string }> };
+    expect(tree.tree.map((entry) => entry.path).sort()).toEqual([
+      "cursor-sync/cursor-user/settings.json",
+      "cursor-sync/manifest.json",
+    ]);
+    expect(calls.some((c) => c.method === "POST" && c.url.includes("/git/refs"))).toBe(
+      true
+    );
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("does not treat a generic 409 as an empty repository", async () => {
+    mockFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const method = "GET";
+      if (url.includes("/git/ref/heads/main") && method === "GET") {
+        return new Response(JSON.stringify({ message: "Update is not a fast forward" }), {
+          status: 409,
+        });
+      }
+      return new Response("{}", { status: 500 });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+      branch: "main",
+    });
+    const result = await backend.writeFiles({ "manifest.json": "{}" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.statusCode).toBe(409);
+      expect(result.error.message).toMatch(/fast forward/i);
+    }
+  });
+
   it("creates an org repository when owner differs from login", async () => {
     mockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -355,5 +462,424 @@ describe("RepoBackend write", () => {
     });
     expect(result.ok).toBe(false);
     expect(treePosts).toBe(0);
+  });
+
+  it("writes gist-flat names as nested Git paths", async () => {
+    const treeBodies: unknown[] = [];
+    mockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (url.includes("/git/ref/heads/main") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit1", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/commit1") && method === "GET") {
+        return new Response(
+          JSON.stringify({ sha: "commit1", tree: { sha: "tree1" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "blob1" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/trees") && method === "POST") {
+        treeBodies.push(body);
+        return new Response(JSON.stringify({ sha: "tree2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/commits") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "commit2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/refs/heads/main") && method === "PATCH") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit2", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected" }), { status: 500 });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+      branch: "main",
+      basePath: "cursor-sync",
+    });
+    const result = await backend.writeFiles({
+      "manifest.json": "{}",
+      "cursor-user--settings.json": '{"a":1}',
+      "cursor-chat.json": "{}",
+    });
+    expect(result.ok).toBe(true);
+    const tree = treeBodies[0] as { tree: Array<{ path: string }> };
+    const paths = tree.tree.map((entry) => entry.path).sort();
+    expect(paths).toEqual([
+      "cursor-sync/cursor-chat.json",
+      "cursor-sync/cursor-user/settings.json",
+      "cursor-sync/manifest.json",
+    ]);
+    expect(paths.some((p) => p.includes("--"))).toBe(false);
+  });
+
+  it("renames leftover dashed files without re-uploading blobs", async () => {
+    let blobPosts = 0;
+    const treeBodies: unknown[] = [];
+    const commitBodies: unknown[] = [];
+    mockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (url.includes("/git/ref/heads/main") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "refsha", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/refsha") && method === "GET") {
+        return new Response(
+          JSON.stringify({ sha: "refsha", tree: { sha: "treesha" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/trees/treesha") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            sha: "treesha",
+            truncated: false,
+            tree: [
+              {
+                path: "cursor-sync/cursor-user--settings.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-settings",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-settings") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            sha: "blob-settings",
+            encoding: "utf-8",
+            content: "{}",
+            size: 2,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs") && method === "POST") {
+        blobPosts += 1;
+        return new Response(JSON.stringify({ sha: "blob-new" }), { status: 201 });
+      }
+      if (url.includes("/git/trees") && method === "POST") {
+        treeBodies.push(body);
+        return new Response(JSON.stringify({ sha: "tree2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/commits") && method === "POST") {
+        commitBodies.push(body);
+        return new Response(JSON.stringify({ sha: "commit2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/refs/heads/main") && method === "PATCH") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit2", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected " + method + " " + url }), {
+        status: 500,
+      });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+      branch: "main",
+      basePath: "cursor-sync",
+    });
+    const snap = await backend.getSnapshot({ onlyFiles: ["cursor-user--settings.json"] });
+    expect(snap.ok).toBe(true);
+    expect(backend.hasLeftoverDashed()).toBe(true);
+
+    const result = await backend.writeFiles({});
+    expect(result.ok).toBe(true);
+    expect(blobPosts).toBe(0);
+    expect(backend.hasLeftoverDashed()).toBe(false);
+    const tree = treeBodies[0] as {
+      tree: Array<{ path: string; sha: string | null }>;
+    };
+    expect(tree.tree).toEqual(
+      expect.arrayContaining([
+        {
+          path: "cursor-sync/cursor-user/settings.json",
+          mode: "100644",
+          type: "blob",
+          sha: "blob-settings",
+        },
+        {
+          path: "cursor-sync/cursor-user--settings.json",
+          mode: "100644",
+          type: "blob",
+          sha: null,
+        },
+      ])
+    );
+    expect(tree.tree).toHaveLength(2);
+    expect(commitBodies[0]).toMatchObject({
+      message: "Cursor Sync: nest repo backup paths",
+    });
+  });
+
+  it("deletes leftover dashed files without overwriting nested content", async () => {
+    const treeBodies: unknown[] = [];
+    mockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (url.includes("/git/ref/heads/main") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "refsha", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/refsha") && method === "GET") {
+        return new Response(
+          JSON.stringify({ sha: "refsha", tree: { sha: "treesha" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/trees/treesha") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            sha: "treesha",
+            truncated: false,
+            tree: [
+              {
+                path: "cursor-sync/cursor-user--settings.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-dashed",
+              },
+              {
+                path: "cursor-sync/cursor-user/settings.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-nested",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            sha: "blob-nested",
+            encoding: "utf-8",
+            content: "nested",
+            size: 6,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "blob-new" }), { status: 201 });
+      }
+      if (url.includes("/git/trees") && method === "POST") {
+        treeBodies.push(body);
+        return new Response(JSON.stringify({ sha: "tree2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/commits") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "commit2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/refs/heads/main") && method === "PATCH") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit2", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected" }), { status: 500 });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+      branch: "main",
+      basePath: "cursor-sync",
+    });
+    await backend.getSnapshot();
+    expect(backend.hasLeftoverDashed()).toBe(true);
+    const result = await backend.writeFiles({});
+    expect(result.ok).toBe(true);
+    const tree = treeBodies[0] as {
+      tree: Array<{ path: string; sha: string | null }>;
+    };
+    expect(tree.tree).toEqual([
+      {
+        path: "cursor-sync/cursor-user--settings.json",
+        mode: "100644",
+        type: "blob",
+        sha: null,
+      },
+    ]);
+  });
+
+  it("deletes dashed-only leftovers without a nested sha:null path", async () => {
+    const treeBodies: unknown[] = [];
+    mockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (url.includes("/git/ref/heads/main") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "refsha", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/refsha") && method === "GET") {
+        return new Response(
+          JSON.stringify({ sha: "refsha", tree: { sha: "treesha" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/trees/treesha") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            sha: "treesha",
+            truncated: false,
+            tree: [
+              {
+                path: "cursor-sync/cursor-user--settings.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-settings",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-settings") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            sha: "blob-settings",
+            encoding: "utf-8",
+            content: "{}",
+            size: 2,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "blob-new" }), { status: 201 });
+      }
+      if (url.includes("/git/trees") && method === "POST") {
+        treeBodies.push(body);
+        return new Response(JSON.stringify({ sha: "tree2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/commits") && method === "POST") {
+        return new Response(JSON.stringify({ sha: "commit2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/git/refs/heads/main") && method === "PATCH") {
+        return new Response(
+          JSON.stringify({
+            object: { sha: "commit2", type: "commit" },
+            ref: "refs/heads/main",
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected" }), { status: 500 });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+      branch: "main",
+      basePath: "cursor-sync",
+    });
+    await backend.getSnapshot();
+    const result = await backend.writeFiles(
+      {},
+      { deleteNames: ["cursor-user--settings.json"] }
+    );
+    expect(result.ok).toBe(true);
+    const tree = treeBodies[0] as {
+      tree: Array<{ path: string; sha: string | null }>;
+    };
+    expect(tree.tree).toEqual([
+      {
+        path: "cursor-sync/cursor-user--settings.json",
+        mode: "100644",
+        type: "blob",
+        sha: null,
+      },
+    ]);
+    expect(tree.tree.some((entry) => entry.path.includes("cursor-user/settings"))).toBe(
+      false
+    );
   });
 });

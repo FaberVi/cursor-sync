@@ -7,10 +7,11 @@ import type {
   ConflictResolution,
 } from "./types.js";
 import { computeChecksum } from "./packaging.js";
-import { enumerateSyncFiles } from "./paths.js";
+import { enumerateSyncFiles, isMcpSyncEnabled, isMcpSyncKey } from "./paths.js";
+import { ensureExtensionsJsonOnDisk } from "./extensions.js";
 import { loadSyncState } from "./diagnostics.js";
 import { getLogger } from "./diagnostics.js";
-import { ensureExtensionsJsonOnDisk } from "./extensions.js";
+import { notifySyncQuiet } from "./sync-notify.js";
 
 const PENDING_RESOLUTIONS_KEY = "cursorSync.pendingConflictResolutions";
 
@@ -33,6 +34,29 @@ export function getUnresolvedConflicts(
     const resolution = getResolutionForKey(c.relativeSyncKey);
     return !resolution || resolution === "skip";
   });
+}
+
+export type ConflictGateResult = {
+  unresolved: ConflictEntry[];
+  /** true only if this pass awaited cursorSync.resolveConflicts */
+  prompted: boolean;
+};
+
+export async function gateUnresolvedConflicts(
+  trigger: "manual" | "scheduled" | "syncNow",
+  conflicts: ConflictEntry[]
+): Promise<ConflictGateResult> {
+  if (getUnresolvedConflicts(conflicts).length === 0) {
+    return { unresolved: [], prompted: false };
+  }
+  if (trigger === "scheduled") {
+    return { unresolved: getUnresolvedConflicts(conflicts), prompted: false };
+  }
+  await vscode.commands.executeCommand("cursorSync.resolveConflicts");
+  return {
+    unresolved: getUnresolvedConflicts(conflicts),
+    prompted: true,
+  };
 }
 
 export async function loadPendingResolutions(
@@ -112,6 +136,9 @@ export function findConflicts(
     const remoteChanged = currentRemote !== baseRemote;
 
     if (localChanged && remoteChanged && currentLocal !== currentRemote) {
+      if (isMcpSyncKey(key) && !isMcpSyncEnabled()) {
+        continue;
+      }
       conflicts.push({
         relativeSyncKey: key,
         localChecksum: currentLocal ?? "",
@@ -159,6 +186,59 @@ export async function detectConflicts(
   return conflicts;
 }
 
+export async function applyConflictResolution(
+  relativeSyncKey: string,
+  resolution: ConflictResolution
+): Promise<void> {
+  const rest = pendingResolutions.filter((r) => r.relativeSyncKey !== relativeSyncKey);
+  pendingResolutions = [...rest, { relativeSyncKey, resolution }];
+  await persistPendingResolutions();
+  await syncConflictContext();
+  const { refreshSidebar } = await import("./sidebar/index.js");
+  refreshSidebar();
+  await maybeFinishResolvedConflicts();
+}
+
+export async function applyConflictResolutionToAll(
+  resolution: ConflictResolution
+): Promise<void> {
+  pendingResolutions = pendingConflicts.map((c) => ({
+    relativeSyncKey: c.relativeSyncKey,
+    resolution,
+  }));
+  await persistPendingResolutions();
+  await syncConflictContext();
+  const { refreshSidebar } = await import("./sidebar/index.js");
+  refreshSidebar();
+  await maybeFinishResolvedConflicts();
+}
+
+async function syncConflictContext(): Promise<void> {
+  const unresolved = getUnresolvedConflicts(pendingConflicts);
+  if (unresolved.length === 0) {
+    pendingConflicts = [];
+    await vscode.commands.executeCommand(
+      "setContext",
+      "cursorSync.hasConflicts",
+      false
+    );
+    return;
+  }
+  pendingConflicts = unresolved;
+  await vscode.commands.executeCommand(
+    "setContext",
+    "cursorSync.hasConflicts",
+    true
+  );
+}
+
+async function maybeFinishResolvedConflicts(): Promise<void> {
+  if (getUnresolvedConflicts(pendingConflicts).length > 0) {
+    return;
+  }
+  notifySyncQuiet("Conflicts resolved. Run Sync Now to finish.");
+}
+
 export async function resolveConflictsCommand(
   context: vscode.ExtensionContext
 ): Promise<void> {
@@ -166,66 +246,41 @@ export async function resolveConflictsCommand(
   const logger = getLogger();
 
   if (pendingConflicts.length === 0) {
-    vscode.window.showInformationMessage("No conflicts to resolve.");
+    notifySyncQuiet("No conflicts to resolve.");
     return;
   }
 
-  const resolutions: ResolvedConflict[] = [];
-
-  for (const conflict of pendingConflicts) {
-    const choice = await vscode.window.showQuickPick(
-      [
-        { label: "Keep Local", value: "keepLocal" as ConflictResolution },
-        { label: "Keep Remote", value: "keepRemote" as ConflictResolution },
-        { label: "Skip (decide later)", value: "skip" as ConflictResolution },
-      ],
-      {
-        title: `Conflict: ${conflict.relativeSyncKey}`,
-        placeHolder: "Choose which version to keep",
-      }
+  const { isSidebarVisible, revealSidebar, refreshSidebar } = await import(
+    "./sidebar/index.js"
+  );
+  revealSidebar();
+  if (isSidebarVisible()) {
+    refreshSidebar();
+    notifySyncQuiet(
+      `${pendingConflicts.length} conflict(s) — use the Sync tab to Keep Local, Keep Remote, or Skip.`
     );
+    return;
+  }
 
-    if (!choice) {
-      return;
+  const allChoice = await vscode.window.showQuickPick(
+    [
+      { label: "Keep Local (all files)", value: "keepLocal" as ConflictResolution },
+      { label: "Keep Remote (all files)", value: "keepRemote" as ConflictResolution },
+      { label: "Skip all (decide later)", value: "skip" as ConflictResolution },
+    ],
+    {
+      title: `Resolve ${pendingConflicts.length} conflict(s)`,
+      placeHolder: "Apply one decision to every conflicted file",
     }
-
-    resolutions.push({
-      relativeSyncKey: conflict.relativeSyncKey,
-      resolution: choice.value,
-    });
-  }
-
-  pendingResolutions = resolutions;
-  await persistPendingResolutions();
-
-  const hasSkipped = resolutions.some((r) => r.resolution === "skip");
-  if (!hasSkipped) {
-    pendingConflicts = [];
-    await vscode.commands.executeCommand(
-      "setContext",
-      "cursorSync.hasConflicts",
-      false
-    );
-  }
-
-  logger.appendLine(
-    `[${new Date().toISOString()}] Conflicts resolved: ${resolutions.length} decisions`
   );
-
-  if (hasSkipped) {
-    vscode.window.showInformationMessage(
-      `Resolved ${resolutions.length} conflict(s). Skipped items still need a decision before sync.`
-    );
+  if (!allChoice) {
     return;
   }
 
-  vscode.window.showInformationMessage(
-    `Resolved ${resolutions.length} conflict(s). Syncing now...`
+  await applyConflictResolutionToAll(allChoice.value);
+  logger.appendLine(
+    `[${new Date().toISOString()}] Conflicts resolved: ${pendingResolutions.length} decisions (${allChoice.value})`
   );
-  // Defer so callers (push/pull) can release their sync locks first.
-  setTimeout(() => {
-    void vscode.commands.executeCommand("cursorSync.syncNow");
-  }, 0);
 }
 
 export function getResolutionForKey(

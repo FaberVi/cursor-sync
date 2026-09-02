@@ -1,4 +1,5 @@
 import type { ApiResult, ApiError, FailureCategory } from "./types.js";
+import { cancelledApiError, getSyncAbortSignal } from "./sync-abort.js";
 
 const MAX_ATTEMPTS = 3;
 const BACKOFF_BASE_MS = 1000;
@@ -15,12 +16,20 @@ export function clampRetryAfterSeconds(retryAfter: number | undefined): number |
   return Math.min(Math.floor(retryAfter), MAX_RETRY_AFTER_SECONDS);
 }
 
+function isCancelledError(error?: ApiError): boolean {
+  return error?.category === "CANCELLED" || getSyncAbortSignal()?.aborted === true;
+}
+
 export async function withRetry<T>(
   fn: () => Promise<ApiResult<T>>
 ): Promise<ApiResult<T>> {
   let lastError: ApiError | undefined;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (getSyncAbortSignal()?.aborted) {
+      return { ok: false, error: cancelledApiError };
+    }
+
     const result = await fn();
 
     if (result.ok) {
@@ -28,6 +37,10 @@ export async function withRetry<T>(
     }
 
     lastError = result.error;
+
+    if (isCancelledError(result.error)) {
+      return result;
+    }
 
     if (result.error.statusCode && NON_RETRYABLE_CODES.has(result.error.statusCode)) {
       return result;
@@ -38,7 +51,10 @@ export async function withRetry<T>(
       const delay = capped
         ? capped * 1000
         : BACKOFF_BASE_MS * Math.pow(BACKOFF_MULTIPLIER, attempt);
-      await sleep(delay);
+      const slept = await abortableSleep(delay);
+      if (!slept) {
+        return { ok: false, error: cancelledApiError };
+      }
     }
   }
 
@@ -53,4 +69,27 @@ export async function withRetry<T>(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Returns false if aborted before the delay elapsed. */
+async function abortableSleep(ms: number): Promise<boolean> {
+  const signal = getSyncAbortSignal();
+  if (!signal) {
+    await sleep(ms);
+    return true;
+  }
+  if (signal.aborted) {
+    return false;
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

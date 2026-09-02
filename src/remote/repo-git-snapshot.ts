@@ -1,5 +1,11 @@
 import { githubRequest } from "./github-api.js";
-import { stripRemotePath } from "./path-map.js";
+import {
+  gitRelativeToRemoteName,
+  isLegacyDashedRelative,
+  stripRemotePath,
+  type LeftoverDashedFile,
+} from "./path-map.js";
+import { isEmptyGitHubRepositoryError } from "./repo-git-write.js";
 import type { ApiResult } from "../types.js";
 import type { RemoteSnapshot, RemoteSnapshotOptions } from "./types.js";
 
@@ -31,7 +37,11 @@ interface GitBlobResponse {
 export type RepoGitSnapshotCache = {
   refShaCache: string | undefined;
   treeCache:
-    | { refSha: string; blobsByName: Map<string, string> }
+    | {
+        refSha: string;
+        blobsByName: Map<string, string>;
+        leftoverDashed: LeftoverDashedFile[];
+      }
     | undefined;
 };
 
@@ -51,7 +61,10 @@ export async function loadRepoGitSnapshot(params: {
   if (!refSha) {
     const refResult = await params.getBranchRef();
     if (!refResult.ok) {
-      if (refResult.error.statusCode === 404) {
+      if (
+        refResult.error.statusCode === 404 ||
+        isEmptyGitHubRepositoryError(refResult.error)
+      ) {
         return {
           ok: true,
           data: {
@@ -67,7 +80,8 @@ export async function loadRepoGitSnapshot(params: {
     refSha = refResult.data.object.sha;
     cache.refShaCache = refSha;
   }
-  let blobsByName = cache.treeCache?.refSha === refSha ? cache.treeCache.blobsByName : undefined;
+  let blobsByName =
+    cache.treeCache?.refSha === refSha ? cache.treeCache.blobsByName : undefined;
 
   if (!blobsByName) {
     const commitResult = await githubRequest<GitCommitResponse>(
@@ -88,18 +102,61 @@ export async function loadRepoGitSnapshot(params: {
       return treeResult;
     }
 
-    blobsByName = new Map<string, string>();
+    const nestedSha = new Map<string, string>();
+    const dashedSha = new Map<string, string>();
+    const rootSha = new Map<string, string>();
+    const dashedMeta = new Map<
+      string,
+      { dashedRelative: string; blobSha: string; remoteName: string }
+    >();
+
     for (const entry of treeResult.data.tree) {
       if (entry.type !== "blob") {
         continue;
       }
-      const flatName = stripRemotePath(basePath, entry.path);
-      if (!flatName || flatName.includes("/")) {
+      const relative = stripRemotePath(basePath, entry.path);
+      if (!relative) {
         continue;
       }
-      blobsByName.set(flatName, entry.sha);
+      const remoteName = gitRelativeToRemoteName(relative);
+      if (relative.includes("/")) {
+        nestedSha.set(remoteName, entry.sha);
+      } else if (isLegacyDashedRelative(relative)) {
+        dashedSha.set(remoteName, entry.sha);
+        dashedMeta.set(remoteName, {
+          dashedRelative: relative,
+          blobSha: entry.sha,
+          remoteName,
+        });
+      } else {
+        rootSha.set(remoteName, entry.sha);
+      }
     }
-    cache.treeCache = { refSha, blobsByName };
+
+    blobsByName = new Map<string, string>();
+    for (const [name, sha] of nestedSha) {
+      blobsByName.set(name, sha);
+    }
+    for (const [name, sha] of rootSha) {
+      if (!blobsByName.has(name)) {
+        blobsByName.set(name, sha);
+      }
+    }
+    for (const [name, sha] of dashedSha) {
+      if (!blobsByName.has(name)) {
+        blobsByName.set(name, sha);
+      }
+    }
+
+    const leftoverDashed: LeftoverDashedFile[] = [];
+    for (const meta of dashedMeta.values()) {
+      leftoverDashed.push({
+        ...meta,
+        nestedPresent: nestedSha.has(meta.remoteName),
+      });
+    }
+
+    cache.treeCache = { refSha, blobsByName, leftoverDashed };
   }
 
   const allFileNames = [...blobsByName.keys()];

@@ -29,6 +29,30 @@ describe("RepoBackend snapshot", () => {
     }
   });
 
+  it("getSnapshot returns empty files when GitHub reports an empty repository (HTTP 409)", async () => {
+    mockFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/git/ref/heads/main")) {
+        return new Response(JSON.stringify({ message: "Git Repository is empty." }), {
+          status: 409,
+        });
+      }
+      return new Response("{}", { status: 500 });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "empty",
+    });
+    const snap = await backend.getSnapshot();
+    expect(snap.ok).toBe(true);
+    if (snap.ok) {
+      expect(snap.data.files).toEqual({});
+      expect(snap.data.allFileNames).toEqual([]);
+    }
+  });
+
   it("remoteSnapshotFileNames falls back to Object.keys(files)", () => {
     expect(
       remoteSnapshotFileNames({
@@ -136,6 +160,7 @@ describe("RepoBackend snapshot", () => {
         "cursor-user--settings.json": "{}",
       });
     }
+    expect(backend.hasLeftoverDashed()).toBe(true);
     expect(counts.ref).toBe(1);
     expect(counts.commit).toBe(1);
     expect(counts.tree).toBe(1);
@@ -305,5 +330,204 @@ describe("RepoBackend snapshot", () => {
     });
     expect(snap.ok).toBe(false);
     expect(progress).toEqual([[1, 2]]);
+  });
+
+  it("maps nested Git paths to gist-flat internal names", async () => {
+    mockFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/git/ref/heads/main")) {
+        return new Response(
+          JSON.stringify({
+            ref: "refs/heads/main",
+            object: { sha: "refsha", type: "commit" },
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/refsha")) {
+        return new Response(
+          JSON.stringify({ sha: "refsha", tree: { sha: "treesha" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/trees/treesha")) {
+        return new Response(
+          JSON.stringify({
+            sha: "treesha",
+            truncated: false,
+            tree: [
+              {
+                path: "cursor-sync/manifest.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-manifest",
+              },
+              {
+                path: "cursor-sync/cursor-user/settings.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-settings",
+              },
+              {
+                path: "cursor-sync/cursor-chat.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-chat",
+              },
+              {
+                path: "README.md",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-readme",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-manifest")) {
+        return new Response(
+          JSON.stringify({
+            sha: "blob-manifest",
+            encoding: "utf-8",
+            content: "{}",
+            size: 2,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-settings")) {
+        return new Response(
+          JSON.stringify({
+            sha: "blob-settings",
+            encoding: "utf-8",
+            content: '{"k":1}',
+            size: 7,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-chat")) {
+        return new Response(
+          JSON.stringify({
+            sha: "blob-chat",
+            encoding: "utf-8",
+            content: '{"chats":[]}',
+            size: 12,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected " + url }), {
+        status: 500,
+      });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+    });
+    const snap = await backend.getSnapshot();
+    expect(snap.ok).toBe(true);
+    if (snap.ok) {
+      expect(snap.data.files).toEqual({
+        "manifest.json": "{}",
+        "cursor-user--settings.json": '{"k":1}',
+        "cursor-chat.json": '{"chats":[]}',
+      });
+      expect(snap.data.allFileNames?.sort()).toEqual([
+        "cursor-chat.json",
+        "cursor-user--settings.json",
+        "manifest.json",
+      ]);
+    }
+    expect(backend.hasLeftoverDashed()).toBe(false);
+  });
+
+  it("prefers nested content when both layouts exist and flags leftover dashed", async () => {
+    mockFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/git/ref/heads/main")) {
+        return new Response(
+          JSON.stringify({
+            ref: "refs/heads/main",
+            object: { sha: "refsha", type: "commit" },
+            url,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/commits/refsha")) {
+        return new Response(
+          JSON.stringify({ sha: "refsha", tree: { sha: "treesha" }, parents: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/trees/treesha")) {
+        return new Response(
+          JSON.stringify({
+            sha: "treesha",
+            truncated: false,
+            tree: [
+              {
+                path: "cursor-sync/cursor-user--settings.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-dashed",
+              },
+              {
+                path: "cursor-sync/cursor-user/settings.json",
+                mode: "100644",
+                type: "blob",
+                sha: "blob-nested",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-dashed")) {
+        return new Response(
+          JSON.stringify({
+            sha: "blob-dashed",
+            encoding: "utf-8",
+            content: "old",
+            size: 3,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/git/blobs/blob-nested")) {
+        return new Response(
+          JSON.stringify({
+            sha: "blob-nested",
+            encoding: "utf-8",
+            content: "new",
+            size: 3,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(JSON.stringify({ message: "unexpected " + url }), {
+        status: 500,
+      });
+    });
+
+    const backend = new RepoBackend({
+      pat: "token",
+      owner: "acme",
+      repo: "backup",
+    });
+    const snap = await backend.getSnapshot();
+    expect(snap.ok).toBe(true);
+    if (snap.ok) {
+      expect(snap.data.files).toEqual({
+        "cursor-user--settings.json": "new",
+      });
+      expect(snap.data.allFileNames).toEqual(["cursor-user--settings.json"]);
+    }
+    expect(backend.hasLeftoverDashed()).toBe(true);
   });
 });

@@ -12,7 +12,7 @@ import { syncKeyToAbsolutePath } from "../sync-local-deletes.js";
 
 export type SidebarMessage =
   | {
-      command: "syncNow" | "push" | "pull" | "export" | "import" | "configure";
+      command: "syncNow" | "push" | "pull" | "pullMirror" | "export" | "import" | "configure";
       destination?: {
         type?: string;
         repo?: string;
@@ -52,12 +52,16 @@ export type SidebarMessage =
   | { command: "history:details"; timestamp: string }
   | { command: "history:page"; page: number }
   | { command: "settings:get" }
-  | { command: "settings:set"; key: string; value: unknown };
+  | { command: "settings:set"; key: string; value: unknown }
+  | { command: "sync:cancel" }
+  | { command: "conflicts:set"; relativeSyncKey: string; resolution: string }
+  | { command: "conflicts:setAll"; resolution: string };
 
 const KNOWN_COMMANDS = new Set<string>([
   "syncNow",
   "push",
   "pull",
+  "pullMirror",
   "export",
   "import",
   "configure",
@@ -77,6 +81,9 @@ const KNOWN_COMMANDS = new Set<string>([
   "history:page",
   "settings:get",
   "settings:set",
+  "sync:cancel",
+  "conflicts:set",
+  "conflicts:setAll",
 ]);
 
 function assertSafeChatIds(msg: {
@@ -121,7 +128,8 @@ export async function dispatchSidebarMessage(
   switch (msg.command) {
     case "syncNow":
     case "push":
-    case "pull": {
+    case "pull":
+    case "pullMirror": {
       try {
         await vscode.commands.executeCommand(`cursorSync.${msg.command}`);
       } finally {
@@ -129,6 +137,9 @@ export async function dispatchSidebarMessage(
       }
       break;
     }
+    case "sync:cancel":
+      await vscode.commands.executeCommand("cursorSync.cancelSync");
+      break;
     case "export":
       await vscode.commands.executeCommand("cursorSync.export");
       break;
@@ -341,10 +352,38 @@ export async function dispatchSidebarMessage(
         break;
       }
       await webview.postMessage({ type: "settings:current", values: readSettingsValues() });
-      if (msg.key === "chats.syncEnabled" || msg.key.startsWith("destination.")) {
+      if (msg.key === "chats.syncEnabled" || msg.key === "mcp.syncEnabled" || msg.key.startsWith("destination.")) {
         const { refreshSidebar } = await import("./index.js");
         refreshSidebar();
       }
+      break;
+    }
+    case "conflicts:set": {
+      const key = typeof msg.relativeSyncKey === "string" ? msg.relativeSyncKey : "";
+      const resolution = msg.resolution;
+      if (
+        !key ||
+        (resolution !== "keepLocal" &&
+          resolution !== "keepRemote" &&
+          resolution !== "skip")
+      ) {
+        break;
+      }
+      const { applyConflictResolution } = await import("../conflicts.js");
+      await applyConflictResolution(key, resolution);
+      break;
+    }
+    case "conflicts:setAll": {
+      const resolution = msg.resolution;
+      if (
+        resolution !== "keepLocal" &&
+        resolution !== "keepRemote" &&
+        resolution !== "skip"
+      ) {
+        break;
+      }
+      const { applyConflictResolutionToAll } = await import("../conflicts.js");
+      await applyConflictResolutionToAll(resolution);
       break;
     }
     default:

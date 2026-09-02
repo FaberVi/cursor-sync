@@ -1,14 +1,19 @@
 import * as vscode from "vscode";
-import { enumerateSyncFiles, resolveSyncRoots } from "./paths.js";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { enumerateSyncFiles, isMcpSyncEnabled, MCP_PRESERVE_SYNC_KEYS, resolveSyncRoots } from "./paths.js";
 import { selectPushDelta, type PushDeltaResult } from "./push-delta.js";
 import type { SyncProgressReport } from "./sync-progress-events.js";
 import type { ManifestFileEntry, SyncState } from "./types.js";
 import type { RemoteSyncBackend } from "./remote/index.js";
 import type { Manifest, PackagedFile } from "./types.js";
 import { getLogger } from "./diagnostics.js";
+import { notifySyncQuiet } from "./sync-notify.js";
 import { withRetry } from "./retry.js";
 import { packageFiles } from "./packaging.js";
 import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
+import { createBackup } from "./rollback.js";
+import { setSyncFileJournal, throwIfAborted } from "./sync-abort.js";
 import {
   cacheLastRemoteExtensions,
   generateExtensionsJson,
@@ -55,6 +60,7 @@ export async function packagePushFiles(
   const logger = getLogger();
 
   progress.report({ message: "Packaging local files…" });
+  throwIfAborted();
   const extensionsKey = "cursor-user/extensions.json";
   if (!keepRemoteKeys.has(extensionsKey)) {
     const extensionsJson = generateExtensionsJson();
@@ -67,6 +73,19 @@ export async function packagePushFiles(
       // Cache is best-effort; push must still upload.
     }
     const cursorUserRoot = resolveSyncRoots().cursorUser;
+    const extensionsPath = path.join(cursorUserRoot, "extensions.json");
+    const { entries: extBackups } = await createBackup(context, [extensionsPath]);
+    let createdPaths: string[] = [];
+    try {
+      await fs.access(extensionsPath);
+    } catch {
+      createdPaths = [extensionsPath];
+    }
+    setSyncFileJournal({
+      backupEntries: extBackups,
+      createdPaths,
+      previousSyncState: syncState,
+    });
     await writeExtensionsFile(cursorUserRoot, extensionsJson);
   }
 
@@ -183,6 +202,22 @@ export async function packagePushFiles(
                 }
               });
           }
+          const capSkips = chatPayload.warnings.filter((w) =>
+            w.includes("collection size limit")
+          );
+          if (capSkips.length > 0) {
+            const preview = capSkips
+              .slice(0, 3)
+              .map((w) => w.replace(/^Skipped chat /, "").replace(/: collection size limit.*$/, ""))
+              .join("; ");
+            const more = capSkips.length > 3 ? ` (+${capSkips.length - 3} more)` : "";
+            logger.appendLine(
+              `[${new Date().toISOString()}] [chat-sync] size cap skips: ${capSkips.join(" | ")}`
+            );
+            notifySyncQuiet(
+              `Chat sync skipped ${capSkips.length} chat(s) over the size cap: ${preview}${more}. See Output.`
+            );
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -196,6 +231,13 @@ export async function packagePushFiles(
     }
   }
 
+  const preserveSyncKeys = new Set(keepRemoteKeys);
+  if (!isMcpSyncEnabled()) {
+    for (const key of MCP_PRESERVE_SYNC_KEYS) {
+      preserveSyncKeys.add(key);
+    }
+  }
+
   const delta = selectPushDelta({
     packaged,
     remoteChecksums,
@@ -205,7 +247,7 @@ export async function packagePushFiles(
     pushNativeChatFile,
     chatSyncEnabled: isChatSyncEnabled(),
     legacyChatBundlesFileName: CHAT_BUNDLES_GIST_FILE_NAME,
-    preserveSyncKeys: keepRemoteKeys,
+    preserveSyncKeys,
   });
 
   return { packaged, manifest, delta, chatForDelta, chatBundleCount };

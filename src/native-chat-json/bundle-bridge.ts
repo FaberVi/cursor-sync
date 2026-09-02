@@ -45,6 +45,10 @@ export function nativeChatJsonFromBundle(bundle: ChatBundle): NativeChatJsonDocu
     previewText: bundle.previewText,
     createdAt: bundle.createdAt,
   };
+  const tilde = bundle.sourceFolderTilde?.trim();
+  if (tilde) {
+    doc.sourceFolderTilde = tilde;
+  }
 
   if (bundle.storeSnapshot) {
     doc.storeDb = {
@@ -150,6 +154,9 @@ export function chatBundleFromNativeChatJson(doc: NativeChatJsonDocument): ChatB
     title: doc.title ?? doc.conversationId,
     subtitle: doc.subtitle ?? "",
     previewText: doc.previewText ?? "",
+    ...(doc.sourceFolderTilde?.trim()
+      ? { sourceFolderTilde: doc.sourceFolderTilde.trim() }
+      : {}),
     sidebarSnapshot: doc.sidebar ?? null,
     storeSnapshot: doc.storeDb
       ? {

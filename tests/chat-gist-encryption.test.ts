@@ -1,5 +1,6 @@
 import {
   CHAT_BUNDLE_GIST_FILE_NAME,
+  CURSOR_CHAT_GIST_FILE_NAME,
   buildChatBundleFixture,
   configurationValues,
   createGistMock,
@@ -71,7 +72,7 @@ describe("chat gist encryption", () => {
     expect(requireChatEncryptionPasswordMock).toHaveBeenCalledWith(extensionContext, "export");
     expect(encryptChatGistPayloadMock).toHaveBeenCalledTimes(1);
     const uploaded = createGistMock.mock.calls[0]![0] as Record<string, { content: string }>;
-    expect(uploaded[CHAT_BUNDLE_GIST_FILE_NAME]!.content).toContain("cursorSyncEncrypted");
+    expect(uploaded[CURSOR_CHAT_GIST_FILE_NAME]!.content).toContain("cursorSyncEncrypted");
     expect(
       showInformationMessageMock.mock.calls.some((c) =>
         String(c[0]).includes("encrypted") && !String(c[0]).includes("Anyone with the link")
@@ -105,8 +106,8 @@ describe("chat gist encryption", () => {
     expect(requireChatEncryptionPasswordMock).not.toHaveBeenCalled();
     expect(encryptChatGistPayloadMock).not.toHaveBeenCalled();
     const uploaded = createGistMock.mock.calls[0]![0] as Record<string, { content: string }>;
-    const bundle = JSON.parse(uploaded[CHAT_BUNDLE_GIST_FILE_NAME]!.content);
-    expect(bundle.type).toBe("chat-persistence");
+    const doc = JSON.parse(uploaded[CURSOR_CHAT_GIST_FILE_NAME]!.content) as { version: number };
+    expect(doc.version).toBe(1);
   });
 
   it("downloads full gist file when API marks content truncated", async () => {

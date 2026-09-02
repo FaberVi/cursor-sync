@@ -13,6 +13,7 @@ import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
 import {
   CHAT_BUNDLE_GIST_FILE_NAME,
   CHAT_BUNDLES_GIST_FILE_NAME,
+  CURSOR_CHAT_GIST_FILE_NAME,
   parseChatBundleOrCollection,
   resolveBundlesFromParsedExport,
 } from "./chat-bundle-format.js";
@@ -27,7 +28,7 @@ import {
   clearChatEncryptionPassword,
 } from "./chat-encryption-auth.js";
 
-export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
+export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME, CURSOR_CHAT_GIST_FILE_NAME } from "./chat-bundle-format.js";
 
 export async function executeImportChatFromGist(
   context: vscode.ExtensionContext
@@ -141,7 +142,7 @@ async function resolveChatBundlesFromGistContent(
   const plaintext = await resolveGistChatFileContent(context, raw, fileLabel);
   const parsed = parseChatBundleOrCollection(plaintext);
   if (requireCollection && parsed.kind !== "collection") {
-    throw new Error("Invalid chat-bundles.json: expected chat-bundles-collection.");
+    throw new Error(`Invalid ${fileLabel}: expected a chat collection.`);
   }
   const pickerShown =
     parsed.kind === "collection" && parsed.collection.bundles.length > 1;
@@ -173,19 +174,27 @@ async function fetchAndResolveGistBundles(
     throw new Error(`Could not fetch Gist "${gistId}". Check the ID and your GitHub token.`);
   }
 
-  progress.report({ message: "Reading chat bundle..." });
+  progress.report({ message: "Reading chat export..." });
+  const nativeFile = gist.files?.[CURSOR_CHAT_GIST_FILE_NAME] as GistFile | undefined;
   const bundleFile = gist.files?.[CHAT_BUNDLE_GIST_FILE_NAME] as GistFile | undefined;
   const collectionFile = gist.files?.[CHAT_BUNDLES_GIST_FILE_NAME] as GistFile | undefined;
 
   let resolved: { bundles: ChatBundle[]; pickerShown: boolean };
 
-  if (bundleFile && collectionFile) {
+  if (nativeFile) {
+    const nativeRaw = await fetchGistFileContent(nativeFile, token);
+    resolved = await resolveChatBundlesFromGistContent(
+      context,
+      nativeRaw,
+      CURSOR_CHAT_GIST_FILE_NAME,
+      false,
+      progress
+    );
+  } else if (bundleFile && collectionFile) {
     throw new Error(
       "Gist contains both chat-bundle.json and chat-bundles.json. Remove one file so import knows which export to use."
     );
-  }
-
-  if (bundleFile) {
+  } else if (bundleFile) {
     const bundleRaw = await fetchGistFileContent(bundleFile, token);
     resolved = await resolveChatBundlesFromGistContent(
       context,
@@ -206,16 +215,16 @@ async function fetchAndResolveGistBundles(
   } else {
     if (gist.files?.[TRANSCRIPT_MANIFEST_FILE_NAME]) {
       throw new Error(
-        "Gist does not contain a chat bundle (chat-bundle.json). This Gist is an agent transcript export. Use Cursor Sync: Import Agent Transcripts from Private Gist."
+        "Gist does not contain a chat export (cursor-chat.json). This Gist is an agent transcript export. Use Cursor Sync: Import Agent Transcripts from Private Gist."
       );
     }
     if (gist.files?.["manifest.json"]) {
       throw new Error(
-        "Gist does not contain a chat bundle (chat-bundle.json). This Gist is a settings backup. Use Cursor Sync: Import from Private Gist."
+        "Gist does not contain a chat export (cursor-chat.json). This Gist is a settings backup. Use Cursor Sync: Import from Private Gist."
       );
     }
     throw new Error(
-      "Gist does not contain chat-bundle.json. Export a chat with Cursor Sync: Export Chat to Private Gist first."
+      "Gist does not contain cursor-chat.json. Export a chat with Cursor Sync: Export Chat to Private Gist first."
     );
   }
 

@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+
+vi.mock("vscode", () => import("./__mocks__/vscode.js"));
+
 import { clampRetryAfterSeconds, MAX_RETRY_AFTER_SECONDS, withRetry } from "../src/retry.js";
 
 describe("retry", () => {
@@ -33,5 +36,27 @@ describe("retry", () => {
     await expect(promise).resolves.toEqual({ ok: true, data: "ok" });
     expect(calls).toBe(2);
     vi.useRealTimers();
+  });
+
+  it("returns CANCELLED without retrying after abort", async () => {
+    const { beginSyncAbort, endSyncAbort, requestSyncCancel } = await import(
+      "../src/sync-abort.js"
+    );
+    beginSyncAbort();
+    requestSyncCancel();
+    let calls = 0;
+    const result = await withRetry(async () => {
+      calls += 1;
+      return {
+        ok: false as const,
+        error: { category: "NETWORK_ERROR" as const, message: "net" },
+      };
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.category).toBe("CANCELLED");
+    }
+    expect(calls).toBe(0);
+    endSyncAbort();
   });
 });

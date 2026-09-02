@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { saveSyncState, getLogger } from "./diagnostics.js";
+import { getLogger, saveSyncState } from "./diagnostics.js";
+import { notifySyncQuiet } from "./sync-notify.js";
 import { resolveSyncRoots } from "./paths.js";
 import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
 import { computeChecksum } from "./packaging.js";
@@ -130,7 +131,7 @@ export async function finishPullChatImport(
   const deleteSuffix =
     deletedKeys.length > 0 ? `, ${deletedKeys.length} deleted` : "";
   progress.report({ message: "Done" });
-  vscode.window.showInformationMessage(
+  notifySyncQuiet(
     `Pull complete: ${filesToWrite.length} file(s) updated${deleteSuffix}${chatSuffix}.`
   );
   logger.appendLine(

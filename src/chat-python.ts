@@ -1,6 +1,7 @@
 import { spawn, execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
+import { registerLivePythonProcess } from "./sync-abort.js";
 import {
   resolvePythonInterpreterForSqlite,
   type PythonSqliteInterpreter,
@@ -61,6 +62,7 @@ export async function runPythonProcess(
       cwd: options?.cwd,
       env: options?.env ?? process.env,
     });
+    registerLivePythonProcess(proc);
     let stdoutAcc = "";
     let stderrAcc = "";
     proc.stdout?.on("data", (chunk: Buffer | string) => {
@@ -69,8 +71,12 @@ export async function runPythonProcess(
     proc.stderr?.on("data", (chunk: Buffer | string) => {
       stderrAcc += String(chunk);
     });
-    proc.on("error", reject);
+    proc.on("error", (err) => {
+      registerLivePythonProcess(undefined);
+      reject(err);
+    });
     proc.on("close", (code) => {
+      registerLivePythonProcess(undefined);
       resolve({ exitCode: code ?? 1, stdout: stdoutAcc, stderr: stderrAcc });
     });
   });

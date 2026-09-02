@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
 import { configureGithub, getToken } from "./auth.js";
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import { executePush } from "./push.js";
 import { executePull } from "./pull.js";
+import { executeCancelSyncCommand } from "./sync-abort.js";
 import { executeExport } from "./export.js";
 import { executeImport } from "./import.js";
 import { executeExportTranscripts, executeImportTranscripts } from "./transcripts.js";
@@ -45,7 +47,6 @@ import {
   registerActivationWatcher,
 } from "./chat-import-activate-watcher.js";
 import { flushPendingSidebarWriteback } from "./chat-import-sidebar-writeback.js";
-import { executeInstallSkillTransportChat } from "./install-skill-transport-chat.js";
 import { executeSyncNow } from "./sync-now.js";
 
 export { executeSyncNow } from "./sync-now.js";
@@ -60,21 +61,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.refreshImportedTranscripts", () => {
       vscode.window.showInformationMessage(
-        "Imported Transcripts moved to the Chats tab of the Cursor Sync sidebar."
+        `Imported Transcripts moved to the Chats tab of the ${EXTENSION_LABEL} sidebar.`
       );
     })
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.openImportedTranscript", () => {
       vscode.window.showInformationMessage(
-        "Imported Transcripts moved to the Chats tab of the Cursor Sync sidebar."
+        `Imported Transcripts moved to the Chats tab of the ${EXTENSION_LABEL} sidebar.`
       );
     })
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.revealImportedTranscriptInExplorer", () => {
       vscode.window.showInformationMessage(
-        "Imported Transcripts moved to the Chats tab of the Cursor Sync sidebar."
+        `Imported Transcripts moved to the Chats tab of the ${EXTENSION_LABEL} sidebar.`
       );
     })
   );
@@ -95,7 +96,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.pull", () =>
+      executePull(context, { mirror: false })
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.pullMirror", () =>
       executePull(context, { mirror: true })
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.cancelSync", () =>
+      executeCancelSyncCommand()
     )
   );
 
@@ -214,12 +227,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.installSkillTransportChat", () =>
-      executeInstallSkillTransportChat(context)
-    )
-  );
-
-  context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.importTranscriptsFromGist", () =>
       executeImportTranscriptsFromGist(context)
     )
@@ -298,7 +305,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   })();
 
-  logger.appendLine(`[${new Date().toISOString()}] Cursor Sync activated`);
+  logger.appendLine(`[${new Date().toISOString()}] ${EXTENSION_LABEL} activated`);
 }
 
 export function deactivate(): void {

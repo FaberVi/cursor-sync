@@ -129,6 +129,7 @@ describe("sync extensions after pull", () => {
 
     it("shows Install/Skip and does not install on Skip", async () => {
       __setShowWarningMessageResult("Skip");
+      __setMockGlobalConfig({ "syncExtensions.autoInstall": true });
       __setExtensionsAll([{ id: "publisher.alpha", packageJSON: { version: "1.0.0" } }]);
 
       await promptAndInstallMissingExtensions(
@@ -149,8 +150,8 @@ describe("sync extensions after pull", () => {
       expect(uninstalled).toEqual([]);
     });
 
-    it("shows Install/Skip even when autoInstall is off", async () => {
-      __setShowWarningMessageResult("Skip");
+    it("does not prompt when autoInstall is off", async () => {
+      __setShowWarningMessageResult("Install");
       __setMockGlobalConfig({ "syncExtensions.autoInstall": false });
       __setExtensionsAll([]);
 
@@ -159,17 +160,13 @@ describe("sync extensions after pull", () => {
         logger
       );
 
-      expect(warningSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Install 1 extension(s)"),
-        { modal: true },
-        "Install",
-        "Skip"
-      );
+      expect(warningSpy).not.toHaveBeenCalled();
       expect(installed).toEqual([]);
     });
 
     it("installs only after Install is chosen", async () => {
       __setShowWarningMessageResult("Install");
+      __setMockGlobalConfig({ "syncExtensions.autoInstall": true });
       __setExtensionsAll([{ id: "publisher.alpha", packageJSON: { version: "1.0.0" } }]);
 
       await promptAndInstallMissingExtensions(
@@ -183,7 +180,10 @@ describe("sync extensions after pull", () => {
 
     it("does not offer product builtins or disallowed publishers", async () => {
       __setShowWarningMessageResult("Install");
-      __setMockGlobalConfig({ "syncExtensions.allowedPublishers": ["ms-python"] });
+      __setMockGlobalConfig({
+        "syncExtensions.autoInstall": true,
+        "syncExtensions.allowedPublishers": ["ms-python"],
+      });
       __setExtensionsAll([]);
 
       await promptAndInstallMissingExtensions(
@@ -202,38 +202,49 @@ describe("sync extensions after pull", () => {
   });
 
   describe("syncExtensionsFromRemoteEntries extras", () => {
-    it("prompts to remove extras on pull-style sync but missing-only path does not", async () => {
-      __setShowWarningMessageResult("No");
+    it("does not prompt or uninstall extras when autoUninstall is off", async () => {
+      __setMockGlobalConfig({
+        "syncExtensions.autoInstall": false,
+        "syncExtensions.autoUninstall": false,
+      });
       __setExtensionsAll([
         { id: "publisher.local", packageJSON: { version: "1.0.0" } },
       ]);
 
-      await promptAndInstallMissingExtensions(
+      await syncExtensionsFromRemoteEntries(
         [{ id: "publisher.other", version: "1.0.0" }],
         logger
       );
       expect(warningSpy.mock.calls.some((c) => String(c[0]).startsWith("Remove"))).toBe(
         false
       );
+      expect(uninstalled).toEqual([]);
+    });
 
-      warningSpy.mockClear();
+    it("uninstalls extras without a prompt when autoUninstall is on", async () => {
+      __setMockGlobalConfig({
+        "syncExtensions.autoInstall": false,
+        "syncExtensions.autoUninstall": true,
+      });
+      __setExtensionsAll([
+        { id: "publisher.local", packageJSON: { version: "1.0.0" } },
+      ]);
+
       await syncExtensionsFromRemoteEntries(
         [{ id: "publisher.other", version: "1.0.0" }],
         logger
       );
-      expect(warningSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Remove 1 extension(s)"),
-        { modal: true },
-        "Yes",
-        "No"
+      expect(warningSpy.mock.calls.some((c) => String(c[0]).startsWith("Remove"))).toBe(
+        false
       );
-      expect(uninstalled).toEqual([]);
+      expect(uninstalled).toEqual(["publisher.local"]);
     });
   });
 
   describe("syncExtensionsFromRemoteFiles", () => {
     it("caches a parseable remote list and prompts for missing installs", async () => {
       __setShowWarningMessageResult("Skip");
+      __setMockGlobalConfig({ "syncExtensions.autoInstall": true });
       __setExtensionsAll([]);
       const store: Record<string, unknown> = {};
       const context = makeContext(store);

@@ -19,6 +19,14 @@ import { renderSyncPane } from "./sync-tab.js";
 import { renderSettingsPane, readSettingsValues } from "./settings-tab.js";
 import { t, webviewI18nPayload } from "./i18n.js";
 import { escapeHtml } from "./sync-tab.js";
+import { getPendingConflicts, getResolutionForKey } from "../conflicts.js";
+
+function pendingConflictsForTab(): NonNullable<SyncTabState["pendingConflicts"]> {
+  return getPendingConflicts().map((c) => ({
+    relativeSyncKey: c.relativeSyncKey,
+    resolution: getResolutionForKey(c.relativeSyncKey),
+  }));
+}
 
 export interface BuildSyncTabStateOptions {
   /** Skip filesystem chat discovery and remote gist/repo fetch (slow). */
@@ -46,6 +54,7 @@ function buildSyncTabStateShell(context: vscode.ExtensionContext): SyncTabState 
     localChatCount: 0,
     remoteChatCount: undefined,
     chatCountsLoading: true,
+    pendingConflicts: pendingConflictsForTab(),
   };
 }
 
@@ -102,6 +111,7 @@ export async function buildSyncTabState(
       localChatCount,
       remoteChatCount,
       chatCountsLoading,
+      pendingConflicts: pendingConflictsForTab(),
     };
   }
 
@@ -120,6 +130,7 @@ export async function buildSyncTabState(
     localChatCount,
     remoteChatCount,
     chatCountsLoading,
+    pendingConflicts: pendingConflictsForTab(),
   };
 }
 

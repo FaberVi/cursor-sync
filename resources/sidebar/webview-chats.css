@@ -349,10 +349,26 @@
   border: 1px solid rgba(125, 211, 252, 0.15);
   font-size: 12px;
 }
+.progress-phase-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
 .progress-phase {
   font-weight: 600;
   color: #7dd3fc;
-  margin-bottom: 4px;
+}
+.progress-stop-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(237, 236, 236, 0.25);
+  background: transparent;
+  color: rgba(237, 236, 236, 0.85);
+  cursor: pointer;
 }
 .progress-message {
   color: rgba(237, 236, 236, 0.6);
@@ -392,5 +408,39 @@
 .clear-btn:hover {
   border-color: rgba(248, 113, 113, 0.3);
   color: #f87171;
+}
+
+.conflicts-section {
+  margin-bottom: 12px;
+}
+.conflict-actions-all {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.conflict-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background: #0f0e0c;
+  border: 1px solid rgba(251, 191, 36, 0.25);
+}
+.conflict-key {
+  font-size: 11px;
+  word-break: break-all;
+  color: rgba(237, 236, 236, 0.75);
+}
+.conflict-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pager-btn-active {
+  border-color: #34d399;
+  color: #edecec;
 }
 

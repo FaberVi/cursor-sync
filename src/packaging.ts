@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import type { SyncFileEntry, PackagedFile, Manifest, ManifestFileEntry } from "./types.js";
+import { throwIfAborted } from "./sync-abort.js";
 
 export type SkippedSyncFile = {
   relativeSyncKey: string;
@@ -33,6 +34,7 @@ export async function packageFiles(
   const skipped: SkippedSyncFile[] = [];
 
   for (const file of sorted) {
+    throwIfAborted();
     const buf = await fs.readFile(file.absolutePath);
 
     if (buf.length === 0) {

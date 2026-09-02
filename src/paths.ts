@@ -113,6 +113,10 @@ export function isExcludedSyncKey(
     return true;
   }
 
+  if (isMcpSyncKey(syncKey) && !isMcpSyncEnabled()) {
+    return true;
+  }
+
   const globs =
     excludeGlobs ??
     vscode.workspace.getConfiguration("cursorSync").get<string[]>("excludeGlobs") ??
@@ -159,35 +163,43 @@ export function resolveSyncRoots(
   };
 }
 
-export function isCursorUserGlob(glob: string): boolean {
+export function isMcpSyncEnabled(): boolean {
   return (
-    glob === "settings.json" ||
-    glob === "keybindings.json" ||
-    glob === "extensions.json" ||
-    glob.startsWith("snippets") ||
-    glob.startsWith("vsix")
+    vscode.workspace.getConfiguration("cursorSync").get<boolean>("mcp.syncEnabled") ??
+    false
   );
 }
+
+/** Root-only MCP config files (`dot-cursor/mcp.json` and `cursor-user/mcp.json`). */
+export function isMcpSyncKey(syncKey: string): boolean {
+  return syncKey === "dot-cursor/mcp.json" || syncKey === "cursor-user/mcp.json";
+}
+
+export const MCP_PRESERVE_SYNC_KEYS = [
+  "dot-cursor/mcp.json",
+  "cursor-user/mcp.json",
+] as const;
 
 export async function enumerateSyncFiles(
   roots?: SyncRoots
 ): Promise<SyncFileEntry[]> {
   const resolved = roots ?? resolveSyncRoots();
   const config = vscode.workspace.getConfiguration("cursorSync");
-  const enabledPaths = config.get<string[]>("enabledPaths") ?? getDefaultEnabledPaths();
+  let enabledPaths = config.get<string[]>("enabledPaths") ?? getDefaultEnabledPaths();
   const excludeGlobs = config.get<string[]>("excludeGlobs") ?? [];
   const maxFileSizeKB = config.get<number>("maxFileSizeKB") ?? 512;
   const maxBytes = maxFileSizeKB * 1024;
 
-  const cursorUserGlobs = enabledPaths.filter(isCursorUserGlob);
-  const dotCursorGlobs = enabledPaths.filter((g) => !isCursorUserGlob(g));
+  if (isMcpSyncEnabled() && !enabledPaths.includes("mcp.json")) {
+    enabledPaths = [...enabledPaths, "mcp.json"];
+  }
 
   const entries: SyncFileEntry[] = [];
 
   await collectFiles(
     resolved.cursorUser,
     "cursor-user",
-    cursorUserGlobs,
+    enabledPaths,
     excludeGlobs,
     maxBytes,
     entries
@@ -195,7 +207,7 @@ export async function enumerateSyncFiles(
   await collectFiles(
     resolved.dotCursor,
     "dot-cursor",
-    dotCursorGlobs,
+    enabledPaths,
     excludeGlobs,
     maxBytes,
     entries
@@ -222,6 +234,10 @@ async function collectFiles(
     const rel = path.relative(rootDir, absPath).split(path.sep).join("/");
 
     if (isDenylisted(rel)) {
+      continue;
+    }
+
+    if (rel === "mcp.json" && !isMcpSyncEnabled()) {
       continue;
     }
 
@@ -329,6 +345,9 @@ export function getDefaultEnabledPaths(): string[] {
     "commands/**/*.md",
     "rules/*.mdc",
     "agents/*.md",
+    "cli-config.json",
+    "hooks.json",
+    "tasks.json",
   ];
 }
 

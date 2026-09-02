@@ -1,5 +1,6 @@
 import type { ApiResult, FailureCategory } from "../types.js";
 import { clampRetryAfterSeconds } from "../retry.js";
+import { cancelledApiError, getSyncAbortSignal, isAbortError } from "../sync-abort.js";
 
 export const GITHUB_API = "https://api.github.com";
 export const USER_AGENT = "cursor-sync-extension";
@@ -26,12 +27,20 @@ export async function githubRequest<T>(
 
   let response: Response;
   try {
+    const signal = getSyncAbortSignal();
+    if (signal?.aborted) {
+      return { ok: false, error: cancelledApiError };
+    }
     response = await fetch(url, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
     });
   } catch (err) {
+    if (isAbortError(err) || getSyncAbortSignal()?.aborted) {
+      return { ok: false, error: cancelledApiError };
+    }
     return {
       ok: false,
       error: {

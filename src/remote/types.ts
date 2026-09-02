@@ -58,7 +58,8 @@ export interface RemoteSyncBackend {
   ): Promise<ApiResult<RemoteSnapshot>>;
   /**
    * Atomically upsert files and optionally delete others.
-   * File names are flat (e.g. manifest.json, cursor-user--settings.json).
+   * File names are gist-flat (e.g. manifest.json, cursor-user--settings.json).
+   * RepoBackend maps `--` names to nested Git paths under `basePath`.
    */
   writeFiles(
     files: Record<string, string>,

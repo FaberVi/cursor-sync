@@ -18,6 +18,14 @@ export function refreshSidebar(): void {
   sidebarProviderInstance?.refresh();
 }
 
+export function isSidebarVisible(): boolean {
+  return sidebarProviderInstance?.isVisible() === true;
+}
+
+export function revealSidebar(): void {
+  sidebarProviderInstance?.reveal();
+}
+
 /** Force a full sidebar HTML rebuild (e.g. after UI language change). */
 export function rebuildSidebar(): void {
   sidebarProviderInstance?.rebuild();
@@ -64,6 +72,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   refresh(): void {
     void this._update();
+  }
+
+  isVisible(): boolean {
+    return this._view?.visible === true;
+  }
+
+  reveal(): void {
+    this._view?.show?.(true);
   }
 
   rebuild(): void {

@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import type { SyncState, SyncHistoryEntry } from "./types.js";
 import { remoteUrlForState, syncStateIdentity } from "./remote/destination.js";
 
@@ -10,7 +11,7 @@ let outputChannel: vscode.OutputChannel | undefined;
 
 export function getLogger(): vscode.OutputChannel {
   if (!outputChannel) {
-    outputChannel = vscode.window.createOutputChannel("Cursor Sync");
+    outputChannel = vscode.window.createOutputChannel(EXTENSION_LABEL);
   }
   return outputChannel;
 }
@@ -23,7 +24,7 @@ export async function showStatus(
 
   if (!syncState) {
     items.push({ label: "Status", description: "No sync performed yet" });
-    vscode.window.showQuickPick(items, { title: "Cursor Sync Status" });
+    vscode.window.showQuickPick(items, { title: `${EXTENSION_LABEL} Status` });
     return;
   }
 
@@ -52,7 +53,7 @@ export async function showStatus(
     description: String(Object.keys(syncState.localChecksums).length),
   });
 
-  vscode.window.showQuickPick(items, { title: "Cursor Sync Status" });
+  vscode.window.showQuickPick(items, { title: `${EXTENSION_LABEL} Status` });
 }
 
 export function getSyncStatePath(context: vscode.ExtensionContext): string {

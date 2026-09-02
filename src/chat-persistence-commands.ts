@@ -57,10 +57,7 @@ export async function executeSaveChatLocal(
           progress
         );
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-        const multi = bundles.length > 1;
-        const basename = multi
-          ? `chat-bundles_${timestamp}.json`
-          : `${selection.conversationIds[0]!.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60)}_${timestamp}.json`;
+        const basename = `cursor-chat_${timestamp}.json`;
         const bundlePath = path.join(context.globalStorageUri.fsPath, "chat-bundles", basename);
         await fs.mkdir(path.dirname(bundlePath), { recursive: true });
         await fs.writeFile(bundlePath, jsonForFile, "utf-8");

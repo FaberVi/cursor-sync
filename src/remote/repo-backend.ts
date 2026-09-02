@@ -2,8 +2,9 @@ import {
   DEFAULT_REPO_BASE_PATH,
   DEFAULT_REPO_BRANCH,
 } from "./destination.js";
+import { commandTitle, REPO_SETTINGS_BACKUP_DESCRIPTION } from "../extension-branding.js";
 import { githubRequest } from "./github-api.js";
-import { joinRemotePath } from "./path-map.js";
+import { repoGitPath, type LeftoverDashedFile } from "./path-map.js";
 import { withRetry } from "../retry.js";
 import type { ApiResult } from "../types.js";
 import type {
@@ -14,7 +15,13 @@ import type {
   RemoteWriteOptions,
   RemoteWriteResult,
 } from "./types.js";
-import { createGitBlobs, createInitialCommit, type GitTreeEntry } from "./repo-git-write.js";
+import {
+  createGitBlobs,
+  createInitialCommit,
+  isEmptyGitHubRepositoryError,
+  leftoverDashedTreeEntries,
+  type GitTreeEntry,
+} from "./repo-git-write.js";
 import { loadRepoGitSnapshot, type RepoGitSnapshotCache } from "./repo-git-snapshot.js";
 
 interface GitRefResponse {
@@ -47,6 +54,8 @@ export class RepoBackend implements RemoteSyncBackend {
     refShaCache: undefined,
     treeCache: undefined,
   };
+  /** Leftover dashed Git files from the last successful snapshot. */
+  private leftoverDashed: LeftoverDashedFile[] = [];
 
   constructor(options: {
     pat: string;
@@ -88,6 +97,10 @@ export class RepoBackend implements RemoteSyncBackend {
 
   getBasePath(): string {
     return this.basePath;
+  }
+
+  hasLeftoverDashed(): boolean {
+    return this.leftoverDashed.length > 0;
   }
 
   async validateAccess(): Promise<ApiResult<boolean>> {
@@ -132,7 +145,7 @@ export class RepoBackend implements RemoteSyncBackend {
       name: this.repo,
       private: options?.isPrivate ?? true,
       description:
-        options?.description ?? "Cursor Sync settings backup",
+        options?.description ?? REPO_SETTINGS_BACKUP_DESCRIPTION,
       auto_init: options?.autoInit ?? true,
     };
 
@@ -161,7 +174,10 @@ export class RepoBackend implements RemoteSyncBackend {
 
     const refResult = await this.getBranchRef();
     if (!refResult.ok) {
-      if (refResult.error.statusCode === 404) {
+      if (
+        refResult.error.statusCode === 404 ||
+        isEmptyGitHubRepositoryError(refResult.error)
+      ) {
         return {
           ok: true,
           data: {
@@ -185,7 +201,7 @@ export class RepoBackend implements RemoteSyncBackend {
   async getSnapshot(
     options?: RemoteSnapshotOptions
   ): Promise<ApiResult<RemoteSnapshot>> {
-    return loadRepoGitSnapshot({
+    const result = await loadRepoGitSnapshot({
       owner: this.owner,
       repo: this.repo,
       pat: this.pat,
@@ -196,12 +212,17 @@ export class RepoBackend implements RemoteSyncBackend {
       getBranchRef: () => this.getBranchRef(),
       options,
     });
+    if (result.ok) {
+      this.leftoverDashed = this.gitCache.treeCache?.leftoverDashed ?? [];
+    }
+    return result;
   }
 
   async writeFiles(
     files: Record<string, string>,
     options?: RemoteWriteOptions
   ): Promise<ApiResult<RemoteWriteResult>> {
+    const leftovers = [...this.leftoverDashed];
     this.gitCache.treeCache = undefined;
     this.gitCache.refShaCache = undefined;
     const deleteNames = new Set(options?.deleteNames ?? []);
@@ -212,11 +233,14 @@ export class RepoBackend implements RemoteSyncBackend {
     let createdBranch = false;
 
     if (!refResult.ok) {
-      if (refResult.error.statusCode !== 404) {
+      if (
+        refResult.error.statusCode !== 404 &&
+        !isEmptyGitHubRepositoryError(refResult.error)
+      ) {
         return refResult;
       }
       createdBranch = true;
-      return createInitialCommit({
+      const initial = await createInitialCommit({
         owner: this.owner,
         repo: this.repo,
         pat: this.pat,
@@ -228,6 +252,10 @@ export class RepoBackend implements RemoteSyncBackend {
         deleteNames,
         onBlobProgress: options?.onBlobProgress,
       });
+      if (initial.ok) {
+        this.leftoverDashed = [];
+      }
+      return initial;
     }
 
     parentCommitSha = refResult.data.object.sha;
@@ -246,25 +274,36 @@ export class RepoBackend implements RemoteSyncBackend {
       repo: this.repo,
       pat: this.pat,
       files,
-      toPath: (name) => joinRemotePath(this.basePath, name),
+      toPath: (name) => repoGitPath(this.basePath, name),
       onBlobProgress: options?.onBlobProgress,
     });
     if (!blobResult.ok) {
       return blobResult;
     }
     const treeItems: GitTreeEntry[] = [...blobResult.data];
+    const leftoverByName = new Map(
+      leftovers.map((item) => [item.remoteName, item])
+    );
 
     for (const name of deleteNames) {
       if (name in files) {
         continue;
       }
+      const leftover = leftoverByName.get(name);
+      if (leftover && !leftover.nestedPresent) {
+        continue;
+      }
       treeItems.push({
-        path: joinRemotePath(this.basePath, name),
+        path: repoGitPath(this.basePath, name),
         mode: "100644",
         type: "blob",
         sha: null,
       });
     }
+
+    treeItems.push(
+      ...leftoverDashedTreeEntries(leftovers, this.basePath, files, deleteNames)
+    );
 
     if (treeItems.length === 0) {
       return {
@@ -276,6 +315,11 @@ export class RepoBackend implements RemoteSyncBackend {
         },
       };
     }
+
+    const nestOnly =
+      blobResult.data.length === 0 &&
+      deleteNames.size === 0 &&
+      leftovers.length > 0;
 
     const treeResult = await withRetry(() =>
       githubRequest<{ sha: string }>(
@@ -298,7 +342,9 @@ export class RepoBackend implements RemoteSyncBackend {
         `/repos/${this.owner}/${this.repo}/git/commits`,
         this.pat,
         {
-          message: "Cursor Sync: update settings backup",
+          message: nestOnly
+            ? commandTitle("nest repo backup paths")
+            : commandTitle("update settings backup"),
           tree: treeResult.data.sha,
           parents: [parentCommitSha],
         }
@@ -320,6 +366,7 @@ export class RepoBackend implements RemoteSyncBackend {
       return updateRef;
     }
 
+    this.leftoverDashed = [];
     return {
       ok: true,
       data: {

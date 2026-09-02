@@ -11,6 +11,7 @@ import type { ChatBundle } from "../src/chat-persistence.js";
 
 export const CHAT_BUNDLE_GIST_FILE_NAME = "chat-bundle.json";
 export const CHAT_BUNDLES_GIST_FILE_NAME = "chat-bundles.json";
+export const CURSOR_CHAT_GIST_FILE_NAME = "cursor-chat.json";
 
 const gistMocks = vi.hoisted(() => ({
   createGistMock: vi.fn(),

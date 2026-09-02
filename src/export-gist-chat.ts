@@ -1,16 +1,16 @@
 import * as vscode from "vscode";
+import { CHAT_EXPORT_GIST_DESCRIPTION, EXTENSION_LABEL } from "./extension-branding.js";
 import { GistClient } from "./gist.js";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { getLogger } from "./diagnostics.js";
 import { pickChatsForExport, type ChatExportSelection } from "./chat-export-ux.js";
 import { buildChatExportPayload, chatEditorExportFailureMessage } from "./chat-persistence.js";
-import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import { encryptChatGistPayload } from "./chat-gist-crypto.js";
 import { requireChatEncryptionPassword, isChatGistEncryptionEnabled } from "./chat-encryption-auth.js";
 import { resolveChatEditorExportTarget } from "./chat-editor-target.js";
 
-export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
+export { CHAT_BUNDLE_GIST_FILE_NAME, CHAT_BUNDLES_GIST_FILE_NAME, CURSOR_CHAT_GIST_FILE_NAME } from "./chat-bundle-format.js";
 
 export async function exportChatSelectionToGist(
   context: vscode.ExtensionContext,
@@ -56,9 +56,9 @@ export async function exportChatSelectionToGist(
             return;
           }
           const plaintextKind =
-            gistPayload.fileName === CHAT_BUNDLES_GIST_FILE_NAME
-              ? ("chat-bundles-collection" as const)
-              : ("chat-bundle" as const);
+            bundles.length <= 1
+              ? ("cursor-chat" as const)
+              : ("cursor-chat-collection" as const);
           uploadContent = await encryptChatGistPayload(
             gistPayload.content,
             password,
@@ -72,7 +72,7 @@ export async function exportChatSelectionToGist(
         };
 
         const result = await withRetry(() =>
-          client.createGist(gistFiles, "Cursor Sync - Chat Export")
+          client.createGist(gistFiles, CHAT_EXPORT_GIST_DESCRIPTION)
         );
 
         if (!result.ok) {
@@ -91,7 +91,7 @@ export async function exportChatSelectionToGist(
         }
 
         const linkNote = encrypted
-          ? "Content is encrypted; decryption requires the chat encryption password configured in Cursor Sync."
+          ? `Content is encrypted; decryption requires the chat encryption password configured in ${EXTENSION_LABEL}.`
           : "Anyone with the link can open it.";
         const successMsg =
           bundles.length === 1

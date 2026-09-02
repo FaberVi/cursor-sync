@@ -59,6 +59,14 @@ describe("native-chat-json bundle bridge", () => {
     expect(back.diskKvSnapshot?.rowCount).toBeGreaterThan(0);
     expect(back.conversationId).toBe(bundle.conversationId);
   });
+
+  it("round-trips sourceFolderTilde", () => {
+    const bundle = minimalBundle({ sourceFolderTilde: "~/Documents/Github/Web/cursor-sync" });
+    const native = nativeChatJsonFromBundle(bundle);
+    expect(native.sourceFolderTilde).toBe("~/Documents/Github/Web/cursor-sync");
+    const back = chatBundleFromNativeChatJson(native);
+    expect(back.sourceFolderTilde).toBe("~/Documents/Github/Web/cursor-sync");
+  });
 });
 
 describe("native sync collection", () => {

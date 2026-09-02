@@ -15,28 +15,28 @@ describe("export gist visibility and copy", () => {
 
   it("settings export calls createGist with two arguments only (no public flag)", () => {
     expect(exportSrc).toMatch(
-      /\.createGist\(\s*gistFiles\s*,\s*"Cursor Sync - Export"\s*\)/s
+      /\.createGist\(\s*gistFiles\s*,\s*EXPORT_GIST_DESCRIPTION\s*\)/s
     );
     expect(exportSrc).not.toMatch(
-      /\.createGist\(\s*gistFiles\s*,\s*"Cursor Sync - Export"\s*,\s*true/s
+      /\.createGist\(\s*gistFiles\s*,\s*EXPORT_GIST_DESCRIPTION\s*,\s*true/s
     );
   });
 
   it("transcript export calls createGist with two arguments only (no public flag)", () => {
     expect(transcriptsSrc).toMatch(
-      /\.createGist\(\s*gistFiles\s*,\s*"Cursor Sync - Agent Transcripts Export"\s*\)/s
+      /\.createGist\(\s*gistFiles\s*,\s*TRANSCRIPTS_EXPORT_GIST_DESCRIPTION\s*\)/s
     );
     expect(transcriptsSrc).not.toMatch(
-      /\.createGist\(\s*gistFiles\s*,\s*"Cursor Sync - Agent Transcripts Export"\s*,\s*true/s
+      /\.createGist\(\s*gistFiles\s*,\s*TRANSCRIPTS_EXPORT_GIST_DESCRIPTION\s*,\s*true/s
     );
   });
 
   it("chat export calls createGist with two arguments only (no public flag)", () => {
     expect(exportGistChatSrc).toMatch(
-      /\.createGist\(\s*gistFiles\s*,\s*"Cursor Sync - Chat Export"\s*\)/s
+      /\.createGist\(\s*gistFiles\s*,\s*CHAT_EXPORT_GIST_DESCRIPTION\s*\)/s
     );
     expect(exportGistChatSrc).not.toMatch(
-      /\.createGist\(\s*gistFiles\s*,\s*"Cursor Sync - Chat Export"\s*,\s*true/s
+      /\.createGist\(\s*gistFiles\s*,\s*CHAT_EXPORT_GIST_DESCRIPTION\s*,\s*true/s
     );
   });
 

@@ -36,6 +36,8 @@ export interface NativeChatJsonDocument {
   subtitle?: string;
   previewText?: string;
   createdAt?: string;
+  /** Portable workspace folder (`~/Documents/foo`). Identity with conversationId. */
+  sourceFolderTilde?: string;
   storeDb?: NativeChatJsonStoreDb;
   sidebar?: Record<string, unknown> | null;
   diskKv?: ChatBundleDiskKvSnapshot | null;

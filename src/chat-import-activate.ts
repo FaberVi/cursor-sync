@@ -1,3 +1,4 @@
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ChatBundle } from "./chat-persistence.js";
@@ -239,7 +240,7 @@ export async function runPostImportActivation(
   if (options.skipPythonBridge === true) {
     log(
       `Activation staged only: ${paths.pendingPath}. ` +
-        "Cursor Sync will complete via composer.createComposer (reload window if needed)."
+        `${EXTENSION_LABEL} will complete via composer.createNew (reload window if needed).`
     );
     return activationOutcome;
   }

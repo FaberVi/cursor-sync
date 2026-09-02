@@ -1,3 +1,4 @@
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import {
@@ -79,7 +80,7 @@ function triggerDescription(trigger: SyncDebugTrigger): string {
 export function buildSyncDebugPrompt(failure: SyncDebugFailure): string {
   const sanitizedMessage = sanitizeSyncDebugMessage(failure.message);
   const lines = [
-    "Cursor Sync failed. Please diagnose why this sync operation failed and help resolve it.",
+    `${EXTENSION_LABEL} failed. Please diagnose why this sync operation failed and help resolve it.`,
     "",
     "## Failure context",
     `- operation: ${failure.operation}`,
@@ -106,14 +107,14 @@ export function buildSyncDebugPrompt(failure: SyncDebugFailure): string {
     `- extensionVersion: ${failure.extensionVersion}`,
     "",
     "## What to inspect",
-    "Review the Cursor Sync implementation and local state, including:",
+    `Review the ${EXTENSION_LABEL} implementation and local state, including:`,
     "- src/push.ts",
     "- src/pull.ts",
     "- src/scheduler.ts",
     "- src/extension.ts",
     "- src/diagnostics.ts",
     "- src/gist.ts",
-    "- Cursor Sync output channel",
+    `- ${EXTENSION_LABEL} output channel`,
     "- sync history JSON in extension global storage",
     "",
     "## Expected outcome",
@@ -272,6 +273,9 @@ export async function showSyncFailureWithDebug(
   failure: SyncDebugFailure,
   options?: { level?: "error" | "warning"; title?: string }
 ): Promise<void> {
+  if (failure.category === "CANCELLED") {
+    return;
+  }
   const prompt = buildSyncDebugPrompt(failure);
   const message = options?.title ?? failure.message;
   const level = options?.level ?? "error";

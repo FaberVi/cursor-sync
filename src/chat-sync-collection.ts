@@ -4,6 +4,7 @@ import { getLogger, loadSyncState } from "./diagnostics.js";
 import { computeChecksum } from "./packaging.js";
 import {
   CHAT_BUNDLES_GIST_FILE_NAME,
+  CURSOR_CHAT_GIST_FILE_NAME,
   buildChatBundlesCollection,
   parseChatBundleOrCollection,
   type ChatBundlesCollection,
@@ -34,10 +35,20 @@ import {
 } from "./chat-encryption-auth.js";
 import { isBundleSyncEligible } from "./chat-backup-eligibility.js";
 import { getChatCollectionMaxBytes } from "./chat-sync.js";
+import {
+  chatIdentityKey,
+  formatChatPackSkipLabel,
+  isRemoteChatPresentLocally,
+  mergeByChatIdentity,
+  sortDiscoveredForChatPack,
+} from "./chat-identity.js";
+import { buildChatsKeyToFolderMap } from "./chat-workspace-context.js";
+import { formatDisplayPath } from "./chat-workspace-label.js";
+import { resolveSyncRoots } from "./paths.js";
 
 export const CHAT_BUNDLES_SYNC_KEY = "dot-cursor/chat-bundles.json";
 export const CURSOR_CHAT_SYNC_KEY = "dot-cursor/cursor-chat.json";
-export const CURSOR_CHAT_GIST_FILE_NAME = "cursor-chat.json";
+export { CURSOR_CHAT_GIST_FILE_NAME };
 
 /** @deprecated Legacy sync file; new pushes use {@link CURSOR_CHAT_GIST_FILE_NAME}. */
 export const LEGACY_CHAT_BUNDLES_GIST_FILE = CHAT_BUNDLES_GIST_FILE_NAME;
@@ -57,19 +68,50 @@ export function mergeChatCollections(
   remote: ChatBundle[],
   local: ChatBundle[]
 ): ChatBundle[] {
-  const byId = new Map<string, ChatBundle>();
-  for (const bundle of remote) {
-    byId.set(bundle.conversationId, bundle);
-  }
-  for (const bundle of local) {
-    const existing = byId.get(bundle.conversationId);
-    if (!existing || bundleTimestamp(bundle) >= bundleTimestamp(existing)) {
-      byId.set(bundle.conversationId, bundle);
+  return mergeByChatIdentity(remote, local, bundleTimestamp);
+}
+
+function bundleRecencyMs(bundle: ChatBundle): number {
+  const parsed = Date.parse(bundle.createdAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Recency-first pack that drops chats once the collection would exceed maxBytes. */
+export function applyChatCollectionSizeCap(
+  bundles: ChatBundle[],
+  maxBytes: number = getChatCollectionMaxBytes()
+): { kept: ChatBundle[]; skippedLabels: string[] } {
+  const ordered = [...bundles].sort((a, b) => {
+    const recency = bundleRecencyMs(b) - bundleRecencyMs(a);
+    if (recency !== 0) {
+      return recency;
     }
+    return chatIdentityKey(a.sourceFolderTilde, a.conversationId).localeCompare(
+      chatIdentityKey(b.sourceFolderTilde, b.conversationId)
+    );
+  });
+  if (maxBytes <= 0) {
+    return { kept: ordered, skippedLabels: [] };
   }
-  return [...byId.values()].sort((a, b) =>
-    a.conversationId.localeCompare(b.conversationId)
-  );
+  const kept: ChatBundle[] = [];
+  const skippedLabels: string[] = [];
+  let runningBytes = 0;
+  for (const bundle of ordered) {
+    const approxSize = JSON.stringify(bundle).length;
+    if (runningBytes + approxSize > maxBytes) {
+      skippedLabels.push(
+        formatChatPackSkipLabel({
+          title: bundle.title,
+          sourceFolderTilde: bundle.sourceFolderTilde,
+          conversationId: bundle.conversationId,
+        })
+      );
+      continue;
+    }
+    runningBytes += approxSize;
+    kept.push(bundle);
+  }
+  return { kept, skippedLabels };
 }
 
 export function isChatSyncOnlyFullBackups(): boolean {
@@ -126,7 +168,7 @@ export async function storeImportedChatTimestamps(
     context.globalState.get<Record<string, string>>(CHAT_IMPORT_TIMESTAMPS_KEY) ?? {};
   const next = { ...existing };
   for (const bundle of bundles) {
-    next[bundle.conversationId] = bundle.createdAt;
+    next[chatIdentityKey(bundle.sourceFolderTilde, bundle.conversationId)] = bundle.createdAt;
   }
   await context.globalState.update(CHAT_IMPORT_TIMESTAMPS_KEY, next);
 }
@@ -137,9 +179,20 @@ export interface ChatPullSelection {
   skipped: number;
 }
 
+function lookupImportTimestamp(
+  localTs: Map<string, number>,
+  bundle: ChatBundle
+): number {
+  const key = chatIdentityKey(bundle.sourceFolderTilde, bundle.conversationId);
+  if (localTs.has(key)) {
+    return localTs.get(key)!;
+  }
+  return localTs.get(bundle.conversationId) ?? 0;
+}
+
 export function selectChatsForPull(
   remoteBundles: ChatBundle[],
-  localConversationIds: Set<string>,
+  localIdentities: Set<string>,
   options: {
     pullUpdates: boolean;
     policy: ChatPullUpdatePolicy;
@@ -147,7 +200,9 @@ export function selectChatsForPull(
   }
 ): ChatPullSelection {
   if (!options.pullUpdates || options.policy === "skip") {
-    const toImport = remoteBundles.filter((b) => !localConversationIds.has(b.conversationId));
+    const toImport = remoteBundles.filter(
+      (b) => !isRemoteChatPresentLocally(b, localIdentities)
+    );
     return {
       toImport,
       updated: 0,
@@ -161,7 +216,7 @@ export function selectChatsForPull(
   const localTs = options.localImportTimestamps ?? new Map<string, number>();
 
   for (const bundle of remoteBundles) {
-    const isLocal = localConversationIds.has(bundle.conversationId);
+    const isLocal = isRemoteChatPresentLocally(bundle, localIdentities);
     if (!isLocal) {
       toImport.push(bundle);
       continue;
@@ -173,7 +228,7 @@ export function selectChatsForPull(
     }
     if (options.policy === "newerWins") {
       const remoteTs = bundleTimestamp(bundle);
-      const localImportedTs = localTs.get(bundle.conversationId) ?? 0;
+      const localImportedTs = lookupImportTimestamp(localTs, bundle);
       if (remoteTs > localImportedTs) {
         toImport.push(bundle);
         updated += 1;
@@ -344,54 +399,77 @@ export async function buildChatCollectionForSync(
     return { bundles: [], warnings };
   }
 
-  const byWorkspace = new Map<string, string[]>();
-  for (const item of discovered) {
-    const key = item.workspaceKey || "";
-    const list = byWorkspace.get(key) ?? [];
-    list.push(item.conversationId);
-    byWorkspace.set(key, list);
-  }
+  const { cursorUser } = resolveSyncRoots();
+  const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+  const ordered = sortDiscoveredForChatPack(discovered);
 
   const bundles: ChatBundle[] = [];
   const maxBytes = getChatCollectionMaxBytes();
   let runningBytes = 0;
 
-  for (const [workspaceKey, conversationIds] of byWorkspace) {
-    for (const conversationId of conversationIds) {
-      progress.report({ message: `Packaging chat ${conversationId.slice(0, 8)}…` });
-      try {
-        const built = await buildChatBundle(context, conversationId, progress, {
-          workspaceKey: workspaceKey || undefined,
-        });
-        const { bundle: enriched, warnings: enrichW } = await enrichBundleWithLiveDiskKv(
-          built.bundle,
-          { retries: SQLITE_READ_RETRIES, extensionPath: context.extensionUri?.fsPath }
-        );
-        if (!isBundleSyncEligible(enriched, isChatSyncOnlyFullBackups())) {
-          const msg = `Skipped chat ${conversationId}: below minimum backup tier (syncOnlyFullBackups=${isChatSyncOnlyFullBackups()}).`;
-          warnings.push(msg);
-          logger.appendLine(`[${new Date().toISOString()}] [chat-sync] ${msg}`);
-          continue;
+  for (const item of ordered) {
+    const conversationId = item.conversationId;
+    const workspaceKey = item.workspaceKey || "";
+    progress.report({ message: `Packaging chat ${conversationId.slice(0, 8)}…` });
+    try {
+      const built = await buildChatBundle(context, conversationId, progress, {
+        workspaceKey: workspaceKey || undefined,
+        folderMap,
+      });
+      const { bundle: enriched, warnings: enrichW } = await enrichBundleWithLiveDiskKv(
+        built.bundle,
+        { retries: SQLITE_READ_RETRIES, extensionPath: context.extensionUri?.fsPath }
+      );
+      if (!enriched.sourceFolderTilde && workspaceKey) {
+        const folder = folderMap.get(workspaceKey);
+        if (folder) {
+          enriched.sourceFolderTilde = formatDisplayPath(folder);
         }
-        const approxSize = JSON.stringify(enriched).length;
-        if (maxBytes > 0 && runningBytes + approxSize > maxBytes) {
-          const msg = `Skipped chat ${conversationId}: collection size limit (${maxBytes} bytes).`;
-          warnings.push(msg);
-          logger.appendLine(`[${new Date().toISOString()}] [chat-sync] ${msg}`);
-          continue;
-        }
-        runningBytes += approxSize;
-        bundles.push(enriched);
-        warnings.push(...built.warnings, ...enrichW);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        warnings.push(`Skipped chat ${conversationId}: ${msg}`);
-        logger.appendLine(
-          `[${new Date().toISOString()}] [chat-sync] skip conversationId=${conversationId}: ${msg}`
-        );
       }
+      const skipLabel = formatChatPackSkipLabel({
+        title: enriched.title,
+        sourceFolderTilde: enriched.sourceFolderTilde,
+        conversationId,
+      });
+      if (!isBundleSyncEligible(enriched, isChatSyncOnlyFullBackups())) {
+        const msg = `Skipped chat ${skipLabel}: below minimum backup tier (syncOnlyFullBackups=${isChatSyncOnlyFullBackups()}).`;
+        warnings.push(msg);
+        logger.appendLine(`[${new Date().toISOString()}] [chat-sync] ${msg}`);
+        continue;
+      }
+      Object.assign(enriched, {
+        storeMtimeMs: item.storeMtimeMs,
+        transcriptMtimeMs: item.transcriptMtimeMs,
+      });
+      const approxSize = JSON.stringify(enriched).length;
+      if (maxBytes > 0 && runningBytes + approxSize > maxBytes) {
+        const msg = `Skipped chat ${skipLabel}: collection size limit (${maxBytes} bytes).`;
+        warnings.push(msg);
+        logger.appendLine(`[${new Date().toISOString()}] [chat-sync] ${msg}`);
+        continue;
+      }
+      runningBytes += approxSize;
+      bundles.push(enriched);
+      warnings.push(...built.warnings, ...enrichW);
+    } catch (err) {
+      const mappedFolder = workspaceKey ? folderMap.get(workspaceKey) : undefined;
+      const skipLabel = formatChatPackSkipLabel({
+        sourceFolderTilde: mappedFolder ? formatDisplayPath(mappedFolder) : undefined,
+        conversationId,
+      });
+      const msg = err instanceof Error ? err.message : String(err);
+      warnings.push(`Skipped chat ${skipLabel}: ${msg}`);
+      logger.appendLine(
+        `[${new Date().toISOString()}] [chat-sync] skip conversationId=${conversationId}: ${msg}`
+      );
     }
   }
 
-  return { bundles, warnings };
+  const capped = applyChatCollectionSizeCap(bundles, maxBytes);
+  for (const label of capped.skippedLabels) {
+    const msg = `Skipped chat ${label}: collection size limit (${maxBytes} bytes).`;
+    warnings.push(msg);
+    logger.appendLine(`[${new Date().toISOString()}] [chat-sync] ${msg}`);
+  }
+  return { bundles: capped.kept, warnings };
 }

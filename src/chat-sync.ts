@@ -6,13 +6,14 @@ import { getLogger } from "./diagnostics.js";
 import { computeChecksum } from "./packaging.js";
 import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import {
-  collectLocalConversationIds,
+  collectLocalChatIdentities,
   discoverBackupEligibleConversations,
 } from "./chat-discovery.js";
 import { restoreOptionsFromConfiguration } from "./chat-persistence.js";
 import { restoreChatBundlesBatch } from "./chat-import-ux.js";
 import { maybeActivateChatsAfterPull } from "./chat-pull-activation.js";
 import { shouldSkipChatPackaging } from "./chat-sync-skip.js";
+import { isRemoteChatPresentLocally } from "./chat-identity.js";
 import {
   CURSOR_CHAT_GIST_FILE_NAME,
   CURSOR_CHAT_SYNC_KEY,
@@ -64,7 +65,7 @@ export type { ChatSyncPushPayload } from "./chat-sync-push.js";
 export function isChatSyncEnabled(): boolean {
   return (
     vscode.workspace.getConfiguration("cursorSync").get<boolean>("chats.syncEnabled") ??
-    true
+    false
   );
 }
 
@@ -96,19 +97,21 @@ export async function pullChatCollectionFromRemoteFiles(
 
   const plaintext = await decryptGistChatContent(context, raw);
   const collection = parseSyncChatCollection(plaintext);
-  const localIds = await collectLocalConversationIds();
+  const localIdentities = await collectLocalChatIdentities();
   const pullUpdates = isChatPullUpdatesEnabled();
   const policy = getChatPullUpdatePolicy();
   const localImportTimestamps = await readImportedChatTimestamps(context);
 
-  let selection = selectChatsForPull(collection.bundles, localIds, {
+  let selection = selectChatsForPull(collection.bundles, localIdentities, {
     pullUpdates,
     policy,
     localImportTimestamps,
   });
 
   if (pullUpdates && policy === "ask" && selection.skipped > 0) {
-    const updatable = collection.bundles.filter((b) => localIds.has(b.conversationId));
+    const updatable = collection.bundles.filter((b) =>
+      isRemoteChatPresentLocally(b, localIdentities)
+    );
     if (updatable.length > 0) {
       const choice = await vscode.window.showInformationMessage(
         `${updatable.length} chat(s) already exist locally. Update from remote?`,
@@ -116,7 +119,7 @@ export async function pullChatCollectionFromRemoteFiles(
         "New only"
       );
       if (choice === "Update all") {
-        selection = selectChatsForPull(collection.bundles, localIds, {
+        selection = selectChatsForPull(collection.bundles, localIdentities, {
           pullUpdates: true,
           policy: "remoteWins",
           localImportTimestamps,
@@ -149,7 +152,11 @@ export async function pullChatCollectionFromRemoteFiles(
     await storeImportedChatTimestamps(
       context,
       toImport.filter((b) =>
-        batch.successes.some((s) => s.conversationId === b.conversationId)
+        batch.successes.some(
+          (s) =>
+            s.conversationId === b.conversationId &&
+            (s.sourceFolderTilde ?? "").trim() === (b.sourceFolderTilde ?? "").trim()
+        )
       )
     );
     await maybeActivateChatsAfterPull(context, toImport, batch.successes, restoreOptions);
@@ -204,16 +211,36 @@ export async function countLocalDiscoveredChats(): Promise<number> {
 
 const CHAT_SYNC_FINGERPRINT_KEY = "cursorSync.chatSyncLocalFingerprint";
 
+export function chatSyncFingerprintLine(d: {
+  conversationId: string;
+  workspaceKey: string;
+  hasStore: boolean;
+  jsonlCount: number;
+  storeSizeBytes?: number;
+  storeMtimeMs?: number;
+  transcriptMtimeMs?: number;
+}): string {
+  return `${d.conversationId}:${d.workspaceKey}:${d.hasStore ? 1 : 0}:${d.jsonlCount}:${d.storeSizeBytes ?? 0}:${d.storeMtimeMs ?? 0}:${d.transcriptMtimeMs ?? 0}`;
+}
+
+export function computeChatSyncFingerprintFromDiscovery(
+  discovered: Array<{
+    conversationId: string;
+    workspaceKey: string;
+    hasStore: boolean;
+    jsonlCount: number;
+    storeSizeBytes?: number;
+    storeMtimeMs?: number;
+    transcriptMtimeMs?: number;
+  }>
+): string {
+  const payload = discovered.map(chatSyncFingerprintLine).sort().join("|");
+  return computeChecksum(Buffer.from(payload, "utf-8"));
+}
+
 export async function computeChatSyncLocalFingerprint(): Promise<string> {
   const discovered = await discoverBackupEligibleConversations();
-  const payload = discovered
-    .map(
-      (d) =>
-        `${d.conversationId}:${d.workspaceKey}:${d.hasStore ? 1 : 0}:${d.jsonlCount}`
-    )
-    .sort()
-    .join("|");
-  return computeChecksum(Buffer.from(payload, "utf-8"));
+  return computeChatSyncFingerprintFromDiscovery(discovered);
 }
 
 export async function readStoredChatSyncFingerprint(

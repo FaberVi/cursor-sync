@@ -1,6 +1,7 @@
 import {
   CHAT_BUNDLE_GIST_FILE_NAME,
   CHAT_BUNDLES_GIST_FILE_NAME,
+  CURSOR_CHAT_GIST_FILE_NAME,
   buildChatBundleFixture,
   clipboardWriteTextMock,
   createGistMock,
@@ -41,7 +42,7 @@ describe("chat gist export and import", () => {
     await teardownChatGistCase(tmpRoot);
   });
 
-  it("exports chat bundle to private gist with chat-bundle.json only", async () => {
+  it("exports chat bundle to private gist with cursor-chat.json only", async () => {
     const workspaceKey = "chat-export-wk";
     const projectKey = "chat-export-project";
     const conversationId = gistConversationId(1);
@@ -71,15 +72,16 @@ describe("chat gist export and import", () => {
       Record<string, { content: string }>,
       string,
     ];
-    expect(Object.keys(gistFiles)).toEqual([CHAT_BUNDLE_GIST_FILE_NAME]);
+    expect(Object.keys(gistFiles)).toEqual([CURSOR_CHAT_GIST_FILE_NAME]);
     expect(description).toBe("Cursor Sync - Chat Export");
     expect(createGistMock.mock.calls[0]).toHaveLength(2);
 
-    const bundle = JSON.parse(gistFiles[CHAT_BUNDLE_GIST_FILE_NAME].content) as ChatBundle;
-    expect(bundle.type).toBe("chat-persistence");
-    expect(bundle.schemaVersion).toBe(1);
-    expect(bundle.conversationId).toBe(conversationId);
-    expect(bundle.transcriptFiles).toHaveLength(1);
+    const doc = JSON.parse(gistFiles[CURSOR_CHAT_GIST_FILE_NAME].content) as {
+      version: number;
+      conversationId: string;
+    };
+    expect(doc.version).toBe(1);
+    expect(doc.conversationId).toBe(conversationId);
     expect(clipboardWriteTextMock).toHaveBeenCalledWith(
       "https://gist.github.com/example/gist-chat-export"
     );
@@ -200,7 +202,7 @@ describe("chat gist export and import", () => {
     mockExportPicker(workspaceKey, [conversationId1, conversationId2]);
     showInformationMessageMock.mockResolvedValue(undefined);
     createGistMock.mockImplementation(async (gistFiles: Record<string, { content: string }>) => {
-      exportedCollectionJson = gistFiles[CHAT_BUNDLES_GIST_FILE_NAME].content;
+      exportedCollectionJson = gistFiles[CURSOR_CHAT_GIST_FILE_NAME].content;
       return {
         ok: true,
         data: {
@@ -221,10 +223,10 @@ describe("chat gist export and import", () => {
     expect(exportedCollectionJson).not.toBe("");
     const exportedCollection = JSON.parse(exportedCollectionJson) as {
       type: string;
-      bundles: ChatBundle[];
+      chats: unknown[];
     };
-    expect(exportedCollection.type).toBe("chat-bundles-collection");
-    expect(exportedCollection.bundles).toHaveLength(2);
+    expect(exportedCollection.type).toBe("cursor-chat-collection");
+    expect(exportedCollection.chats).toHaveLength(2);
 
     const importTargetKey = folderToProjectKey(mockWorkspaceFolder);
     const importTargetDir = path.join(tmpRoot, ".cursor", "projects", importTargetKey);
@@ -250,7 +252,7 @@ describe("chat gist export and import", () => {
         html_url: "https://gist.github.com/example/gist-roundtrip",
         description: "Cursor Sync - Chat Export",
         files: {
-          [CHAT_BUNDLES_GIST_FILE_NAME]: { content: exportedCollectionJson },
+          [CURSOR_CHAT_GIST_FILE_NAME]: { content: exportedCollectionJson },
         },
         created_at: "2026-05-20T12:00:00.000Z",
         updated_at: "2026-05-20T12:00:00.000Z",
@@ -321,7 +323,7 @@ describe("chat gist export and import", () => {
 
     expect(restoreSpy).not.toHaveBeenCalled();
     expect(showErrorMessageMock).toHaveBeenCalledWith(
-      "Gist chat import failed: Gist does not contain chat-bundle.json. Export a chat with Cursor Sync: Export Chat to Private Gist first."
+      "Gist chat import failed: Gist does not contain cursor-chat.json. Export a chat with Cursor Sync: Export Chat to Private Gist first."
     );
     restoreSpy.mockRestore();
   });
@@ -351,7 +353,7 @@ describe("chat gist export and import", () => {
 
     expect(restoreSpy).not.toHaveBeenCalled();
     expect(showErrorMessageMock).toHaveBeenCalledWith(
-      "Gist chat import failed: Gist does not contain a chat bundle (chat-bundle.json). This Gist is an agent transcript export. Use Cursor Sync: Import Agent Transcripts from Private Gist."
+      "Gist chat import failed: Gist does not contain a chat export (cursor-chat.json). This Gist is an agent transcript export. Use Cursor Sync: Import Agent Transcripts from Private Gist."
     );
     restoreSpy.mockRestore();
   });
@@ -387,7 +389,7 @@ describe("chat gist export and import", () => {
 
     expect(restoreSpy).not.toHaveBeenCalled();
     expect(showErrorMessageMock).toHaveBeenCalledWith(
-      'Gist chat import failed: Invalid chat export: expected type "chat-persistence" or "chat-bundles-collection", got "agent-transcripts".'
+      'Gist chat import failed: Invalid chat export: expected native cursor-chat.json, type "chat-persistence", or "chat-bundles-collection", got "agent-transcripts".'
     );
     restoreSpy.mockRestore();
   });
@@ -547,7 +549,7 @@ describe("chat gist export and import", () => {
     restoreSpy.mockRestore();
   });
 
-  it("exports multiple chats to chat-bundles.json", async () => {
+  it("exports multiple chats to cursor-chat.json", async () => {
     const workspaceKey = "multi-export-wk";
     const id1 = gistConversationId(6);
     const id2 = gistConversationId(7);
@@ -576,13 +578,13 @@ describe("chat gist export and import", () => {
       Record<string, { content: string }>,
       string,
     ];
-    expect(Object.keys(gistFiles)).toEqual([CHAT_BUNDLES_GIST_FILE_NAME]);
-    const collection = JSON.parse(gistFiles[CHAT_BUNDLES_GIST_FILE_NAME].content) as {
+    expect(Object.keys(gistFiles)).toEqual([CURSOR_CHAT_GIST_FILE_NAME]);
+    const collection = JSON.parse(gistFiles[CURSOR_CHAT_GIST_FILE_NAME].content) as {
       type: string;
-      bundles: unknown[];
+      chats: unknown[];
     };
-    expect(collection.type).toBe("chat-bundles-collection");
-    expect(collection.bundles).toHaveLength(2);
+    expect(collection.type).toBe("cursor-chat-collection");
+    expect(collection.chats).toHaveLength(2);
     expect(
       showInformationMessageMock.mock.calls.some((c) =>
         String(c[0]).includes("2 chats in private Gist")

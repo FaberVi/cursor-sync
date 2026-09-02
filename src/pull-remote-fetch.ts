@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { requireToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
-import { detectConflicts, getResolutionForKey, getUnresolvedConflicts } from "./conflicts.js";
+import { detectConflicts, getResolutionForKey, gateUnresolvedConflicts } from "./conflicts.js";
 import { buildSyncDebugFailure, showSyncFailureWithDebug } from "./sync-debug.js";
 import { sendEvent } from "./analytics.js";
 import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
@@ -26,6 +26,7 @@ import type { SyncProgressReport } from "./sync-progress-events.js";
 import { formatElapsedPrecise } from "./elapsed.js";
 import { planPullDownloadNames } from "./pull-download-plan.js";
 import type { ApiResult, ConflictEntry, Manifest, SyncState } from "./types.js";
+import { throwIfAborted } from "./sync-abort.js";
 
 export type PullTrigger = "manual" | "scheduled" | "syncNow";
 export type PullRemoteFetchSuccess = {
@@ -297,7 +298,8 @@ export async function fetchPullRemote(
   progress.report({ message: "Checking for conflicts…" });
   const conflicts = await detectConflicts(context, remoteChecksums);
   if (conflicts.length > 0) {
-    const unresolved = getUnresolvedConflicts(conflicts);
+    const { unresolved, prompted } = await gateUnresolvedConflicts(trigger, conflicts);
+    throwIfAborted();
     if (unresolved.length > 0) {
       const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pulling.`;
       void showSyncFailureWithDebug(
@@ -320,9 +322,9 @@ export async function fetchPullRemote(
         files: unresolved.map((c) => c.relativeSyncKey).sort(),
       });
       sendEvent(context, "sync_failed", { direction: "pull", reason: "CONFLICT", trigger });
-      if (trigger === "manual") {
-        await vscode.commands.executeCommand("cursorSync.resolveConflicts");
-      }
+      return { ok: false };
+    }
+    if (prompted) {
       return { ok: false };
     }
   }
@@ -365,6 +367,10 @@ async function reportPullRemoteFailure(
   snapshotResult: Extract<ApiResult<RemoteSnapshot>, { ok: false }>,
   logger: vscode.OutputChannel
 ): Promise<void> {
+  if (snapshotResult.error.category === "CANCELLED") {
+    logger.appendLine(`[${new Date().toISOString()}] Pull cancelled`);
+    return;
+  }
   void showSyncFailureWithDebug(
     context,
     buildSyncDebugFailure("pull", trigger, snapshotResult.error.message, {

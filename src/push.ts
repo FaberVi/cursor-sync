@@ -5,12 +5,13 @@ import { syncKeyToGistFileName, resolveSyncRoots } from "./paths.js";
 import { requireToken, validateStoredToken } from "./auth.js";
 import { withRetry } from "./retry.js";
 import { loadSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
+import { notifySyncQuiet } from "./sync-notify.js";
 import {
   detectConflicts,
-  getUnresolvedConflicts,
+  gateUnresolvedConflicts,
   getResolutionForKey,
 } from "./conflicts.js";
-import { updateStatusBar } from "./statusbar.js";
+import { updateStatusBar, restoreStatusBarAfterCancel } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
 import {
@@ -31,6 +32,15 @@ import { ensureParentDirectory } from "./rollback.js";
 import type { ManifestFileEntry } from "./types.js";
 import { packagePushFiles } from "./push-package.js";
 import { writePushRemote } from "./push-write.js";
+import {
+  beginSyncAbort,
+  commitSyncFileJournal,
+  endSyncAbort,
+  finishCancelledOperation,
+  isAbortError,
+  isSyncAborted,
+  throwIfAborted,
+} from "./sync-abort.js";
 
 export type PushTrigger = "manual" | "scheduled";
 
@@ -53,11 +63,22 @@ export async function executePush(
 
   pushLock = true;
   updateStatusBar("syncing");
+  beginSyncAbort();
   const progress = createSidebarSyncProgress("push");
   const startedAt = Date.now();
   try {
     progress.report({ message: "Starting push…" });
     const success = await doPush(context, trigger, progress);
+    if (!success && isSyncAborted()) {
+      await finishCancelledOperation(context, "push", trigger);
+      progress.complete(false);
+      restoreStatusBarAfterCancel();
+      refreshSidebar();
+      return false;
+    }
+    if (success) {
+      commitSyncFileJournal();
+    }
     progress.complete(success);
     getLogger().appendLine(
       `[${new Date().toISOString()}] Push finished in ${formatElapsedPrecise(Date.now() - startedAt)} (${success ? "ok" : "failed"}).`
@@ -70,6 +91,12 @@ export async function executePush(
     getLogger().appendLine(
       `[${new Date().toISOString()}] Push finished in ${formatElapsedPrecise(Date.now() - startedAt)} (failed).`
     );
+    if (isAbortError(err) || isSyncAborted()) {
+      await finishCancelledOperation(context, "push", trigger);
+      restoreStatusBarAfterCancel();
+      refreshSidebar();
+      return false;
+    }
     updateStatusBar("error", new Date());
     refreshSidebar();
     const errMessage = err instanceof Error ? err.message : String(err);
@@ -83,6 +110,7 @@ export async function executePush(
     return false;
   } finally {
     pushLock = false;
+    endSyncAbort();
   }
 }
 
@@ -212,6 +240,12 @@ async function doPush(
     : {};
   let remoteManifestFiles: Record<string, ManifestFileEntry> = {};
   let existingRemoteNames: string[] = [];
+  if (
+    !snapshotResult.ok &&
+    (snapshotResult.error.category === "CANCELLED" || isSyncAborted())
+  ) {
+    return false;
+  }
   let forceFullUpload = !snapshotResult.ok;
 
   if (snapshotResult.ok) {
@@ -240,13 +274,15 @@ async function doPush(
   logger.appendLine(
     `[Cursor Sync] Remote manifest ready in ${formatElapsedPrecise(Date.now() - remoteStarted)}.`
   );
+  throwIfAborted();
 
   let keepRemoteKeys = new Set<string>();
   if (syncState) {
     progress.report({ message: "Checking for conflicts…" });
     const conflicts = await detectConflicts(context, remoteChecksums);
     if (conflicts.length > 0) {
-      const unresolved = getUnresolvedConflicts(conflicts);
+      const { unresolved, prompted } = await gateUnresolvedConflicts(trigger, conflicts);
+      throwIfAborted();
       if (unresolved.length > 0) {
         const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pushing.`;
         void showSyncFailureWithDebug(
@@ -269,9 +305,19 @@ async function doPush(
           files: unresolved.map((c) => c.relativeSyncKey).sort(),
         });
         sendEvent(context, "sync_failed", { direction: "push", reason: "CONFLICT", trigger });
-        if (trigger === "manual") {
-          await vscode.commands.executeCommand("cursorSync.resolveConflicts");
-        }
+        return false;
+      }
+      if (prompted) {
+        await addSyncHistoryEntry(context, {
+          timestamp: new Date().toISOString(),
+          direction: "push",
+          trigger,
+          fileCount: 0,
+          success: true,
+          error: "Conflicts resolved; run Sync Now to push",
+          files: conflicts.map((c) => c.relativeSyncKey).sort(),
+        });
+        notifySyncQuiet("Conflicts resolved. Run Sync Now to push.");
         return false;
       }
       for (const conflict of conflicts) {

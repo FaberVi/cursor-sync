@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import { clearToken } from "./auth.js";
 import { clearSyncState } from "./diagnostics.js";
 import { clearLastRemoteExtensions } from "./extensions.js";
@@ -7,7 +8,7 @@ import { refreshSidebar } from "./sidebar/index.js";
 
 export async function executeReset(context: vscode.ExtensionContext): Promise<void> {
   const confirmation = await vscode.window.showWarningMessage(
-    "Are you sure you want to reset Cursor Sync? This will remove your GitHub token, sync state, and reset extension settings to their defaults.",
+    `Are you sure you want to reset ${EXTENSION_LABEL}? This will remove your GitHub token, sync state, and reset extension settings to their defaults.`,
     { modal: true },
     "Reset"
   );
@@ -51,5 +52,5 @@ export async function executeReset(context: vscode.ExtensionContext): Promise<vo
   updateStatusBar("unconfigured");
   refreshSidebar();
 
-  vscode.window.showInformationMessage("Cursor Sync has been fully reset.");
+  vscode.window.showInformationMessage(`${EXTENSION_LABEL} has been fully reset.`);
 }

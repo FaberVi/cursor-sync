@@ -36,6 +36,7 @@
     syncNow: true,
     push: true,
     pull: true,
+    pullMirror: true,
   };
 
   CSW.setSyncActionsLocked = function (locked) {
@@ -44,6 +45,7 @@
       '.sync-now-btn[data-command="syncNow"]',
       '.action-btn[data-command="push"]',
       '.action-btn[data-command="pull"]',
+      '.action-btn[data-command="pullMirror"]',
     ];
     selectors.forEach(function (sel) {
       document.querySelectorAll(sel).forEach(function (btn) {

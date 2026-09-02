@@ -23,6 +23,7 @@ export interface SyncTabState {
   remoteChatCount: number | undefined;
   /** True while local/remote chat counts are still being computed. */
   chatCountsLoading?: boolean;
+  pendingConflicts?: Array<{ relativeSyncKey: string; resolution?: string }>;
 }
 
 export function relativeTime(isoString: string): string {
@@ -193,6 +194,32 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
 
   const historyHtml = renderHistorySection(state.history, historyPage);
 
+  const conflictRows = state.pendingConflicts ?? [];
+  const conflictsHtml =
+    conflictRows.length === 0
+      ? ""
+      : `<div class="section conflicts-section">
+    <div class="section-header">${escapeHtml(t("conflictsTitle"))} <span class="tab-badge">${conflictRows.length}</span></div>
+    <div class="conflict-actions-all">
+      <button type="button" class="action-btn" data-command="conflicts:setAll" data-resolution="keepLocal">${escapeHtml(t("conflictsApplyAllLocal"))}</button>
+      <button type="button" class="action-btn" data-command="conflicts:setAll" data-resolution="keepRemote">${escapeHtml(t("conflictsApplyAllRemote"))}</button>
+      <button type="button" class="action-btn action-btn-secondary" data-command="conflicts:setAll" data-resolution="skip">${escapeHtml(t("conflictsApplyAllSkip"))}</button>
+    </div>
+    ${conflictRows
+      .map((c) => {
+        const current = c.resolution ?? "skip";
+        return `<div class="conflict-row" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}">
+      <div class="conflict-key">${escapeHtml(c.relativeSyncKey)}</div>
+      <div class="conflict-buttons">
+        <button type="button" class="pager-btn${current === "keepLocal" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="keepLocal">${escapeHtml(t("conflictsKeepLocal"))}</button>
+        <button type="button" class="pager-btn${current === "keepRemote" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="keepRemote">${escapeHtml(t("conflictsKeepRemote"))}</button>
+        <button type="button" class="pager-btn${current === "skip" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="skip">${escapeHtml(t("conflictsSkip"))}</button>
+      </div>
+    </div>`;
+      })
+      .join("")}
+  </div>`;
+
   const chatStatusLine = state.chatCountsLoading
     ? `<span class="chat-sync-loading">${escapeHtml(t("loading"))}</span>`
     : state.chatsSyncEnabled
@@ -248,6 +275,8 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
 
   <div class="file-count chat-sync-status">${chatStatusLine}</div>
 
+  ${conflictsHtml}
+
   <button class="sync-now-btn" data-command="syncNow">
     <span class="codicon codicon-sync" aria-hidden="true"></span>
     <span class="sync-now-label">${escapeHtml(t("syncNow"))}</span>
@@ -258,6 +287,7 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
     <div class="action-grid">
       <button class="action-btn" data-command="push"><span class="codicon codicon-cloud-upload"></span> ${escapeHtml(t("push"))}</button>
       <button class="action-btn" data-command="pull"><span class="codicon codicon-cloud-download"></span> ${escapeHtml(t("pull"))}</button>
+      <button class="action-btn action-btn-secondary" data-command="pullMirror" title="${escapeHtml(t("pullMirrorHint"))}"><span class="codicon codicon-mirror"></span> ${escapeHtml(t("pullMirror"))}</button>
       <button class="action-btn" data-command="export"><span class="codicon codicon-export"></span> ${escapeHtml(t("export"))}</button>
       <button class="action-btn" data-command="import"><span class="codicon codicon-desktop-download"></span> ${escapeHtml(t("import"))}</button>
     </div>

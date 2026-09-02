@@ -46,6 +46,8 @@ export interface ChatBundle {
   title: string;
   subtitle: string;
   previewText: string;
+  /** Portable workspace folder (`~/Documents/foo`). Identity with conversationId. */
+  sourceFolderTilde?: string;
   sidebarSnapshot: Record<string, unknown> | null;
   storeSnapshot: {
     content: string;
@@ -69,6 +71,9 @@ export interface LoadChatResult {
   transcriptsWritten: number;
   storeWritten: boolean;
   storeWorkspaceKey?: string;
+  restoredFolder?: string;
+  sourceFolderTilde?: string;
+  activated?: boolean;
   sidebarMerged: boolean;
   warnings: string[];
   verifyChecks?: VerifyCheck[];
@@ -85,6 +90,10 @@ export interface RestoreChatBundleOptions {
   pinRecent?: boolean;
   workspaceFolder?: string;
   postActivate?: boolean;
+  /** Shared tilde → folder picks for a restore batch. */
+  destinationCache?: {
+    resolvedByTilde: Map<string, string | null>;
+  };
 }
 
 export function restoreOptionsFromConfiguration(): RestoreChatBundleOptions {

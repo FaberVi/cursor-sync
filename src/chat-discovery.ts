@@ -4,7 +4,8 @@ import {
   buildChatsKeyToFolderMap,
   md5FolderKey,
 } from "./chat-workspace-context.js";
-import { projectGroupSidebarLabel } from "./chat-workspace-label.js";
+import { formatDisplayPath, projectGroupSidebarLabel } from "./chat-workspace-label.js";
+import { chatIdentityKey } from "./chat-identity.js";
 import { resolveSyncRoots } from "./paths.js";
 import {
   discoverProjects,
@@ -50,6 +51,9 @@ export interface DiscoveredConversation {
   jsonlCount: number;
   subagentJsonlCount: number;
   sources: ConversationSource[];
+  storeSizeBytes?: number;
+  storeMtimeMs?: number;
+  transcriptMtimeMs?: number;
 }
 
 export interface ConversationProjectGroup {
@@ -68,11 +72,83 @@ export interface MutableDiscovered {
   jsonlCount: number;
   subagentJsonlCount: number;
   sources: Set<ConversationSource>;
+  storeSizeBytes?: number;
+  storeMtimeMs?: number;
+  transcriptMtimeMs?: number;
 }
 
 export function resolveProjectsRoot(): string {
   const { dotCursor } = resolveSyncRoots();
   return path.join(dotCursor, "projects");
+}
+
+export function discoveryMapKey(workspaceKey: string, conversationId: string): string {
+  return workspaceKey ? `${workspaceKey}\0${conversationId}` : conversationId;
+}
+
+export function discoveryMapHasConversation(
+  map: Map<string, MutableDiscovered>,
+  conversationId: string
+): boolean {
+  if (map.has(conversationId)) {
+    return true;
+  }
+  const suffix = `\0${conversationId}`;
+  for (const key of map.keys()) {
+    if (key.endsWith(suffix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function applyDiscoveryPatch(
+  existing: MutableDiscovered,
+  patch: {
+    workspaceKey?: string;
+    projectKey?: string;
+    hasStore?: boolean;
+    jsonlCount?: number;
+    subagentJsonlCount?: number;
+    storeSizeBytes?: number;
+    storeMtimeMs?: number;
+    transcriptMtimeMs?: number;
+    source: ConversationSource;
+  }
+): void {
+  if (patch.hasStore) {
+    existing.hasStore = true;
+  }
+  if (typeof patch.jsonlCount === "number" && patch.jsonlCount > existing.jsonlCount) {
+    existing.jsonlCount = patch.jsonlCount;
+  }
+  if (
+    typeof patch.subagentJsonlCount === "number" &&
+    patch.subagentJsonlCount > existing.subagentJsonlCount
+  ) {
+    existing.subagentJsonlCount = patch.subagentJsonlCount;
+  }
+  if (typeof patch.storeSizeBytes === "number") {
+    existing.storeSizeBytes = Math.max(existing.storeSizeBytes ?? 0, patch.storeSizeBytes);
+  }
+  if (typeof patch.storeMtimeMs === "number") {
+    existing.storeMtimeMs = Math.max(existing.storeMtimeMs ?? 0, patch.storeMtimeMs);
+  }
+  if (typeof patch.transcriptMtimeMs === "number") {
+    existing.transcriptMtimeMs = Math.max(
+      existing.transcriptMtimeMs ?? 0,
+      patch.transcriptMtimeMs
+    );
+  }
+  const workspaceKey = patch.workspaceKey ?? "";
+  const projectKey = patch.projectKey ?? "";
+  if (!existing.workspaceKey && workspaceKey) {
+    existing.workspaceKey = workspaceKey;
+  }
+  if (!existing.projectKey && projectKey) {
+    existing.projectKey = projectKey;
+  }
+  existing.sources.add(patch.source);
 }
 
 export function upsertConversation(
@@ -84,6 +160,9 @@ export function upsertConversation(
     hasStore?: boolean;
     jsonlCount?: number;
     subagentJsonlCount?: number;
+    storeSizeBytes?: number;
+    storeMtimeMs?: number;
+    transcriptMtimeMs?: number;
     source: ConversationSource;
   }
 ): void {
@@ -92,30 +171,34 @@ export function upsertConversation(
   }
   const workspaceKey = patch.workspaceKey ?? "";
   const projectKey = patch.projectKey ?? "";
-  const existing = map.get(conversationId);
+  const key = discoveryMapKey(workspaceKey, conversationId);
+
+  let existing = map.get(key);
+  if (!existing && workspaceKey) {
+    const idOnly = map.get(conversationId);
+    if (idOnly) {
+      map.delete(conversationId);
+      idOnly.workspaceKey = workspaceKey;
+      map.set(key, idOnly);
+      existing = idOnly;
+    }
+  }
+  if (!existing && !workspaceKey) {
+    const composites = [...map.values()].filter(
+      (entry) => entry.conversationId === conversationId && entry.workspaceKey
+    );
+    if (composites.length > 0) {
+      for (const entry of composites) {
+        applyDiscoveryPatch(entry, patch);
+      }
+      return;
+    }
+  }
   if (existing) {
-    if (patch.hasStore) {
-      existing.hasStore = true;
-    }
-    if (typeof patch.jsonlCount === "number" && patch.jsonlCount > existing.jsonlCount) {
-      existing.jsonlCount = patch.jsonlCount;
-    }
-    if (
-      typeof patch.subagentJsonlCount === "number" &&
-      patch.subagentJsonlCount > existing.subagentJsonlCount
-    ) {
-      existing.subagentJsonlCount = patch.subagentJsonlCount;
-    }
-    if (!existing.workspaceKey && workspaceKey) {
-      existing.workspaceKey = workspaceKey;
-    }
-    if (!existing.projectKey && projectKey) {
-      existing.projectKey = projectKey;
-    }
-    existing.sources.add(patch.source);
+    applyDiscoveryPatch(existing, patch);
     return;
   }
-  map.set(conversationId, {
+  map.set(key, {
     conversationId,
     workspaceKey,
     projectKey,
@@ -123,6 +206,9 @@ export function upsertConversation(
     jsonlCount: patch.jsonlCount ?? 0,
     subagentJsonlCount: patch.subagentJsonlCount ?? 0,
     sources: new Set([patch.source]),
+    storeSizeBytes: patch.storeSizeBytes,
+    storeMtimeMs: patch.storeMtimeMs,
+    transcriptMtimeMs: patch.transcriptMtimeMs,
   });
 }
 
@@ -185,8 +271,17 @@ function finalizeDiscovered(map: Map<string, MutableDiscovered>): DiscoveredConv
       jsonlCount: entry.jsonlCount,
       subagentJsonlCount: entry.subagentJsonlCount,
       sources: [...entry.sources].sort() as ConversationSource[],
+      storeSizeBytes: entry.storeSizeBytes,
+      storeMtimeMs: entry.storeMtimeMs,
+      transcriptMtimeMs: entry.transcriptMtimeMs,
     }))
-    .sort((a, b) => a.conversationId.localeCompare(b.conversationId));
+    .sort((a, b) => {
+      const idCmp = a.conversationId.localeCompare(b.conversationId);
+      if (idCmp !== 0) {
+        return idCmp;
+      }
+      return a.workspaceKey.localeCompare(b.workspaceKey);
+    });
 }
 
 export async function discoverAllConversations(): Promise<DiscoveredConversation[]> {
@@ -303,7 +398,20 @@ export async function discoverConversationsGroupedByProject(): Promise<
 
 export { discoveredToExportRows } from "./chat-discovery-export.js";
 
-export async function collectLocalConversationIds(): Promise<Set<string>> {
+export async function collectLocalChatIdentities(): Promise<Set<string>> {
   const discovered = await discoverBackupEligibleConversations();
-  return new Set(discovered.map((d) => d.conversationId));
+  const { cursorUser } = resolveSyncRoots();
+  const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+  const identities = new Set<string>();
+  for (const d of discovered) {
+    const folder = d.workspaceKey ? folderMap.get(d.workspaceKey) : undefined;
+    const tilde = folder ? formatDisplayPath(folder) : "";
+    identities.add(chatIdentityKey(tilde, d.conversationId));
+  }
+  return identities;
+}
+
+/** @deprecated Use {@link collectLocalChatIdentities} (composite tilde+id keys). */
+export async function collectLocalConversationIds(): Promise<Set<string>> {
+  return collectLocalChatIdentities();
 }

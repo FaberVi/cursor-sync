@@ -1,4 +1,4 @@
-import { syncKeyToGistFileName } from "./paths.js";
+import { isMcpSyncEnabled, isMcpSyncKey, syncKeyToGistFileName } from "./paths.js";
 
 export const EXTENSIONS_GIST_FILE_NAME = "cursor-user--extensions.json";
 export const EXTENSIONS_SYNC_KEY = "cursor-user/extensions.json";
@@ -22,6 +22,9 @@ export function planPullDownloadNames(options: {
 
   for (const [syncKey, remoteChecksum] of Object.entries(options.manifestChecksums)) {
     if (options.keepLocalKeys.has(syncKey)) {
+      continue;
+    }
+    if (!isMcpSyncEnabled() && isMcpSyncKey(syncKey)) {
       continue;
     }
     if (chatSyncKeys.has(syncKey)) {

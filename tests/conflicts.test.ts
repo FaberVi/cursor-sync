@@ -48,6 +48,24 @@ describe("conflicts", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("skips mcp.json conflicts when MCP sync is off", async () => {
+    const { findConflicts } = await import("../src/conflicts.js");
+    const original = "aaa";
+    const changed = "bbb";
+    const conflicts = findConflicts(
+      {
+        lastSyncTimestamp: "2026-01-01T00:00:00.000Z",
+        lastSyncDirection: "push",
+        gistId: "g",
+        localChecksums: { "dot-cursor/mcp.json": original },
+        remoteChecksums: { "dot-cursor/mcp.json": original },
+      },
+      { "dot-cursor/mcp.json": changed },
+      { "dot-cursor/mcp.json": "ccc" }
+    );
+    expect(conflicts).toEqual([]);
+  });
+
   it("detects no conflicts when sync state is absent", async () => {
     const { detectConflicts } = await import("../src/conflicts.js");
     const context = makeContext();
@@ -322,4 +340,150 @@ describe("conflicts", () => {
       false
     );
   });
+
+  describe("gateUnresolvedConflicts", () => {
+    const sample = {
+      relativeSyncKey: "cursor-user/settings.json",
+      localChecksum: "a",
+      remoteChecksum: "b",
+      baseChecksum: "c",
+    };
+
+    it("scheduled returns unresolved without prompting", async () => {
+      const vscode = await import("vscode");
+      const executeCommand = vi
+        .spyOn(vscode.commands, "executeCommand")
+        .mockResolvedValue(undefined);
+
+      const { gateUnresolvedConflicts, clearConflicts } = await import(
+        "../src/conflicts.js"
+      );
+      const result = await gateUnresolvedConflicts("scheduled", [sample]);
+      expect(result).toEqual({ unresolved: [sample], prompted: false });
+      expect(executeCommand).not.toHaveBeenCalledWith(
+        "cursorSync.resolveConflicts"
+      );
+      await clearConflicts();
+    });
+
+    it("already-resolved keepLocal/keepRemote does not prompt", async () => {
+      const vscode = await import("vscode");
+      const executeCommand = vi
+        .spyOn(vscode.commands, "executeCommand")
+        .mockResolvedValue(undefined);
+
+      const {
+        gateUnresolvedConflicts,
+        setPendingResolutionsForTests,
+        clearConflicts,
+      } = await import("../src/conflicts.js");
+      setPendingResolutionsForTests([
+        { relativeSyncKey: sample.relativeSyncKey, resolution: "keepLocal" },
+      ]);
+      const result = await gateUnresolvedConflicts("manual", [sample]);
+      expect(result).toEqual({ unresolved: [], prompted: false });
+      expect(executeCommand).not.toHaveBeenCalledWith(
+        "cursorSync.resolveConflicts"
+      );
+      await clearConflicts();
+    });
+
+    it("manual skip leaves unresolved after prompt", async () => {
+      const {
+        gateUnresolvedConflicts,
+        setPendingResolutionsForTests,
+        clearConflicts,
+      } = await import("../src/conflicts.js");
+      const vscode = await import("vscode");
+      const executeCommand = vi
+        .spyOn(vscode.commands, "executeCommand")
+        .mockImplementation(async (cmd: string) => {
+          if (cmd === "cursorSync.resolveConflicts") {
+            setPendingResolutionsForTests([
+              { relativeSyncKey: sample.relativeSyncKey, resolution: "skip" },
+            ]);
+          }
+        });
+
+      const result = await gateUnresolvedConflicts("manual", [sample]);
+      expect(result.prompted).toBe(true);
+      expect(result.unresolved).toEqual([sample]);
+      expect(executeCommand).toHaveBeenCalledWith("cursorSync.resolveConflicts");
+      await clearConflicts();
+    });
+
+    it("manual cancel leaves unresolved after prompt", async () => {
+      const vscode = await import("vscode");
+      const executeCommand = vi
+        .spyOn(vscode.commands, "executeCommand")
+        .mockResolvedValue(undefined);
+
+      const { gateUnresolvedConflicts, clearConflicts } = await import(
+        "../src/conflicts.js"
+      );
+      const result = await gateUnresolvedConflicts("manual", [sample]);
+      expect(result.prompted).toBe(true);
+      expect(result.unresolved).toEqual([sample]);
+      expect(executeCommand).toHaveBeenCalledWith("cursorSync.resolveConflicts");
+      await clearConflicts();
+    });
+
+    it("manual full resolve returns prompted with empty unresolved", async () => {
+      const {
+        gateUnresolvedConflicts,
+        setPendingResolutionsForTests,
+        clearConflicts,
+      } = await import("../src/conflicts.js");
+      const vscode = await import("vscode");
+      const executeCommand = vi
+        .spyOn(vscode.commands, "executeCommand")
+        .mockImplementation(async (cmd: string) => {
+          if (cmd === "cursorSync.resolveConflicts") {
+            setPendingResolutionsForTests([
+              {
+                relativeSyncKey: sample.relativeSyncKey,
+                resolution: "keepRemote",
+              },
+            ]);
+          }
+        });
+
+      const result = await gateUnresolvedConflicts("syncNow", [sample]);
+      expect(result).toEqual({ unresolved: [], prompted: true });
+      expect(executeCommand).toHaveBeenCalledWith("cursorSync.resolveConflicts");
+    await clearConflicts();
+  });
+
+  it("applyConflictResolutionToAll sets one decision for every pending file", async () => {
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
+    const {
+      registerPendingConflicts,
+      applyConflictResolutionToAll,
+      getResolutionForKey,
+      getUnresolvedConflicts,
+      getPendingConflicts,
+      clearConflicts,
+    } = await import("../src/conflicts.js");
+    await registerPendingConflicts([
+      {
+        relativeSyncKey: "cursor-user/settings.json",
+        localChecksum: "a",
+        remoteChecksum: "b",
+        baseChecksum: "c",
+      },
+      {
+        relativeSyncKey: "cursor-user/keybindings.json",
+        localChecksum: "d",
+        remoteChecksum: "e",
+        baseChecksum: "f",
+      },
+    ]);
+    await applyConflictResolutionToAll("keepLocal");
+    expect(getResolutionForKey("cursor-user/settings.json")).toBe("keepLocal");
+    expect(getResolutionForKey("cursor-user/keybindings.json")).toBe("keepLocal");
+    expect(getUnresolvedConflicts(getPendingConflicts())).toEqual([]);
+    await clearConflicts();
+  });
+});
 });

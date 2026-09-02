@@ -17,8 +17,8 @@ import { querySqliteRows } from "./transcripts-sqlite.js";
 import {
   CHAT_ID_RE,
   TRANSCRIPT_SCAN_MAX_BYTES,
+  discoveryMapHasConversation,
   upsertConversation,
-  type ConversationSource,
   type MutableDiscovered,
 } from "./chat-discovery.js";
 
@@ -109,14 +109,16 @@ export async function discoverFromStoreDb(
         if (!stat.isFile()) {
           continue;
         }
+        upsertConversation(map, convEntry.name, {
+          workspaceKey,
+          hasStore: true,
+          storeSizeBytes: stat.size,
+          storeMtimeMs: Math.trunc(stat.mtimeMs),
+          source: "disk",
+        });
       } catch {
         continue;
       }
-      upsertConversation(map, convEntry.name, {
-        workspaceKey,
-        hasStore: true,
-        source: "disk",
-      });
     }
   }
 }
@@ -157,23 +159,34 @@ export async function discoverFromTranscripts(
       if (files.length === 0) {
         continue;
       }
-      const keys = await findWorkspaceKeysForConversation(conversationId);
-      const workspaceKey = keys[0] ?? "";
-      if (
-        options.workspaceKeyFilter &&
-        workspaceKey &&
-        workspaceKey !== options.workspaceKeyFilter
-      ) {
-        continue;
+      let transcriptMtimeMs = 0;
+      try {
+        const tstat = await fs.stat(path.join(transcriptsDir, conversationId));
+        transcriptMtimeMs = Math.trunc(tstat.mtimeMs);
+      } catch {
+        /* keep 0 */
       }
-      upsertConversation(map, conversationId, {
-        workspaceKey,
-        projectKey: project.folderName,
-        jsonlCount: files.length,
-        subagentJsonlCount: countSubagentJsonlFiles(files),
-        hasStore: keys.length > 0,
-        source: "transcript",
-      });
+      const keys = await findWorkspaceKeysForConversation(conversationId);
+      const workspaceKeys =
+        keys.length > 0 ? keys : ([""] as string[]);
+      for (const workspaceKey of workspaceKeys) {
+        if (
+          options.workspaceKeyFilter &&
+          workspaceKey &&
+          workspaceKey !== options.workspaceKeyFilter
+        ) {
+          continue;
+        }
+        upsertConversation(map, conversationId, {
+          workspaceKey,
+          projectKey: project.folderName,
+          jsonlCount: files.length,
+          subagentJsonlCount: countSubagentJsonlFiles(files),
+          hasStore: keys.length > 0,
+          transcriptMtimeMs,
+          source: "transcript",
+        });
+      }
     }
   }
 }
@@ -194,7 +207,7 @@ export async function discoverHeaderOnlyTranscriptDirs(
       continue;
     }
     const conversationId = ent.name;
-    if (!CHAT_ID_RE.test(conversationId) || map.has(conversationId)) {
+    if (!CHAT_ID_RE.test(conversationId) || discoveryMapHasConversation(map, conversationId)) {
       continue;
     }
     const files = await enumerateTranscriptFilesInConversation(

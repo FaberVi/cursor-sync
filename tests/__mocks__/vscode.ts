@@ -75,7 +75,7 @@ export enum ConfigurationTarget {
 }
 
 const mockGlobalConfig: Record<string, unknown> = {
-  "chats.syncEnabled": true,
+  "chats.syncEnabled": false,
   "chatImport.activateDefault": false,
   "chatImport.activateStrict": false,
   "chatImport.bridgeWaitResultSeconds": 0,
@@ -125,6 +125,9 @@ export const workspace = {
           "commands/**/*.md",
           "rules/*.mdc",
           "agents/*.md",
+          "cli-config.json",
+          "hooks.json",
+          "tasks.json",
         ],
         excludeGlobs: [],
         maxFileSizeKB: 512,
@@ -138,6 +141,8 @@ export const workspace = {
         "destination.repo": "",
         "destination.branch": "main",
         "destination.path": "cursor-sync",
+        "mcp.syncEnabled": false,
+        "chats.syncEnabled": false,
       };
       return (defaults[key] as T) ?? defaultValue;
     },

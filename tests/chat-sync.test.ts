@@ -15,6 +15,7 @@ import {
   selectChatsToPull,
   computeChatCollectionChecksum,
   collectionJsonFromBundles,
+  isChatSyncEnabled,
 } from "../src/chat-sync.js";
 
 function stubBundle(conversationId: string, createdAt: string, title = "Chat"): ChatBundle {
@@ -41,6 +42,10 @@ function stubBundle(conversationId: string, createdAt: string, title = "Chat"): 
 }
 
 describe("chat-sync", () => {
+  it("isChatSyncEnabled defaults to false", () => {
+    expect(isChatSyncEnabled()).toBe(false);
+  });
+
   it("mergeChatCollections unions by conversationId with newer-wins", () => {
     const remote = [stubBundle("aaa", "2026-01-01T00:00:00.000Z", "Remote")];
     const local = [stubBundle("aaa", "2026-02-01T00:00:00.000Z", "Local newer")];

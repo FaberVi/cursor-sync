@@ -21,4 +21,10 @@ export {
 } from "./destination.js";
 export type { DestinationSettings, DestinationSettingsPatch } from "./destination.js";
 export { createRemoteBackend, buildSyncStateAfterWrite, GistBackend, RepoBackend } from "./factory.js";
-export { syncKeyToRemoteFileName, remoteFileNameToSyncKey } from "./path-map.js";
+export {
+  syncKeyToRemoteFileName,
+  remoteFileNameToSyncKey,
+  remoteNameToGitRelative,
+  gitRelativeToRemoteName,
+  repoGitPath,
+} from "./path-map.js";

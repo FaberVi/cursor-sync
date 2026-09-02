@@ -13,6 +13,7 @@ import {
   type LoadChatResult,
   type RestoreChatBundleOptions,
 } from "./chat-persistence.js";
+import { createRestoreDestinationCache } from "./chat-restore-destination.js";
 
 export interface ChatImportPromptResult {
   workspaceFolder: string;
@@ -58,13 +59,17 @@ export async function restoreChatBundlesBatch(
   const successes: LoadChatResult[] = [];
   const failures: BatchChatImportFailure[] = [];
   const n = bundles.length;
+  const optionsWithCache: RestoreChatBundleOptions = {
+    ...restoreOptions,
+    destinationCache: restoreOptions.destinationCache ?? createRestoreDestinationCache(),
+  };
 
   for (let i = 0; i < n; i++) {
     const bundle = bundles[i]!;
     const titleOrId = bundleTitleOrId(bundle);
     progress.report({ message: `Importing chat ${i + 1}/${n}: ${titleOrId}...` });
     try {
-      const result = await restoreChatBundle(context, bundle, progress, restoreOptions);
+      const result = await restoreChatBundle(context, bundle, progress, optionsWithCache);
       successes.push(result);
       logger.appendLine(
         `[${new Date().toISOString()}] [${logTag}] ok conversationId=${result.conversationId}`
@@ -128,7 +133,7 @@ async function promptActivateChoice(
   const items: ActivatePick[] = [
     {
       label: "Activate composer after import",
-      description: "Runs composer.createComposer (import-v2)",
+      description: "Runs composer.createNew (import-v2)",
       activate: true,
     },
     {
@@ -172,15 +177,7 @@ export async function promptChatImportOptions(options?: {
     return { workspaceFolder: folderFsPath, restoreOptions };
   }
 
-  if (options?.skipActivatePrompt) {
-    return { workspaceFolder: folderFsPath, restoreOptions };
-  }
-
-  const activateChoice = await promptActivateChoice(restoreOptions.activate === true);
-  if (activateChoice === null) {
-    return null;
-  }
-  restoreOptions.activate = activateChoice;
+  // Honor chatImport.activateDefault without a second picker unless forceActivate.
   return { workspaceFolder: folderFsPath, restoreOptions };
 }
 

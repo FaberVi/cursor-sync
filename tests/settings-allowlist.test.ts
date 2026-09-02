@@ -12,12 +12,6 @@ describe("updateSettingValue allowlist", () => {
     vi.clearAllMocks();
   });
 
-  it("rejects chatImport.pythonPath writes from the sidebar", async () => {
-    await expect(
-      updateSettingValue("chatImport.pythonPath", "/evil/python")
-    ).rejects.toThrow(/cannot be changed from the sidebar/i);
-  });
-
   it("rejects keys outside the sidebar allowlist", async () => {
     await expect(
       updateSettingValue("chatGist.encrypt", true)
@@ -38,5 +32,10 @@ describe("updateSettingValue allowlist", () => {
     await expect(updateSettingValue("schedule.enabled", true)).resolves.toBeUndefined();
     await expect(updateSettingValue("ui.language", "it")).resolves.toBeUndefined();
     expect(SIDEBAR_SETTING_KEYS).toContain("chatImport.pythonPath");
+    expect(SIDEBAR_SETTING_KEYS).toContain("mcp.syncEnabled");
+    await expect(updateSettingValue("mcp.syncEnabled", true)).resolves.toBeUndefined();
+    await expect(
+      updateSettingValue("chatImport.pythonPath", "/evil/python")
+    ).resolves.toBeUndefined();
   });
 });

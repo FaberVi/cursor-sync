@@ -288,11 +288,20 @@ function filterInstallCandidates(
   return installCandidates;
 }
 
-/** Prompt Install/Skip for missing remote extensions; never installs without Install. */
+/** Prompt Install/Skip for missing remote extensions; never installs without Install.
+ *  When autoInstall is false, skip the prompt entirely.
+ */
 export async function promptAndInstallMissingExtensions(
   remoteEntries: ExtensionEntry[],
   logger: ExtensionSyncLogger
 ): Promise<void> {
+  const autoInstall =
+    vscode.workspace
+      .getConfiguration("cursorSync")
+      .get<boolean>("syncExtensions.autoInstall") ?? true;
+  if (!autoInstall) {
+    return;
+  }
   if (remoteEntries.length === 0) {
     return;
   }
@@ -345,17 +354,7 @@ export async function syncExtensionsFromRemoteEntries(
     vscode.workspace
       .getConfiguration("cursorSync")
       .get<boolean>("syncExtensions.autoUninstall") ?? false;
-  let shouldUninstall = autoUninstall;
-  if (!shouldUninstall) {
-    const choice = await vscode.window.showWarningMessage(
-      `Remove ${extras.length} extension(s) that are not in the synced list?`,
-      { modal: true },
-      "Yes",
-      "No"
-    );
-    shouldUninstall = choice === "Yes";
-  }
-  if (!shouldUninstall) {
+  if (!autoUninstall) {
     return;
   }
 

@@ -18,6 +18,7 @@ import {
   md5FolderKey,
   folderToProjectKey,
   folderPathFromWorkspaceUri,
+  pathsReferToSameFolder,
   resolveWorkspaceContext,
   requireWorkspaceContext,
   resolveChatsWorkspaceKey,
@@ -34,6 +35,13 @@ function pythonMd5FolderKey(folderFsPath: string): string {
 }
 
 describe("chat-workspace-context", () => {
+  describe("pathsReferToSameFolder", () => {
+    it("compares case-insensitively on Windows", () => {
+      expect(pathsReferToSameFolder("C:\\Foo\\Bar", "c:\\foo\\bar", "win32")).toBe(true);
+      expect(pathsReferToSameFolder("C:\\Foo\\Bar", "c:\\foo\\bar", "linux")).toBe(false);
+    });
+  });
+
   describe("folderToProjectKey", () => {
     it("encodes Windows drive paths without a colon", () => {
       const key = folderToProjectKey("C:\\Users\\me\\proj");
@@ -161,6 +169,29 @@ describe("chat-workspace-context", () => {
       expect(ctx!.folderFsPath).toBe(path.resolve(folder));
       expect(ctx!.chatsWorkspaceKey).toBe(md5FolderKey(path.resolve(folder)));
       expect(ctx!.workspaceIdentifier.id).toBe(storageId);
+    });
+
+    it("hashes Cursor workspace.json path when folder casing differs on Windows", async () => {
+      if (process.platform !== "win32") {
+        return;
+      }
+      const folder = path.join(tempRoot, "CaseRepo");
+      await fs.mkdir(folder, { recursive: true });
+      const cursorPath = path.resolve(folder);
+      const storageId = "case-id-1";
+      const wsDir = path.join(cursorUser, "workspaceStorage", storageId);
+      await fs.mkdir(wsDir, { recursive: true });
+      await fs.writeFile(
+        path.join(wsDir, "workspace.json"),
+        JSON.stringify({ folder: pathToFileUri(cursorPath) }),
+        "utf8"
+      );
+      const altCasing =
+        cursorPath.slice(0, 1).toLowerCase() + cursorPath.slice(1).toUpperCase();
+      const ctx = await resolveWorkspaceContext({ workspaceFolder: altCasing });
+      expect(ctx!.folderFsPath).toBe(cursorPath);
+      expect(ctx!.chatsWorkspaceKey).toBe(md5FolderKey(cursorPath));
+      expect(ctx!.chatsWorkspaceKey).not.toBe(md5FolderKey(path.resolve(altCasing)));
     });
 
     describe("buildChatsKeyToFolderMap", () => {

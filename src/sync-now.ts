@@ -3,6 +3,7 @@ import { executePush } from "./push.js";
 import { executePull } from "./pull.js";
 import { determineSyncAction } from "./scheduler.js";
 import { getLogger } from "./diagnostics.js";
+import { notifySyncQuiet } from "./sync-notify.js";
 import {
   promptAndInstallMissingExtensions,
   readLastRemoteExtensions,
@@ -12,6 +13,13 @@ import {
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
 import { createSidebarSyncProgress } from "./sync-progress-events.js";
+import { getPendingConflicts } from "./conflicts.js";
+import {
+  beginSyncAbort,
+  endSyncAbort,
+  getSyncAbortSignal,
+  isAbortError,
+} from "./sync-abort.js";
 
 export async function executeSyncNow(
   context: vscode.ExtensionContext
@@ -20,6 +28,7 @@ export async function executeSyncNow(
   logger.appendLine(`[${new Date().toISOString()}] Sync Now triggered`);
 
   const progress = createSidebarSyncProgress("syncNow");
+  beginSyncAbort();
   try {
     progress.report({ message: "Determining sync action…" });
     const result = await determineSyncAction(context);
@@ -30,7 +39,7 @@ export async function executeSyncNow(
           readLastRemoteExtensions(context),
           logger
         );
-        vscode.window.showInformationMessage("Already in sync, nothing to do.");
+        notifySyncQuiet("Already in sync, nothing to do.");
         progress.complete(true);
         break;
       case "pull":
@@ -44,7 +53,7 @@ export async function executeSyncNow(
       case "pull-push": {
         progress.report({ message: "Pulling…" });
         const pullOk = await executePull(context, { trigger: "syncNow" });
-        if (pullOk) {
+        if (pullOk && !getSyncAbortSignal()?.aborted) {
           progress.report({ message: "Pushing…" });
           progress.complete(await executePush(context));
         } else {
@@ -53,16 +62,19 @@ export async function executeSyncNow(
         break;
       }
       case "conflict": {
-        const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them first.`;
-        void showSyncFailureWithDebug(
-          context,
-          buildSyncDebugFailure("syncNow", "manual", conflictMessage, {
-            category: "CONFLICT",
-            conflictCount: result.keys.length,
-          }),
-          { level: "warning", title: conflictMessage }
-        );
-        vscode.commands.executeCommand("cursorSync.resolveConflicts");
+        await vscode.commands.executeCommand("cursorSync.resolveConflicts");
+        const still = getPendingConflicts();
+        if (still.length > 0) {
+          const conflictMessage = `${still.length} conflict(s) detected. Resolve them first.`;
+          void showSyncFailureWithDebug(
+            context,
+            buildSyncDebugFailure("syncNow", "manual", conflictMessage, {
+              category: "CONFLICT",
+              conflictCount: still.length,
+            }),
+            { level: "warning", title: conflictMessage }
+          );
+        }
         progress.complete(false);
         break;
       }
@@ -87,12 +99,16 @@ export async function executeSyncNow(
     logger.appendLine(
       `[${new Date().toISOString()}] Sync Now failed: ${errMessage}`
     );
-    const errorMessage = `Sync failed: ${errMessage}`;
-    void showSyncFailureWithDebug(
-      context,
-      buildSyncDebugFailure("syncNow", "manual", errMessage),
-      { title: errorMessage }
-    );
+    if (!isAbortError(err) && !getSyncAbortSignal()?.aborted) {
+      const errorMessage = `Sync failed: ${errMessage}`;
+      void showSyncFailureWithDebug(
+        context,
+        buildSyncDebugFailure("syncNow", "manual", errMessage),
+        { title: errorMessage }
+      );
+    }
     progress.complete(false);
+  } finally {
+    endSyncAbort();
   }
 }

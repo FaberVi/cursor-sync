@@ -158,10 +158,15 @@ describe("chat-bundle-format", () => {
     expect(() => parseChatBundleOrCollection(raw)).toThrow(/empty/i);
   });
 
-  it("selectGistExportFile uses chat-bundle.json for one bundle", async () => {
-    const { selectGistExportFile } = await import("../src/chat-bundle-format.js");
-    const { fileName } = selectGistExportFile(1, singleBundle);
-    expect(fileName).toBe("chat-bundle.json");
+  it("selectGistExportFile uses cursor-chat.json for one bundle", async () => {
+    const { selectGistExportFile, CURSOR_CHAT_GIST_FILE_NAME } = await import(
+      "../src/chat-bundle-format.js"
+    );
+    const { fileName, content } = selectGistExportFile(1, singleBundle);
+    expect(fileName).toBe(CURSOR_CHAT_GIST_FILE_NAME);
+    const parsed = JSON.parse(content) as { version: number; conversationId: string };
+    expect(parsed.version).toBe(1);
+    expect(parsed.conversationId).toBe(singleBundle.conversationId);
   });
 
   it("resolveBundlesFromParsedExport returns single bundle without picker", async () => {
@@ -270,27 +275,76 @@ describe("chat-bundle-format", () => {
     });
     expect(showQuickPickMock).toHaveBeenCalledWith(
       [
-        { label: "Composer Title One", description: "conv-1", detail: "1 file", picked: true },
-        { label: "Composer Title Two", description: "conv-2", detail: "1 file", picked: true },
+        expect.objectContaining({
+          label: "Composer Title One",
+          description: "conv-1",
+          detail: "1 file",
+          picked: true,
+          identity: "conv-1",
+        }),
+        expect.objectContaining({
+          label: "Composer Title Two",
+          description: "conv-2",
+          detail: "1 file",
+          picked: true,
+          identity: "conv-2",
+        }),
       ],
       expect.objectContaining({
         canPickMany: true,
+        ignoreFocusOut: true,
+        placeHolder: "This export contains multiple conversations",
         title: "Select conversations to import (2 found)",
       })
     );
   });
 
-  it("selectGistExportFile uses chat-bundles.json for multiple", async () => {
-    const { selectGistExportFile, buildChatBundlesCollection } = await import(
-      "../src/chat-bundle-format.js"
-    );
+  it("selectGistExportFile uses cursor-chat.json for multiple", async () => {
+    const { selectGistExportFile, buildChatBundlesCollection, CURSOR_CHAT_GIST_FILE_NAME } =
+      await import("../src/chat-bundle-format.js");
     const collection = buildChatBundlesCollection("wk", [
       singleBundle,
       { ...singleBundle, conversationId: "conv-2", title: "Two" },
     ]);
     const { fileName, content } = selectGistExportFile(2, collection);
-    expect(fileName).toBe("chat-bundles.json");
+    expect(fileName).toBe(CURSOR_CHAT_GIST_FILE_NAME);
     const parsed = JSON.parse(content);
-    expect(parsed.type).toBe("chat-bundles-collection");
+    expect(parsed.type).toBe("cursor-chat-collection");
+  });
+
+  it("pickBundleFromCollection keeps two chats that share an id across tilde paths", async () => {
+    const id = "11111111-2222-4333-8444-555555555555";
+    const a = {
+      ...singleBundle,
+      conversationId: id,
+      title: "A",
+      sourceFolderTilde: "~/proj/a",
+    };
+    const b = {
+      ...singleBundle,
+      conversationId: id,
+      title: "B",
+      sourceFolderTilde: "~/proj/b",
+    };
+    showQuickPickMock.mockImplementation(async (items: Array<{ bundle?: ChatBundle }>) => items);
+    const { pickBundleFromCollection, buildChatBundlesCollection } = await import(
+      "../src/chat-bundle-format.js"
+    );
+    const collection = buildChatBundlesCollection("wk", [a, b]);
+    const picked = await pickBundleFromCollection(collection);
+    expect(picked).toHaveLength(2);
+    expect(picked?.map((x) => x.sourceFolderTilde).sort()).toEqual(["~/proj/a", "~/proj/b"]);
+  });
+
+  it("parseChatBundleOrCollection reads native cursor-chat.json", async () => {
+    const { parseChatBundleOrCollection, selectGistExportFile } = await import(
+      "../src/chat-bundle-format.js"
+    );
+    const { content } = selectGistExportFile(1, singleBundle);
+    const parsed = parseChatBundleOrCollection(content);
+    expect(parsed.kind).toBe("single");
+    if (parsed.kind === "single") {
+      expect(parsed.bundle.conversationId).toBe(singleBundle.conversationId);
+    }
   });
 });

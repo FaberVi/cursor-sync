@@ -35,15 +35,31 @@ import {
 import { enumerateTranscriptFilesInConversation } from "./transcripts-discovery.js";
 import { enrichBundleWithLiveDiskKv, exportDiskKvSnapshot } from "./chat-disk-kv-export.js";
 import type { ChatBundle } from "./chat-persistence.js";
+import { buildChatsKeyToFolderMap } from "./chat-workspace-context.js";
+import { formatDisplayPath } from "./chat-workspace-label.js";
+import { resolveSyncRoots } from "./paths.js";
 
 const SQLITE_READ_RETRIES = 3;
+
+async function sourceFolderTildeForWorkspaceKey(
+  workspaceKey: string | undefined,
+  folderMap?: Map<string, string>
+): Promise<string | undefined> {
+  if (!workspaceKey) {
+    return undefined;
+  }
+  const map =
+    folderMap ?? (await buildChatsKeyToFolderMap(resolveSyncRoots().cursorUser));
+  const folder = map.get(workspaceKey);
+  return folder ? formatDisplayPath(folder) : undefined;
+}
 
 /** Transcript/sidebar/store + Layer 4 diskKv when present on global state.vscdb (schema v2). */
 export async function buildChatBundle(
   _context: vscode.ExtensionContext,
   conversationId: string,
   progress: vscode.Progress<{ message?: string; increment?: number }>,
-  options?: { workspaceKey?: string }
+  options?: { workspaceKey?: string; folderMap?: Map<string, string> }
 ): Promise<{ bundle: ChatBundle; title: string; warnings: string[] }> {
   const warnings: string[] = [];
 
@@ -243,6 +259,11 @@ export async function buildChatBundle(
     }
   }
 
+  const sourceFolderTilde = await sourceFolderTildeForWorkspaceKey(
+    options?.workspaceKey ?? storeInfo?.workspaceKey,
+    options?.folderMap
+  );
+
   const bundle: ChatBundle = {
     schemaVersion: diskKvSnapshot ? 2 : 1,
     type: "chat-persistence",
@@ -251,6 +272,7 @@ export async function buildChatBundle(
     title,
     subtitle: `${transcriptFiles.length} file${transcriptFiles.length === 1 ? "" : "s"}`,
     previewText: title,
+    ...(sourceFolderTilde ? { sourceFolderTilde } : {}),
     sidebarSnapshot,
     storeSnapshot,
     transcriptFiles,

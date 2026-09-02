@@ -18,6 +18,7 @@ export const SIDEBAR_SETTING_KEYS = [
   "chats.syncOnlyFullBackups",
   "chats.pullUpdates",
   "chats.pullUpdatePolicy",
+  "mcp.syncEnabled",
   "chatImport.activateDefault",
   "chatImport.activateStrict",
   "chatImport.useProtobufHydration",
@@ -50,10 +51,11 @@ export function readSettingsValues(): SettingsTabValues {
     "destination.repo": dest.repo,
     "destination.branch": dest.branch,
     "destination.path": dest.path,
-    "chats.syncEnabled": cfg.get<boolean>("chats.syncEnabled", true),
+    "chats.syncEnabled": cfg.get<boolean>("chats.syncEnabled", false),
     "chats.syncOnlyFullBackups": cfg.get<boolean>("chats.syncOnlyFullBackups", false),
     "chats.pullUpdates": cfg.get<boolean>("chats.pullUpdates", false),
     "chats.pullUpdatePolicy": cfg.get<string>("chats.pullUpdatePolicy", "newerWins"),
+    "mcp.syncEnabled": cfg.get<boolean>("mcp.syncEnabled", false),
     "chatImport.activateDefault": cfg.get<boolean>("chatImport.activateDefault", false),
     "chatImport.activateStrict": cfg.get<boolean>("chatImport.activateStrict", false),
     "chatImport.useProtobufHydration": cfg.get<boolean>("chatImport.useProtobufHydration", true),
@@ -91,6 +93,7 @@ export async function updateSettingValue(
       break;
     case "schedule.enabled":
     case "chats.syncEnabled":
+    case "mcp.syncEnabled":
     case "chats.syncOnlyFullBackups":
     case "chats.pullUpdates":
     case "chatImport.activateDefault":
@@ -136,9 +139,7 @@ export async function updateSettingValue(
       }
       break;
     case "chatImport.pythonPath":
-      throw new Error(
-        "chatImport.pythonPath cannot be changed from the sidebar; set it in Cursor Settings (cursorSync.chatImport.pythonPath)"
-      );
+      return;
     case "chats.pullUpdatePolicy":
       if (
         value !== "skip" &&
@@ -246,6 +247,13 @@ export function renderSettingsPane(values: SettingsTabValues): string {
       <div class="settings-hint">${escapeHtml(
         destType === "repo" ? t("connectRepoHint") : t("connectGistHint")
       )}</div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-header">${escapeHtml(t("mcpSync"))}</div>
+    <div class="settings-list">
+      ${checkbox("mcp.syncEnabled", t("includeMcp"), Boolean(values["mcp.syncEnabled"]))}
+      <div class="settings-hint">${escapeHtml(t("mcpSyncHint"))}</div>
     </div>
   </div>
   <div class="section">

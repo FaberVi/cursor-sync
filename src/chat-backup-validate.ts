@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import {
   summarizeDiscoveredBackupTier,
   type BackupTier,
@@ -160,7 +161,7 @@ export async function executeValidateChatBackups(
       if (archiveCount > 0) {
         summary += `, ${archiveCount} archive-only`;
       }
-      summary += ". See Output → Cursor Sync for details.";
+      summary += `. See Output → ${EXTENSION_LABEL} for details.`;
 
       if (archiveCount > 0 || partialCount > 0) {
         vscode.window.showWarningMessage(summary);

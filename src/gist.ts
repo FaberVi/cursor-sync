@@ -1,5 +1,15 @@
+import {
+  commandTitle,
+  SETTINGS_GIST_DESCRIPTION,
+} from "./extension-branding.js";
 import type { ApiResult, GistFile, GistResponse, FailureCategory } from "./types.js";
 import { clampRetryAfterSeconds } from "./retry.js";
+import {
+  cancelledApiError,
+  getSyncAbortSignal,
+  isAbortError,
+  SyncCancelledError,
+} from "./sync-abort.js";
 
 const GITHUB_API = "https://api.github.com";
 const USER_AGENT = "cursor-sync-extension";
@@ -31,8 +41,15 @@ export async function fetchGistFileContent(
   }
   let response: Response;
   try {
-    response = await fetch(file.raw_url, { headers });
+    const signal = getSyncAbortSignal();
+    if (signal?.aborted) {
+      throw new SyncCancelledError();
+    }
+    response = await fetch(file.raw_url, { headers, signal });
   } catch (err) {
+    if (isAbortError(err) || getSyncAbortSignal()?.aborted) {
+      throw new SyncCancelledError();
+    }
     throw new Error(
       err instanceof Error ? err.message : "Network error while downloading gist file"
     );
@@ -40,7 +57,7 @@ export async function fetchGistFileContent(
   if (!response.ok) {
     if (response.status === 404) {
       throw new Error(
-        "Gist file not found at download URL. If the gist is private, configure your GitHub token (Cursor Sync: Configure GitHub)."
+        `Gist file not found at download URL. If the gist is private, configure your GitHub token (${commandTitle("Configure GitHub")}).`
       );
     }
     throw new Error(`Failed to download gist file (${response.status}).`);
@@ -62,7 +79,7 @@ export class GistClient {
   async findExistingGist(): Promise<ApiResult<GistResponse | null>> {
     return this.request<GistResponse | null>("GET", "/gists", undefined, (data) => {
       const gists = data as GistResponse[];
-      const found = gists.find((g) => g.description === "Cursor Sync - Settings Backup");
+      const found = gists.find((g) => g.description === SETTINGS_GIST_DESCRIPTION);
       return found || null;
     });
   }
@@ -112,12 +129,20 @@ export class GistClient {
 
     let response: Response;
     try {
+      const signal = getSyncAbortSignal();
+      if (signal?.aborted) {
+        return { ok: false, error: cancelledApiError };
+      }
       response = await fetch(url, {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
+        signal,
       });
     } catch (err) {
+      if (isAbortError(err) || getSyncAbortSignal()?.aborted) {
+        return { ok: false, error: cancelledApiError };
+      }
       return {
         ok: false,
         error: {

@@ -103,6 +103,52 @@ async function tryQuickOpenComposer(conversationId: string): Promise<boolean> {
   });
 }
 
+async function resolveWorkspaceUriForOpenChat(options: {
+  workspaceKey?: string;
+  projectKey?: string;
+}): Promise<vscode.Uri | undefined> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return undefined;
+  }
+  const { buildChatsKeyToFolderMap, pathsReferToSameFolder } = await import(
+    "../chat-workspace-context.js"
+  );
+  const { resolveSyncRoots } = await import("../paths.js");
+  const { cursorUser } = resolveSyncRoots();
+  const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+
+  const pickOpenUri = (mappedPath: string): vscode.Uri => {
+    const openMatch = folders.find((f) => pathsReferToSameFolder(f.uri.fsPath, mappedPath));
+    return openMatch?.uri ?? vscode.Uri.file(mappedPath);
+  };
+
+  const workspaceKey = options.workspaceKey?.trim();
+  if (workspaceKey) {
+    const mapped = folderMap.get(workspaceKey);
+    if (!mapped) {
+      return undefined;
+    }
+    return pickOpenUri(mapped);
+  }
+
+  const projectKey = options.projectKey?.trim();
+  if (projectKey) {
+    if (folderMap.has(projectKey)) {
+      return pickOpenUri(folderMap.get(projectKey)!);
+    }
+    const { folderToProjectKey } = await import("../chat-workspace-context.js");
+    for (const [chatsKey, mappedPath] of folderMap) {
+      if (folderToProjectKey(mappedPath) === projectKey || chatsKey === projectKey) {
+        return pickOpenUri(mappedPath);
+      }
+    }
+    return undefined;
+  }
+
+  return folders[0]?.uri;
+}
+
 export async function openConversation(
   context: vscode.ExtensionContext,
   conversationId: string,
@@ -117,8 +163,13 @@ export async function openConversation(
     void vscode.window.showWarningMessage(t("openWorkspaceFirst"));
     return;
   }
-  const folder = folders[0];
-  if (!folder) {
+
+  const hasIdentityHint = Boolean(options.workspaceKey?.trim() || options.projectKey?.trim());
+  const folderUri = await resolveWorkspaceUriForOpenChat(options);
+  if (!folderUri) {
+    void vscode.window.showWarningMessage(
+      hasIdentityHint ? t("couldNotResolveChatFolder") : t("openWorkspaceFirst")
+    );
     return;
   }
 
@@ -143,7 +194,7 @@ export async function openConversation(
 
   try {
     const { activateExistingChat } = await import("../chat-activate-existing.js");
-    const outcome = await activateExistingChat(context, conversationId, folder.uri);
+    const outcome = await activateExistingChat(context, conversationId, folderUri);
     if (outcome.ok) {
       return;
     }

@@ -1,4 +1,5 @@
 import type { ChatBundle } from "../chat-persistence.js";
+import { mergeByChatIdentity } from "../chat-identity.js";
 import { chatBundleFromNativeChatJson, nativeChatJsonFromBundle } from "./bundle-bridge.js";
 import { isNativeChatJsonDocument } from "./parse.js";
 import {
@@ -80,17 +81,5 @@ export function mergeNativeChatCollections(
   remote: NativeChatJsonDocument[],
   local: NativeChatJsonDocument[]
 ): NativeChatJsonDocument[] {
-  const byId = new Map<string, NativeChatJsonDocument>();
-  for (const doc of remote) {
-    byId.set(doc.conversationId, doc);
-  }
-  for (const doc of local) {
-    const existing = byId.get(doc.conversationId);
-    if (!existing || nativeChatTimestamp(doc) >= nativeChatTimestamp(existing)) {
-      byId.set(doc.conversationId, doc);
-    }
-  }
-  return [...byId.values()].sort((a, b) =>
-    a.conversationId.localeCompare(b.conversationId)
-  );
+  return mergeByChatIdentity(remote, local, nativeChatTimestamp);
 }

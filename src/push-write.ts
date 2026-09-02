@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
+import { addSyncHistoryEntry, getLogger, saveSyncState } from "./diagnostics.js";
 import { withRetry } from "./retry.js";
-import { saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
+import { notifySyncQuiet } from "./sync-notify.js";
 import { clearConflicts } from "./conflicts.js";
 import { sendEvent } from "./analytics.js";
 import {
@@ -37,6 +38,45 @@ export async function writePushRemote(
   const { delta, chatForDelta, chatBundleCount, manifest } = packaged;
 
   if (delta.isNoOp) {
+    if (backend instanceof RepoBackend && backend.hasLeftoverDashed()) {
+      const migrate = await backend.writeFiles({});
+      if (!migrate.ok) {
+        if (migrate.error.category === "CANCELLED") {
+          return false;
+        }
+        void showSyncFailureWithDebug(
+          context,
+          buildSyncDebugFailure("push", trigger, migrate.error.message, {
+            direction: "push",
+            category: migrate.error.category,
+            statusCode: migrate.error.statusCode,
+          }),
+          { title: `Push failed: ${migrate.error.message}` }
+        );
+        logger.appendLine(
+          `[${new Date().toISOString()}] Push failed: ${migrate.error.category} - ${migrate.error.message}`
+        );
+        await addSyncHistoryEntry(context, {
+          timestamp: new Date().toISOString(),
+          direction: "push",
+          trigger,
+          fileCount: 0,
+          success: false,
+          error: migrate.error.message,
+          files: [],
+        });
+        sendEvent(context, "sync_failed", {
+          direction: "push",
+          reason: migrate.error.category,
+          trigger,
+          status_code: migrate.error.statusCode,
+        });
+        return false;
+      }
+      logger.appendLine(
+        `[${new Date().toISOString()}] Nested leftover dashed repo paths → ${backend.remoteLabel()}`
+      );
+    }
     progress.report({ message: "Already in sync" });
     if (syncState) {
       const checksums: Record<string, string> = {
@@ -93,7 +133,7 @@ export async function writePushRemote(
       `[${new Date().toISOString()}] Push skipped: already in sync (${delta.unchangedCount} unchanged) → ${backend.remoteLabel()}`
     );
     if (trigger === "manual") {
-      vscode.window.showInformationMessage(
+      notifySyncQuiet(
         `Already in sync, nothing to push (${delta.unchangedCount} file(s) unchanged).`
       );
     }
@@ -134,6 +174,9 @@ export async function writePushRemote(
           backend.writeFiles(remoteFiles, { deleteNames: delta.deleteNames })
         );
   if (!writeResult.ok) {
+    if (writeResult.error.category === "CANCELLED") {
+      return false;
+    }
     void showSyncFailureWithDebug(
       context,
       buildSyncDebugFailure("push", trigger, writeResult.error.message, {
@@ -228,7 +271,7 @@ export async function writePushRemote(
   });
   progress.report({ message: "Done" });
   if (trigger === "manual") {
-    vscode.window.showInformationMessage(
+    notifySyncQuiet(
       `Push complete: ${fileCount} file(s) synced${skipSuffix}${chatSuffix}.`
     );
   }

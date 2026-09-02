@@ -63,6 +63,7 @@ export type FailureCategory =
   | "NETWORK_ERROR"
   | "CONFLICT"
   | "FILE_SYSTEM_ERROR"
+  | "CANCELLED"
   | "UNKNOWN";
 
 export interface GistFile {

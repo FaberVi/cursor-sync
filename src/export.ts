@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { EXPORT_GIST_DESCRIPTION } from "./extension-branding.js";
 import { enumerateSyncFiles, syncKeyToGistFileName } from "./paths.js";
 import { packageFiles } from "./packaging.js";
 import { GistClient } from "./gist.js";
@@ -76,7 +77,7 @@ export async function executeExport(context: vscode.ExtensionContext): Promise<v
     },
     async () => {
       const result = await withRetry(() =>
-        client.createGist(gistFiles, "Cursor Sync - Export")
+        client.createGist(gistFiles, EXPORT_GIST_DESCRIPTION)
       );
 
       if (!result.ok) {

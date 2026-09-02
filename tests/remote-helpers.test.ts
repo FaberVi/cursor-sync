@@ -7,7 +7,14 @@ import {
   parseOwnerRepo,
   DEFAULT_REPO_BASE_PATH,
 } from "../src/remote/index.js";
-import { joinRemotePath, stripRemotePath } from "../src/remote/path-map.js";
+import {
+  gitRelativeToRemoteName,
+  joinRemotePath,
+  remoteNameToGitRelative,
+  repoGitPath,
+  stripRemotePath,
+} from "../src/remote/path-map.js";
+import { leftoverDashedTreeEntries } from "../src/remote/repo-git-write.js";
 import type { SyncState } from "../src/types.js";
 import {
   MIN_INTERVAL_SECONDS,
@@ -39,6 +46,135 @@ describe("path-map", () => {
     expect(joinRemotePath("cursor-sync", "manifest.json")).toBe("cursor-sync/manifest.json");
     expect(stripRemotePath("cursor-sync", "cursor-sync/manifest.json")).toBe("manifest.json");
     expect(stripRemotePath("cursor-sync", "other/file.json")).toBeUndefined();
+    expect(stripRemotePath("cursor-sync", "cursor-sync/cursor-user/settings.json")).toBe(
+      "cursor-user/settings.json"
+    );
+  });
+
+  it("maps gist-flat names to nested Git relatives", () => {
+    expect(remoteNameToGitRelative("manifest.json")).toBe("manifest.json");
+    expect(remoteNameToGitRelative("cursor-chat.json")).toBe("cursor-chat.json");
+    expect(remoteNameToGitRelative("cursor-user--settings.json")).toBe(
+      "cursor-user/settings.json"
+    );
+    expect(remoteNameToGitRelative("dot-cursor--skills--coding--SKILL.md")).toBe(
+      "dot-cursor/skills/coding/SKILL.md"
+    );
+    expect(repoGitPath("cursor-sync", "cursor-user--settings.json")).toBe(
+      "cursor-sync/cursor-user/settings.json"
+    );
+    expect(repoGitPath("cursor-sync", "cursor-chat.json")).toBe(
+      "cursor-sync/cursor-chat.json"
+    );
+  });
+
+  it("maps Git relatives back to gist-flat names", () => {
+    expect(gitRelativeToRemoteName("manifest.json")).toBe("manifest.json");
+    expect(gitRelativeToRemoteName("cursor-user--settings.json")).toBe(
+      "cursor-user--settings.json"
+    );
+    expect(gitRelativeToRemoteName("cursor-user/settings.json")).toBe(
+      "cursor-user--settings.json"
+    );
+    expect(gitRelativeToRemoteName("dot-cursor/skills/coding/SKILL.md")).toBe(
+      "dot-cursor--skills--coding--SKILL.md"
+    );
+  });
+
+  it("retargets dashed-only leftovers and only deletes dashed when nested exists", () => {
+    const dashedOnly = leftoverDashedTreeEntries(
+      [
+        {
+          dashedRelative: "cursor-user--settings.json",
+          blobSha: "sha-old",
+          remoteName: "cursor-user--settings.json",
+          nestedPresent: false,
+        },
+      ],
+      "cursor-sync",
+      {},
+      new Set()
+    );
+    expect(dashedOnly).toEqual([
+      {
+        path: "cursor-sync/cursor-user/settings.json",
+        mode: "100644",
+        type: "blob",
+        sha: "sha-old",
+      },
+      {
+        path: "cursor-sync/cursor-user--settings.json",
+        mode: "100644",
+        type: "blob",
+        sha: null,
+      },
+    ]);
+
+    const nestedPresent = leftoverDashedTreeEntries(
+      [
+        {
+          dashedRelative: "cursor-user--settings.json",
+          blobSha: "sha-old",
+          remoteName: "cursor-user--settings.json",
+          nestedPresent: true,
+        },
+      ],
+      "cursor-sync",
+      {},
+      new Set()
+    );
+    expect(nestedPresent).toEqual([
+      {
+        path: "cursor-sync/cursor-user--settings.json",
+        mode: "100644",
+        type: "blob",
+        sha: null,
+      },
+    ]);
+
+    const uploading = leftoverDashedTreeEntries(
+      [
+        {
+          dashedRelative: "cursor-user--settings.json",
+          blobSha: "sha-old",
+          remoteName: "cursor-user--settings.json",
+          nestedPresent: false,
+        },
+      ],
+      "cursor-sync",
+      { "cursor-user--settings.json": "{}" },
+      new Set()
+    );
+    expect(uploading).toEqual([
+      {
+        path: "cursor-sync/cursor-user--settings.json",
+        mode: "100644",
+        type: "blob",
+        sha: null,
+      },
+    ]);
+
+    const deleting = leftoverDashedTreeEntries(
+      [
+        {
+          dashedRelative: "cursor-user--settings.json",
+          blobSha: "sha-old",
+          remoteName: "cursor-user--settings.json",
+          nestedPresent: false,
+        },
+      ],
+      "cursor-sync",
+      {},
+      new Set(["cursor-user--settings.json"])
+    );
+    expect(deleting).toEqual([
+      {
+        path: "cursor-sync/cursor-user--settings.json",
+        mode: "100644",
+        type: "blob",
+        sha: null,
+      },
+    ]);
   });
 });
 

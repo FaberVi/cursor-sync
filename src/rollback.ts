@@ -87,6 +87,29 @@ export async function rollbackFromBackup(entries: BackupEntry[]): Promise<void> 
         `[${new Date().toISOString()}] Rollback failed for ${entry.absolutePath}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+    await unlinkIfExists(`${entry.absolutePath}.tmp`);
+  }
+}
+
+/** Remove files created in this run (no pre-existing backup) and leftover `.tmp` writes. */
+export async function unlinkCreatedFiles(paths: string[]): Promise<number> {
+  let removed = 0;
+  for (const absPath of paths) {
+    const deleted = await unlinkIfExists(absPath);
+    await unlinkIfExists(`${absPath}.tmp`);
+    if (deleted) {
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
+async function unlinkIfExists(absPath: string): Promise<boolean> {
+  try {
+    await fs.unlink(absPath);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -158,7 +158,7 @@ describe("scheduled sync debug wiring", () => {
     expect(options).toMatchObject({ title: "Scheduled sync failed: no_token" });
   });
 
-  it("calls showSyncFailureWithDebug on determineSyncAction conflict with warning", async () => {
+  it("skips scheduled sync on conflict without debug toast", async () => {
     const scheduler = await import("../src/scheduler.js");
     vi.spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction").mockResolvedValue({
       action: "conflict",
@@ -167,21 +167,9 @@ describe("scheduled sync debug wiring", () => {
 
     await scheduler.scheduledTick(mockContext());
 
-    expect(showSyncFailureWithDebugMock).toHaveBeenCalledTimes(1);
-    const [, failure, options] = showSyncFailureWithDebugMock.mock.calls[0]!;
-    expect(failure).toMatchObject({
-      operation: "scheduler",
-      trigger: "scheduled",
-      category: "CONFLICT",
-      conflictCount: 1,
-      message: "1 conflict(s) detected. Resolve them first.",
-      extensionVersion: extensionVersion(),
-      platform: process.platform,
-    });
-    expect(options).toMatchObject({
-      level: "warning",
-      title: "1 conflict(s) detected. Resolve them first.",
-    });
+    expect(showSyncFailureWithDebugMock).not.toHaveBeenCalled();
+    expect(executePushMock).not.toHaveBeenCalled();
+    expect(executePullMock).not.toHaveBeenCalled();
   });
 
   it("does not duplicate debug toast when scheduled pull fails via executePull", async () => {

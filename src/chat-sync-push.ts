@@ -10,6 +10,7 @@ import {
   encryptCollectionForGist,
   fetchRemoteChatCollection,
   mergeChatCollections,
+  applyChatCollectionSizeCap,
   noopChatSyncProgress,
 } from "./chat-sync-collection.js";
 import { CURSOR_CHAT_GIST_FILE_NAME, CURSOR_CHAT_SYNC_KEY } from "./chat-sync-collection.js";
@@ -22,6 +23,7 @@ export interface ChatSyncPushPayload {
   sizeBytes: number;
   bundleCount: number;
   fidelityReport: ChatSyncFidelityReport;
+  warnings: string[];
 }
 
 export async function prepareChatSyncPushPayload(
@@ -76,12 +78,18 @@ export async function prepareChatSyncPushPayload(
   }
 
   const merged = mergeChatCollections(remoteBundles, localBundles);
-  if (merged.length === 0) {
+  const capped = applyChatCollectionSizeCap(merged);
+  for (const label of capped.skippedLabels) {
+    const msg = `Skipped chat ${label}: collection size limit.`;
+    warnings.push(msg);
+    getLogger().appendLine(`[${new Date().toISOString()}] [chat-sync] ${msg}`);
+  }
+  if (capped.kept.length === 0) {
     return null;
   }
 
-  const fidelityReport = aggregateChatSyncFidelity(merged);
-  const plaintext = collectionJsonFromBundles(merged);
+  const fidelityReport = aggregateChatSyncFidelity(capped.kept);
+  const plaintext = collectionJsonFromBundles(capped.kept);
   const content = await encryptCollectionForGist(context, plaintext);
   const checksum = computeChatCollectionChecksum(content);
   return {
@@ -90,7 +98,8 @@ export async function prepareChatSyncPushPayload(
     syncKey: CURSOR_CHAT_SYNC_KEY,
     checksum,
     sizeBytes: Buffer.byteLength(content, "utf-8"),
-    bundleCount: merged.length,
+    bundleCount: capped.kept.length,
     fidelityReport,
+    warnings,
   };
 }

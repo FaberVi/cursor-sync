@@ -1,5 +1,11 @@
+import { commandTitle } from "../extension-branding.js";
 import { githubRequest } from "./github-api.js";
-import { joinRemotePath } from "./path-map.js";
+import {
+  joinRemotePath,
+  remoteNameToGitRelative,
+  repoGitPath,
+  type LeftoverDashedFile,
+} from "./path-map.js";
 import { withRetry } from "../retry.js";
 import type { ApiError, ApiResult } from "../types.js";
 import type { RemoteWriteResult } from "./types.js";
@@ -13,6 +19,17 @@ export interface GitTreeEntry {
 }
 
 const BLOB_UPLOAD_CONCURRENCY = 5;
+
+/** GitHub GET /git/ref on a repo with no commits: HTTP 409 Git Repository is empty. */
+export function isEmptyGitHubRepositoryError(error: {
+  statusCode?: number;
+  message?: string;
+}): boolean {
+  return (
+    error.statusCode === 409 &&
+    /git repository is empty/i.test(error.message ?? "")
+  );
+}
 
 export async function createGitBlobs(options: {
   owner: string;
@@ -84,6 +101,55 @@ export async function createGitBlobs(options: {
   return { ok: true, data: results };
 }
 
+/**
+ * Tree mutations that migrate leftover dashed files at `basePath` root.
+ * Dashed-only files are retargeted to the nested path (reuse blob SHA).
+ * When nested already exists, the name is being uploaded, or it is deleted,
+ * only the dashed path is removed.
+ */
+export function leftoverDashedTreeEntries(
+  leftovers: LeftoverDashedFile[],
+  basePath: string,
+  files: Record<string, string>,
+  deleteNames: Set<string>
+): GitTreeEntry[] {
+  const items: GitTreeEntry[] = [];
+  for (const leftover of leftovers) {
+    const dashedPath = joinRemotePath(basePath, leftover.dashedRelative);
+    const nestedPath = joinRemotePath(
+      basePath,
+      remoteNameToGitRelative(leftover.remoteName)
+    );
+    const uploading = Object.prototype.hasOwnProperty.call(
+      files,
+      leftover.remoteName
+    );
+    const deleting = deleteNames.has(leftover.remoteName);
+    if (deleting || uploading || leftover.nestedPresent) {
+      items.push({
+        path: dashedPath,
+        mode: "100644",
+        type: "blob",
+        sha: null,
+      });
+      continue;
+    }
+    items.push({
+      path: nestedPath,
+      mode: "100644",
+      type: "blob",
+      sha: leftover.blobSha,
+    });
+    items.push({
+      path: dashedPath,
+      mode: "100644",
+      type: "blob",
+      sha: null,
+    });
+  }
+  return items;
+}
+
 export async function createInitialCommit(options: {
   owner: string;
   repo: string;
@@ -102,7 +168,7 @@ export async function createInitialCommit(options: {
     repo: options.repo,
     pat: options.pat,
     files: options.files,
-    toPath: (name) => joinRemotePath(options.basePath, name),
+    toPath: (name) => repoGitPath(options.basePath, name),
     onBlobProgress: options.onBlobProgress,
   });
   if (!blobResult.ok) {
@@ -138,7 +204,7 @@ export async function createInitialCommit(options: {
       `/repos/${options.owner}/${options.repo}/git/commits`,
       options.pat,
       {
-        message: "Cursor Sync: initial settings backup",
+        message: commandTitle("initial settings backup"),
         tree: treeResult.data.sha,
         parents: [],
       }

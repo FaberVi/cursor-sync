@@ -24,6 +24,11 @@ import {
   type VerifyCheck,
 } from "./chat-import-verify.js";
 import { pickImportWorkspaceFolder } from "./chat-import-ux.js";
+import {
+  createRestoreDestinationCache,
+  isOpenWorkspaceFolder,
+  resolveRestoreWorkspaceFolder,
+} from "./chat-restore-destination.js";
 import { parseChatBundleOrCollection } from "./chat-bundle-format.js";
 import {
   fidelityFieldsForImportHistory,
@@ -98,20 +103,32 @@ export async function restoreChatBundle(
   );
 
   progress.report({ message: "Resolving workspace..." });
-  const folderFsPath =
-    options.workspaceFolder?.trim() || (await pickImportWorkspaceFolder());
+  const explicitFolder = options.workspaceFolder?.trim();
+  const cache = options.destinationCache ?? createRestoreDestinationCache();
+  const sourceTilde = (bundle.sourceFolderTilde ?? "").trim();
+  const fromTilde = explicitFolder
+    ? undefined
+    : await resolveRestoreWorkspaceFolder(bundle, { cache });
+  if (!explicitFolder && sourceTilde && !fromTilde) {
+    throw new Error(
+      `Could not resolve project folder for ${sourceTilde}. Select a local folder when prompted, or open that project.`
+    );
+  }
+  const folderFsPath = explicitFolder || fromTilde || (await pickImportWorkspaceFolder());
   if (!folderFsPath) {
     throw new Error(
       "Open a workspace folder in Cursor before importing a chat bundle (required for ~/.cursor/chats/<md5(folder)> store.db path)."
     );
   }
+  const destIsOpen = isOpenWorkspaceFolder(folderFsPath);
+  const activate = destIsOpen && options.activate === true;
   const wsCtx = await requireWorkspaceContext({ workspaceFolder: folderFsPath });
   const storeWorkspaceKey = wsCtx.chatsWorkspaceKey;
   const dryRun = options.dryRun === true;
   const syncGlobal = options.syncGlobal !== false;
   const pinRecent = options.pinRecent !== false;
   logChatRestoreDebug(
-    `workspace context folder=${wsCtx.folderFsPath} chatsKey=${storeWorkspaceKey} storageId=${wsCtx.workspaceStorageId} dryRun=${dryRun} activate=${!!options.activate}`
+    `workspace context folder=${wsCtx.folderFsPath} chatsKey=${storeWorkspaceKey} storageId=${wsCtx.workspaceStorageId} dryRun=${dryRun} activate=${activate} destIsOpen=${destIsOpen}`
   );
 
   const sourceProjectKeys = new Set<string>();
@@ -135,6 +152,9 @@ export async function restoreChatBundle(
       transcriptsWritten: 0,
       storeWritten: false,
       storeWorkspaceKey,
+      restoredFolder: folderFsPath,
+      sourceFolderTilde: bundle.sourceFolderTilde,
+      activated: false,
       sidebarMerged: false,
       warnings: ["Cancelled by user."],
     };
@@ -147,7 +167,7 @@ export async function restoreChatBundle(
     "state.vscdb"
   );
 
-  progress.report({ message: "Restoring chat files (transport-chat)..." });
+  progress.report({ message: "Restoring chat files..." });
   const disk = await restoreChatBundleDisk(context, bundle, wsCtx, {
     projectMapping,
     workspaceStateDb,
@@ -193,11 +213,11 @@ export async function restoreChatBundle(
     if (sidebarMerged && remappedBundle.sidebarSnapshot) {
       await applyImmediateSidebarWriteback(remappedBundle, wsCtx);
       await queueSidebarWriteback(context, remappedBundle, wsCtx, {
-        activate: options.activate === true,
+        activate: activate,
       });
     }
 
-    if (options.activate) {
+    if (activate) {
       if (!storeWritten) {
         warnings.push(
           "Bundle has no store.db snapshot; IDE activation usually requires store.db at ~/.cursor/chats/<md5(workspace)>/<conversationId>/store.db. Re-export from a machine where that file exists."
@@ -284,7 +304,7 @@ export async function restoreChatBundle(
     }
   } else {
     logChatRestoreDebug("[dry-run] skipped disk and activation verify");
-    if (options.activate) {
+    if (activate) {
       await runPostImportActivation(workingBundle, conversationId, wsCtx, {
         activateStrict: options.activateStrict,
         bridgeWaitResultMs: options.bridgeWaitResultMs,
@@ -316,6 +336,9 @@ export async function restoreChatBundle(
     transcriptsWritten,
     storeWritten,
     storeWorkspaceKey,
+    restoredFolder: folderFsPath,
+    sourceFolderTilde: bundle.sourceFolderTilde,
+    activated: activate,
     sidebarMerged,
     warnings,
     verifyChecks: verifyChecks.length > 0 ? verifyChecks : undefined,

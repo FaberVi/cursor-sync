@@ -213,6 +213,22 @@ describe("sync-debug", () => {
 
       expect(executed).toEqual([]);
     });
+
+    it("does not offer Debug with Cursor for CANCELLED", async () => {
+      __setShowErrorMessageResult(DEBUG_WITH_CURSOR_ACTION);
+      const executed: string[] = [];
+      __setExecuteCommandImpl(async (command) => {
+        executed.push(command);
+        return undefined;
+      });
+
+      await showSyncFailureWithDebug(
+        mockContext,
+        baseFailure({ category: "CANCELLED", message: "cancelled" })
+      );
+
+      expect(executed).toEqual([]);
+    });
   });
 
   describe("openComposerWithPrefilledPrompt", () => {

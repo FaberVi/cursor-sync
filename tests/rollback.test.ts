@@ -47,4 +47,16 @@ describe("rollback", () => {
     await fs.writeFile(filePath, "skill", "utf-8");
     expect(await fs.readFile(filePath, "utf-8")).toBe("skill");
   });
+
+  it("unlinkCreatedFiles removes new files and leftover tmp", async () => {
+    const created = path.join(tmpDir, "new-settings.json");
+    const tmp = created + ".tmp";
+    await fs.writeFile(created, "new", "utf-8");
+    await fs.writeFile(tmp, "partial", "utf-8");
+    const { unlinkCreatedFiles } = await import("../src/rollback.js");
+    const n = await unlinkCreatedFiles([created]);
+    expect(n).toBe(1);
+    await expect(fs.access(created)).rejects.toThrow();
+    await expect(fs.access(tmp)).rejects.toThrow();
+  });
 });

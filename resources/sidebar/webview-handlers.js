@@ -47,6 +47,10 @@
     if (workspaceKey) extra.workspaceKey = workspaceKey;
     var projectKey = cmdBtn.getAttribute("data-project-key");
     if (projectKey) extra.projectKey = projectKey;
+    var relativeSyncKey = cmdBtn.getAttribute("data-relative-sync-key");
+    if (relativeSyncKey) extra.relativeSyncKey = relativeSyncKey;
+    var resolution = cmdBtn.getAttribute("data-resolution");
+    if (resolution) extra.resolution = resolution;
     var bundlePath = cmdBtn.getAttribute("data-bundle-path");
     if (bundlePath) extra.bundlePath = bundlePath;
     var timestamp = cmdBtn.getAttribute("data-timestamp");
@@ -161,6 +165,14 @@
         if (activeTab !== "sync-pane") {
           var newSync = document.getElementById("sync-pane");
           if (newSync) newSync.style.display = "none";
+        }
+        var conflictCount = document.querySelectorAll(".conflict-row").length;
+        var syncTab = document.querySelector('.tab-btn[data-tab="sync-pane"]');
+        if (syncTab) {
+          var label = CSW.tr("tabSync", "Sync");
+          syncTab.innerHTML = conflictCount
+            ? label + ' <span class="tab-badge">' + conflictCount + "</span>"
+            : label;
         }
         CSW.setSyncActionsLocked(CSW.syncActionsLocked);
       }

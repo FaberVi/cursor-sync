@@ -1,11 +1,20 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
+import { notifySyncQuiet } from "./sync-notify.js";
 import { saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
 import { resolveSyncRoots, gistFileNameToSyncKey, isExcludedSyncKey, enumerateSyncFiles } from "./paths.js";
 import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
 import { computeChecksum } from "./packaging.js";
 import { clearConflicts, getResolutionForKey } from "./conflicts.js";
-import { createBackup, rollbackFromBackup, pruneOldBackups, ensureParentDirectory } from "./rollback.js";
+import { createBackup, pruneOldBackups, ensureParentDirectory } from "./rollback.js";
+import {
+  commitSyncFileJournal,
+  markJournalStateWritten,
+  rollbackSyncFileJournal,
+  setSyncFileJournal,
+  throwIfAborted,
+  SyncCancelledError,
+} from "./sync-abort.js";
 import {
   applyLocalDeletes, planLocalDeletes, syncKeyToAbsolutePath, PartialLocalDeleteError,
 } from "./sync-local-deletes.js";
@@ -127,7 +136,7 @@ export async function applyPullFiles(
         ? ` Files marked Keep Local (${keepLocalKeys.size}) will be preserved.`
         : "";
     const choice = await vscode.window.showWarningMessage(
-      `Pull will align this machine to the remote: update ${n} file(s) and delete ${m} file(s) present only locally (settings, skills, rules, …).${keepNote} Continue?`,
+      `Mirror will align this machine to the remote: update ${n} file(s) and delete ${m} file(s) present only locally (settings, skills, rules, …).${keepNote} Continue?`,
       { modal: true },
       "Proceed",
       "Cancel"
@@ -137,6 +146,7 @@ export async function applyPullFiles(
       sendEvent(context, "sync_failed", { direction: "pull", reason: "cancelled", trigger });
       return { status: "failed" };
     }
+    throwIfAborted();
   } else if (!mirror && trigger === "manual" && safeMode && filesToWrite.length > 0) {
     const items = filesToWrite.map((f) => ({
       label: f.syncKey,
@@ -153,6 +163,8 @@ export async function applyPullFiles(
       sendEvent(context, "sync_failed", { direction: "pull", reason: "cancelled", trigger });
       return { status: "failed" };
     }
+
+    throwIfAborted();
 
     const selectedKeys = new Set(selected.map((s) => s.label));
     const filtered = filesToWrite.filter((f) => selectedKeys.has(f.syncKey));
@@ -188,6 +200,13 @@ export async function applyPullFiles(
     ...deleteAbsPaths,
   ]);
 
+  const createdPaths: string[] = [];
+  setSyncFileJournal({
+    backupEntries,
+    createdPaths,
+    previousSyncState: syncState,
+  });
+
   const writtenBackups: typeof backupEntries = [];
   let writeError = false;
   let failedSyncKey: string | undefined;
@@ -200,6 +219,7 @@ export async function applyPullFiles(
     typeof progress.percent === "number" ? progress.percent : 0;
   let writtenCount = 0;
   for (const file of filesToWrite) {
+    throwIfAborted();
     try {
       await ensureParentDirectory(file.absolutePath);
       const tmpPath = file.absolutePath + ".tmp";
@@ -215,8 +235,13 @@ export async function applyPullFiles(
       const backup = backupEntries.find((b) => b.absolutePath === file.absolutePath);
       if (backup) {
         writtenBackups.push(backup);
+      } else {
+        createdPaths.push(file.absolutePath);
       }
     } catch (err) {
+      if (err instanceof SyncCancelledError) {
+        throw err;
+      }
       const errMessage = err instanceof Error ? err.message : String(err);
       logger.appendLine(
         `[${new Date().toISOString()}] Write failed for ${file.syncKey} (${file.absolutePath}): ${errMessage}`
@@ -230,6 +255,7 @@ export async function applyPullFiles(
 
   let deletedKeys: string[] = [];
   if (!writeError && keysToDelete.length > 0) {
+    throwIfAborted();
     progress.report({ message: `Removing ${keysToDelete.length} local file(s)…` });
     try {
       const applied = await applyLocalDeletes(context, keysToDelete, roots, {
@@ -261,7 +287,7 @@ export async function applyPullFiles(
 
   if (writeError) {
     logger.appendLine(`[${new Date().toISOString()}] Rolling back partial writes`);
-    await rollbackFromBackup(writtenBackups);
+    await rollbackSyncFileJournal();
     const failureDetail = failedSyncKey
       ? `Could not write/delete ${failedSyncKey}${failedErrorDetail ? ` (${failedErrorDetail})` : ""}.`
       : "file write error.";
@@ -318,6 +344,7 @@ export async function applyPullFiles(
     remoteChecksums,
   });
   await saveSyncState(context, newState);
+  markJournalStateWritten();
 
   const historyFiles = [
     ...filesToWrite.map((f) => f.syncKey),
@@ -340,6 +367,7 @@ export async function applyPullFiles(
     destination_type: backend.type,
   });
 
+  commitSyncFileJournal();
   return { status: "written", filesToWrite, deletedKeys, newState, keepLocalExtensions };
 }
 
@@ -363,8 +391,9 @@ async function completePullAlreadyInSync(params: {
   await clearConflicts();
   sendEvent(context, "sync_completed", { direction: "pull", file_count: 0, trigger });
   await applyRemoteExtensionSync(context, remoteFiles, getLogger(), keepLocalExtensions, progress);
-  if (toast) vscode.window.showInformationMessage(toast);
+  if (toast) notifySyncQuiet(toast);
   progress.report({ message: "Done" });
   await migrateAndLogSkillArtifacts();
+  commitSyncFileJournal();
   return { status: "complete" };
 }

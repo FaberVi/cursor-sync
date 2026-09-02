@@ -84,6 +84,18 @@ vi.mock("../src/chat-import-verify.js", async (importOriginal) => {
   };
 });
 
+const mockRunPostImportActivation = vi.hoisted(() =>
+  vi.fn(async () => ({ ok: true, stagedOnly: false, exitCode: 0 }))
+);
+
+vi.mock("../src/chat-import-activate.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/chat-import-activate.js")>();
+  return {
+    ...actual,
+    runPostImportActivation: mockRunPostImportActivation,
+  };
+});
+
 vi.mock("../src/diagnostics.js", () => ({
   getLogger: () => ({
     appendLine: () => {},
@@ -109,6 +121,8 @@ describe("restoreChatBundle disk parity", () => {
     mockResolveTransportChatScript.mockResolvedValue("/fake/cursor_chat_io.py");
     mockRunPythonDiskImport.mockReset();
     mockRunPythonDiskImport.mockResolvedValue({ ok: true, exitCode: 0, stdout: "", stderr: "" });
+    mockRunPostImportActivation.mockReset();
+    mockRunPostImportActivation.mockResolvedValue({ ok: true, stagedOnly: false, exitCode: 0 });
     mockWorkspaceFolders.length = 0;
     mockWorkspaceFolders.push({
       uri: { fsPath: FIXTURE_REPO, scheme: "file" },
@@ -162,6 +176,139 @@ describe("restoreChatBundle disk parity", () => {
     expect(result.storeWritten).toBe(true);
     expect(result.storeWorkspaceKey).toBe(chatsKey);
     expect(chatsKey).not.toBe("must-not-use-this-key");
+  });
+
+  it("routes store.db to md5 of sourceFolderTilde and skips activate when that folder is not open", async () => {
+    const { restoreChatBundle } = await import("../src/chat-persistence.js");
+    const { formatDisplayPath } = await import("../src/chat-workspace-label.js");
+    const destFolder = path.join(tempHome, "proj-a");
+    await fs.mkdir(destFolder, { recursive: true });
+    const storeBytes = Buffer.from("SQLite format 3\0tilde-route");
+    const encoded = encodeTranscriptArtifact(storeBytes, true);
+    const bundle: ChatBundle = {
+      schemaVersion: 1,
+      type: "chat-persistence",
+      createdAt: "2026-05-21T00:00:00.000Z",
+      conversationId: "conv-tilde-route",
+      title: "Tilde route",
+      subtitle: "",
+      previewText: "Tilde route",
+      sourceFolderTilde: formatDisplayPath(destFolder, tempHome),
+      sidebarSnapshot: null,
+      storeSnapshot: {
+        content: encoded.content,
+        encoding: encoded.encoding,
+        checksum: computeArtifactChecksum(storeBytes),
+        sizeBytes: storeBytes.length,
+        sourceWorkspaceKey: "must-not-use-this-key",
+      },
+      transcriptFiles: [],
+    };
+    const context = {
+      globalStorageUri: { fsPath: path.join(tempHome, "global-storage") },
+      extensionUri: { fsPath: path.join(tempHome, "extension") },
+    } as import("vscode").ExtensionContext;
+
+    const result = await restoreChatBundle(context, bundle, { report: () => {} }, {
+      activate: true,
+    });
+
+    const destKey = md5FolderKey(path.resolve(destFolder));
+    const openKey = md5FolderKey(path.resolve(FIXTURE_REPO));
+    expect(result.storeWritten).toBe(true);
+    expect(result.storeWorkspaceKey).toBe(destKey);
+    expect(result.storeWorkspaceKey).not.toBe(openKey);
+    expect(result.activated).toBe(false);
+    expect(result.restoredFolder && path.resolve(result.restoredFolder)).toBe(
+      path.resolve(destFolder)
+    );
+    expect(mockRunPostImportActivation).not.toHaveBeenCalled();
+  });
+
+  it("activates only when sourceFolderTilde matches the open workspace", async () => {
+    const { restoreChatBundle } = await import("../src/chat-persistence.js");
+    const { formatDisplayPath } = await import("../src/chat-workspace-label.js");
+    const destFolder = path.join(tempHome, "open-proj");
+    await fs.mkdir(destFolder, { recursive: true });
+    mockWorkspaceFolders.length = 0;
+    mockWorkspaceFolders.push({
+      uri: { fsPath: destFolder, scheme: "file" },
+      name: "open-proj",
+      index: 0,
+    });
+    const storeBytes = Buffer.from("SQLite format 3\0open-ws");
+    const encoded = encodeTranscriptArtifact(storeBytes, true);
+    const bundle: ChatBundle = {
+      schemaVersion: 1,
+      type: "chat-persistence",
+      createdAt: "2026-05-21T00:00:00.000Z",
+      conversationId: "conv-open-activate",
+      title: "Open activate",
+      subtitle: "",
+      previewText: "Open activate",
+      sourceFolderTilde: formatDisplayPath(destFolder, tempHome),
+      sidebarSnapshot: null,
+      storeSnapshot: {
+        content: encoded.content,
+        encoding: encoded.encoding,
+        checksum: computeArtifactChecksum(storeBytes),
+        sizeBytes: storeBytes.length,
+        sourceWorkspaceKey: "ignored",
+      },
+      transcriptFiles: [],
+    };
+    const context = {
+      globalStorageUri: { fsPath: path.join(tempHome, "global-storage") },
+      extensionUri: { fsPath: path.join(tempHome, "extension") },
+    } as import("vscode").ExtensionContext;
+
+    const result = await restoreChatBundle(context, bundle, { report: () => {} }, {
+      activate: true,
+    });
+
+    expect(result.storeWorkspaceKey).toBe(md5FolderKey(path.resolve(destFolder)));
+    expect(result.activated).toBe(true);
+    expect(mockRunPostImportActivation).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws when sourceFolderTilde is set and the folder cannot be resolved", async () => {
+    const { restoreChatBundle } = await import("../src/chat-persistence.js");
+    const { createRestoreDestinationCache } = await import(
+      "../src/chat-restore-destination.js"
+    );
+    const storeBytes = Buffer.from("SQLite format 3\0unresolved");
+    const encoded = encodeTranscriptArtifact(storeBytes, true);
+    const bundle: ChatBundle = {
+      schemaVersion: 1,
+      type: "chat-persistence",
+      createdAt: "2026-05-21T00:00:00.000Z",
+      conversationId: "conv-unresolved-tilde",
+      title: "Unresolved",
+      subtitle: "",
+      previewText: "Unresolved",
+      sourceFolderTilde: "~/missing-proj-xyz",
+      sidebarSnapshot: null,
+      storeSnapshot: {
+        content: encoded.content,
+        encoding: encoded.encoding,
+        checksum: computeArtifactChecksum(storeBytes),
+        sizeBytes: storeBytes.length,
+        sourceWorkspaceKey: "ignored",
+      },
+      transcriptFiles: [],
+    };
+    const cache = createRestoreDestinationCache();
+    cache.resolvedByTilde.set("~/missing-proj-xyz", null);
+    const context = {
+      globalStorageUri: { fsPath: path.join(tempHome, "global-storage") },
+    } as import("vscode").ExtensionContext;
+
+    await expect(
+      restoreChatBundle(context, bundle, { report: () => {} }, {
+        destinationCache: cache,
+      })
+    ).rejects.toThrow(/Could not resolve project folder for ~\/missing-proj-xyz/);
+    expect(mockRunPythonDiskImport).not.toHaveBeenCalled();
   });
 
   it("throws when disk import fails (Python reports failure)", async () => {
