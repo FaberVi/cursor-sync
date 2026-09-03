@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.1
+
+### Changed
+- Default sync destination is now a classic GitHub repository instead of a private Gist (`cursorSync.destination.type` default `repo`)
+
 ## v1.0.0
 
 ### Added

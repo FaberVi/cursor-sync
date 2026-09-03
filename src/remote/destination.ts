@@ -13,7 +13,7 @@ export interface DestinationSettings {
 
 export function readDestinationSettings(): DestinationSettings {
   const config = vscode.workspace.getConfiguration("cursorSync");
-  const typeRaw = config.get<string>("destination.type") ?? "gist";
+  const typeRaw = config.get<string>("destination.type") ?? "repo";
   const type: SyncDestinationType = typeRaw === "repo" ? "repo" : "gist";
   return {
     type,

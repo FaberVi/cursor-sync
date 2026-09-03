@@ -35,7 +35,7 @@ export type SettingsTabValues = Record<SidebarSettingKey, boolean | number | str
 
 const PULL_POLICY_OPTIONS = ["skip", "remoteWins", "newerWins", "ask"] as const;
 const INTERVAL_UNITS = ["seconds", "minutes"] as const;
-const DESTINATION_TYPES = ["gist", "repo"] as const;
+const DESTINATION_TYPES = ["repo", "gist"] as const;
 const UI_LANGUAGES: UiLanguage[] = ["en", "it"];
 
 export function readSettingsValues(): SettingsTabValues {

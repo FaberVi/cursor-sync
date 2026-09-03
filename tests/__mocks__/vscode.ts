@@ -148,7 +148,7 @@ export const workspace = {
         "schedule.interval": 30,
         "schedule.intervalUnit": "minutes",
         "schedule.intervalMin": 30,
-        "destination.type": "gist",
+        "destination.type": "repo",
         "destination.repo": "",
         "destination.branch": "main",
         "destination.path": "cursor-sync",

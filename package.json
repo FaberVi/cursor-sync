@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync (Community)",
   "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub Gist or repository",
-	"version": "1.0.0",
+	"version": "1.0.1",
   "icon": "assets/icon.png",
   "publisher": "FaberVi",
   "author": {
@@ -308,11 +308,11 @@
         "cursorSync.destination.type": {
           "type": "string",
           "enum": [
-            "gist",
-            "repo"
+            "repo",
+            "gist"
           ],
-          "default": "gist",
-          "description": "Remote sync destination: private Gist or classic GitHub repository"
+          "default": "repo",
+          "description": "Remote sync destination: classic GitHub repository or private Gist"
         },
         "cursorSync.destination.repo": {
           "type": "string",
