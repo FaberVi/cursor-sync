@@ -180,6 +180,11 @@ export const MCP_PRESERVE_SYNC_KEYS = [
   "cursor-user/mcp.json",
 ] as const;
 
+/** Clone/remote copies kept when the matching sync toggle is off (not deleted, not pulled). */
+export function isToggleOffPreservedSyncKey(syncKey: string): boolean {
+  return isMcpSyncKey(syncKey) && !isMcpSyncEnabled();
+}
+
 export async function enumerateSyncFiles(
   roots?: SyncRoots
 ): Promise<SyncFileEntry[]> {

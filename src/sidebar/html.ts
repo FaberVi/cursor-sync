@@ -3,9 +3,8 @@ import { loadSyncState, loadSyncHistory } from "../diagnostics.js";
 import {
   countLocalDiscoveredChats,
   isChatSyncEnabled,
-  fetchRemoteChatCollection,
+  fetchRemoteChatCollectionFromFiles,
 } from "../chat-sync.js";
-import { requireToken } from "../auth.js";
 import {
   hasRemoteDestination,
   remoteUrlForState,
@@ -19,17 +18,12 @@ import { renderSyncPane } from "./sync-tab.js";
 import { renderSettingsPane, readSettingsValues } from "./settings-tab.js";
 import { t, webviewI18nPayload } from "./i18n.js";
 import { escapeHtml } from "./sync-tab.js";
-import { getPendingConflicts, getResolutionForKey } from "../conflicts.js";
-
-function pendingConflictsForTab(): NonNullable<SyncTabState["pendingConflicts"]> {
-  return getPendingConflicts().map((c) => ({
-    relativeSyncKey: c.relativeSyncKey,
-    resolution: getResolutionForKey(c.relativeSyncKey),
-  }));
-}
+import { readCloneChatRaw } from "../sync-copy.js";
+import { getSyncClonePath, readRepoIdentity } from "../sync-clone.js";
+import { CURSOR_CHAT_GIST_FILE_NAME } from "../chat-bundle-format.js";
 
 export interface BuildSyncTabStateOptions {
-  /** Skip filesystem chat discovery and remote gist/repo fetch (slow). */
+  /** Skip filesystem chat discovery (slow). */
   deferHeavyMetrics?: boolean;
 }
 
@@ -43,10 +37,9 @@ function buildSyncTabStateShell(context: vscode.ExtensionContext): SyncTabState 
     lastSyncTime: undefined,
     lastSyncDirection: undefined,
     fileCount: 0,
-    gistId: undefined,
     remoteLabel: undefined,
     remoteUrl: undefined,
-    destinationKind: undefined,
+    destinationKind: "repo",
     extensionVersion: extensionVersionForContext(context),
     history: [],
     historyLoading: true,
@@ -54,7 +47,6 @@ function buildSyncTabStateShell(context: vscode.ExtensionContext): SyncTabState 
     localChatCount: 0,
     remoteChatCount: undefined,
     chatCountsLoading: true,
-    pendingConflicts: pendingConflictsForTab(),
   };
 }
 
@@ -79,18 +71,21 @@ export async function buildSyncTabState(
   if (!deferHeavyMetrics) {
     localChatCount = await countLocalDiscoveredChats();
     if (chatsSyncEnabled && hasRemoteDestination(syncState)) {
-      const token = await requireToken(context);
-      if (token && syncState) {
-        try {
-          const remote = await fetchRemoteChatCollection(
-            context,
-            syncState.gistId || syncStateIdentity(syncState),
-            token
-          );
-          remoteChatCount = remote?.length ?? 0;
-        } catch {
-          remoteChatCount = undefined;
+      try {
+        const identity = readRepoIdentity();
+        if (identity) {
+          const raw = await readCloneChatRaw(getSyncClonePath(context), identity.basePath);
+          if (raw !== undefined) {
+            const remote = await fetchRemoteChatCollectionFromFiles(context, {
+              [CURSOR_CHAT_GIST_FILE_NAME]: raw,
+            });
+            remoteChatCount = remote?.length ?? 0;
+          } else {
+            remoteChatCount = 0;
+          }
         }
+      } catch {
+        remoteChatCount = undefined;
       }
     }
   }
@@ -101,7 +96,6 @@ export async function buildSyncTabState(
       lastSyncTime: undefined,
       lastSyncDirection: undefined,
       fileCount: 0,
-      gistId: undefined,
       remoteLabel: undefined,
       remoteUrl: undefined,
       destinationKind,
@@ -111,7 +105,6 @@ export async function buildSyncTabState(
       localChatCount,
       remoteChatCount,
       chatCountsLoading,
-      pendingConflicts: pendingConflictsForTab(),
     };
   }
 
@@ -120,7 +113,6 @@ export async function buildSyncTabState(
     lastSyncTime: syncState.lastSyncTimestamp,
     lastSyncDirection: syncState.lastSyncDirection,
     fileCount: Object.keys(syncState.localChecksums).length,
-    gistId: syncState.gistId,
     remoteLabel: syncStateIdentity(syncState) || undefined,
     remoteUrl: remoteUrlForState(syncState),
     destinationKind,
@@ -130,7 +122,6 @@ export async function buildSyncTabState(
     localChatCount,
     remoteChatCount,
     chatCountsLoading,
-    pendingConflicts: pendingConflictsForTab(),
   };
 }
 

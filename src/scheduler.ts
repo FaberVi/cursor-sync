@@ -2,8 +2,7 @@ import * as vscode from "vscode";
 import { executePush, isPushLocked } from "./push.js";
 import { executePull, isPullLocked } from "./pull.js";
 import { requireToken } from "./auth.js";
-import { withRetry } from "./retry.js";
-import { loadSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
+import { getLogger, addSyncHistoryEntry } from "./diagnostics.js";
 import { notifySyncQuiet } from "./sync-notify.js";
 import { sendEvent } from "./analytics.js";
 import {
@@ -11,35 +10,37 @@ import {
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
 import {
-  CHAT_BUNDLES_SYNC_KEY,
-  CURSOR_CHAT_SYNC_KEY,
-  isChatSyncEnabled,
   computeChatSyncLocalFingerprint,
+  isChatSyncEnabled,
   readStoredChatSyncFingerprint,
+  CURSOR_CHAT_SYNC_KEY,
 } from "./chat-sync.js";
-import {
-  computeLocalChecksums,
-  findConflicts,
-  getUnresolvedConflicts,
-  registerPendingConflicts,
-} from "./conflicts.js";
+import { computeChecksum } from "./packaging.js";
 import { resolveScheduleInterval } from "./schedule-interval.js";
-import { createRemoteBackend } from "./remote/factory.js";
-import { hasRemoteDestination } from "./remote/destination.js";
-import type { Manifest } from "./types.js";
+import { isRepoDestinationConfigured } from "./remote/destination.js";
+import { loadSyncState } from "./diagnostics.js";
+import {
+  ensureSyncClone,
+  hasNestedSyncFiles,
+  relationToOrigin,
+} from "./sync-clone.js";
+import {
+  hashCloneSyncFiles,
+  hashCursorSyncFiles,
+  readCloneChatRaw,
+  syncKeysDiffer,
+} from "./sync-copy.js";
+import { decideSyncAction, type SyncAction } from "./sync-action.js";
+import { GitNotFoundError } from "./git-cli.js";
+import { enterSyncLock, leaveSyncLock } from "./sync-lock.js";
+import { beginSyncAbort, endSyncAbort } from "./sync-abort.js";
 
 const MAX_JITTER_MS = 60_000;
 
 let timer: ReturnType<typeof setInterval> | undefined;
 let jitterTimeout: ReturnType<typeof setTimeout> | undefined;
 
-export type SyncAction =
-  | { action: "none" }
-  | { action: "pull" }
-  | { action: "push" }
-  | { action: "pull-push" }
-  | { action: "conflict"; keys: string[] }
-  | { action: "error"; reason: string };
+export type { SyncAction } from "./sync-action.js";
 
 export function startScheduler(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration("cursorSync");
@@ -76,10 +77,9 @@ export function stopScheduler(): void {
 export async function determineSyncAction(
   context: vscode.ExtensionContext
 ): Promise<SyncAction> {
-  let syncState = await loadSyncState(context);
-
-  if (!syncState || !hasRemoteDestination(syncState)) {
-    return { action: "push" };
+  const syncState = await loadSyncState(context);
+  if (!isRepoDestinationConfigured()) {
+    return { action: "error", reason: "not_configured" };
   }
 
   const token = await requireToken(context);
@@ -87,100 +87,45 @@ export async function determineSyncAction(
     return { action: "error", reason: "no_token" };
   }
 
-  const backend = createRemoteBackend(context, token, syncState);
-  if (!backend) {
-    return { action: "error", reason: "no_destination" };
-  }
-
-  const snapshotResult = await withRetry(() =>
-    backend.getSnapshot({ onlyFiles: ["manifest.json"] })
-  );
-  if (!snapshotResult.ok) {
-    return { action: "error", reason: snapshotResult.error.category };
-  }
-
-  const manifestContent = snapshotResult.data.files["manifest.json"];
-  if (!manifestContent) {
-    return { action: "push" };
-  }
-
-  let manifest: Manifest;
   try {
-    manifest = JSON.parse(manifestContent) as Manifest;
-  } catch {
-    return { action: "push" };
-  }
+    const clone = await ensureSyncClone(context, token);
+    const relation = clone.empty
+      ? "empty"
+      : await relationToOrigin(clone.clonePath, clone.identity.branch);
 
-  const remoteChecksums: Record<string, string> = {};
-  for (const [key, entry] of Object.entries(manifest.files)) {
-    remoteChecksums[key] = entry.checksum;
-  }
+    const localHashes = await hashCursorSyncFiles();
+    const cloneHashes = await hashCloneSyncFiles(clone.clonePath, clone.identity.basePath);
+    let cursorDiffers = syncKeysDiffer(localHashes, cloneHashes);
 
-  const localChecksums = await computeLocalChecksums();
-  if (isChatSyncEnabled()) {
-    delete localChecksums[CHAT_BUNDLES_SYNC_KEY];
-    const fingerprint = await computeChatSyncLocalFingerprint();
-    const stored = await readStoredChatSyncFingerprint(context);
-    const lastChatChecksum = syncState.localChecksums[CURSOR_CHAT_SYNC_KEY];
-    // Fingerprint is discovery metadata; sync state stores content checksum.
-    // When fingerprint matches the last push, treat chat as unchanged.
-    if (stored && fingerprint === stored && lastChatChecksum) {
-      localChecksums[CURSOR_CHAT_SYNC_KEY] = lastChatChecksum;
-    } else {
-      localChecksums[CURSOR_CHAT_SYNC_KEY] = fingerprint;
+    if (isChatSyncEnabled()) {
+      const fingerprint = await computeChatSyncLocalFingerprint();
+      const stored = await readStoredChatSyncFingerprint(context);
+      const cloneChat = await readCloneChatRaw(clone.clonePath, clone.identity.basePath);
+      const cloneChatChecksum = cloneChat
+        ? computeChecksum(Buffer.from(cloneChat, "utf8"))
+        : undefined;
+      const lastChat = syncState?.localChecksums[CURSOR_CHAT_SYNC_KEY];
+      if (stored !== fingerprint || lastChat !== cloneChatChecksum) {
+        cursorDiffers = true;
+      }
     }
-  }
 
-  const conflicts = findConflicts(syncState, localChecksums, remoteChecksums);
-  const unresolved = getUnresolvedConflicts(conflicts);
-  if (unresolved.length > 0) {
-    await registerPendingConflicts(unresolved);
+    const nested = await hasNestedSyncFiles(clone.clonePath, clone.identity.basePath);
+    return decideSyncAction({
+      relation,
+      cursorDiffers,
+      completedFileSync: syncState?.completedFileSync === true,
+      hasNestedRemoteFiles: nested,
+    });
+  } catch (err) {
+    if (err instanceof GitNotFoundError) {
+      return { action: "error", reason: err.message };
+    }
     return {
-      action: "conflict",
-      keys: unresolved.map((c) => c.relativeSyncKey),
+      action: "error",
+      reason: err instanceof Error ? err.message : String(err),
     };
   }
-  if (conflicts.length > 0) {
-    await registerPendingConflicts([]);
-  }
-
-  const allKeys = new Set([
-    ...Object.keys(localChecksums),
-    ...Object.keys(remoteChecksums),
-    ...Object.keys(syncState.localChecksums),
-    ...Object.keys(syncState.remoteChecksums),
-  ]);
-
-  let localHasChanges = false;
-  let remoteHasChanges = false;
-
-  for (const key of allKeys) {
-    const baseLocal = syncState.localChecksums[key];
-    const baseRemote = syncState.remoteChecksums[key];
-    const currentLocal = localChecksums[key];
-    const currentRemote = remoteChecksums[key];
-
-    if (currentLocal !== baseLocal) {
-      localHasChanges = true;
-    }
-    if (currentRemote !== baseRemote) {
-      remoteHasChanges = true;
-    }
-  }
-
-  if (remoteHasChanges && localHasChanges) {
-    return { action: "pull-push" };
-  }
-
-  if (remoteHasChanges) {
-    return { action: "pull" };
-  }
-
-  if (localHasChanges) {
-    return { action: "push" };
-  }
-
-  return { action: "none" };
 }
 
 export const scheduledSyncActionResolver = {
@@ -194,7 +139,6 @@ export async function scheduledTick(
   const config = vscode.workspace.getConfiguration("cursorSync");
   const resolved = resolveScheduleInterval(config);
 
-  // Never run scheduled push/pull unless periodic auto-sync is enabled.
   if (!resolved.enabled) {
     logger.appendLine(
       `[${new Date().toISOString()}] Scheduled sync skipped: schedule.enabled is false`
@@ -212,10 +156,18 @@ export async function scheduledTick(
     return;
   }
 
-  logger.appendLine(
-    `[${new Date().toISOString()}] Scheduled sync triggered`
-  );
+  const lockHold = enterSyncLock();
+  if (lockHold === "busy") {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Scheduled sync skipped: operation in progress`
+    );
+    sendEvent(context, "scheduled_sync_skipped", { reason: "in_progress" });
+    return;
+  }
 
+  logger.appendLine(`[${new Date().toISOString()}] Scheduled sync triggered`);
+
+  beginSyncAbort();
   try {
     const result = await scheduledSyncActionResolver.determineSyncAction(context);
 
@@ -228,10 +180,18 @@ export async function scheduledTick(
         break;
 
       case "pull": {
-        logger.appendLine(
-          `[${new Date().toISOString()}] Scheduled sync: remote changes detected, pulling`
-        );
-        await executePull(context, { trigger: "scheduled" });
+        const message = "Pull required (will overwrite local Cursor files). Run Pull Now to confirm.";
+        logger.appendLine(`[${new Date().toISOString()}] Scheduled sync skipped: ${message}`);
+        sendEvent(context, "scheduled_sync_skipped", { reason: "pull_required" });
+        await addSyncHistoryEntry(context, {
+          timestamp: new Date().toISOString(),
+          direction: "pull",
+          trigger: "scheduled",
+          fileCount: 0,
+          success: false,
+          error: "pull required",
+        });
+        notifySyncQuiet(message);
         break;
       }
 
@@ -239,45 +199,18 @@ export async function scheduledTick(
         logger.appendLine(
           `[${new Date().toISOString()}] Scheduled sync: local changes detected, pushing`
         );
-        await executePush(context, { trigger: "scheduled" });
-        break;
-      }
-
-      case "pull-push": {
-        logger.appendLine(
-          `[${new Date().toISOString()}] Scheduled sync: local and remote changes detected, pulling then pushing`
-        );
-        const pullOk = await executePull(context, { trigger: "scheduled" });
-        if (!pullOk) {
-          break;
-        }
-        await executePush(context, { trigger: "scheduled" });
-        break;
-      }
-
-      case "conflict": {
-        const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them in the Sync tab.`;
-        logger.appendLine(
-          `[${new Date().toISOString()}] Scheduled sync skipped: conflicts on [${result.keys.join(", ")}]`
-        );
-        sendEvent(context, "scheduled_sync_skipped", {
-          reason: "conflict",
-          conflict_count: result.keys.length,
-        });
-        await addSyncHistoryEntry(context, {
-          timestamp: new Date().toISOString(),
-          direction: "pull",
-          trigger: "scheduled",
-          fileCount: result.keys.length,
-          success: false,
-          error: conflictMessage,
-          files: result.keys,
-        });
-        notifySyncQuiet(conflictMessage);
+        await executePush(context, { trigger: "scheduled", skipLock: true });
         break;
       }
 
       case "error": {
+        if (result.reason === "not_configured") {
+          logger.appendLine(
+            `[${new Date().toISOString()}] Scheduled sync skipped: repository not configured`
+          );
+          sendEvent(context, "scheduled_sync_skipped", { reason: "not_configured" });
+          break;
+        }
         const errorMessage = `Scheduled sync failed: ${result.reason}`;
         logger.appendLine(
           `[${new Date().toISOString()}] Scheduled sync skipped: ${result.reason}`
@@ -305,5 +238,8 @@ export async function scheduledTick(
       buildSyncDebugFailure("scheduler", "scheduled", errMessage),
       { title: errorMessage }
     );
+  } finally {
+    endSyncAbort();
+    leaveSyncLock(lockHold);
   }
 }

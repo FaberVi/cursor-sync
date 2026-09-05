@@ -36,7 +36,7 @@
     syncNow: true,
     push: true,
     pull: true,
-    pullMirror: true,
+    resetToRemote: true,
   };
 
   CSW.setSyncActionsLocked = function (locked) {
@@ -45,7 +45,7 @@
       '.sync-now-btn[data-command="syncNow"]',
       '.action-btn[data-command="push"]',
       '.action-btn[data-command="pull"]',
-      '.action-btn[data-command="pullMirror"]',
+      '.action-btn[data-command="resetToRemote"]',
     ];
     selectors.forEach(function (sel) {
       document.querySelectorAll(sel).forEach(function (btn) {

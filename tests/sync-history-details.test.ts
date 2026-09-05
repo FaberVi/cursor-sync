@@ -57,15 +57,12 @@ describe("renderHistoryEntry", () => {
   });
 });
 
-function minimalSyncState(
-  pendingConflicts: NonNullable<SyncTabState["pendingConflicts"]>
-): SyncTabState {
+function minimalSyncState(): SyncTabState {
   return {
     status: "synced",
     lastSyncTime: undefined,
     lastSyncDirection: undefined,
     fileCount: 0,
-    gistId: undefined,
     remoteLabel: undefined,
     remoteUrl: undefined,
     destinationKind: undefined,
@@ -74,31 +71,8 @@ function minimalSyncState(
     chatsSyncEnabled: false,
     localChatCount: 0,
     remoteChatCount: undefined,
-    pendingConflicts,
   };
 }
-
-describe("conflict panel rendering", () => {
-  it("does not pre-select Skip and shows resolved banner after keepLocal", () => {
-    const unresolved = renderSyncPane(
-      minimalSyncState([{ relativeSyncKey: "cursor-user/settings.json" }])
-    );
-    expect(unresolved).not.toContain("pager-btn-active");
-    expect(unresolved).not.toContain("conflict-resolved-banner");
-
-    const resolved = renderSyncPane(
-      minimalSyncState([
-        { relativeSyncKey: "cursor-user/settings.json", resolution: "keepLocal" },
-        { relativeSyncKey: "cursor-user/keybindings.json", resolution: "keepLocal" },
-      ])
-    );
-    expect(resolved).toContain("conflict-resolved-banner");
-    expect(resolved).toContain("Conflicts resolved. Press Sync Now to apply.");
-    expect(resolved).toContain("pager-btn-active");
-    expect(resolved).toContain('data-relative-sync-key="cursor-user/settings.json"');
-    expect(resolved).toContain('data-relative-sync-key="cursor-user/keybindings.json"');
-  });
-});
 
 describe("history pagination", () => {
   function entry(i: number): SyncHistoryEntry {
@@ -201,7 +175,6 @@ describe("renderSyncPane loading shell", () => {
       lastSyncTime: undefined,
       lastSyncDirection: undefined,
       fileCount: 0,
-      gistId: undefined,
       remoteLabel: undefined,
       remoteUrl: undefined,
       destinationKind: undefined,
@@ -212,7 +185,6 @@ describe("renderSyncPane loading shell", () => {
       localChatCount: 0,
       remoteChatCount: undefined,
       chatCountsLoading: true,
-      pendingConflicts: [],
     };
     const html = renderSyncPane(state, 0);
     expect(html).toContain('status-card loading');
@@ -225,7 +197,7 @@ describe("renderSyncPane loading shell", () => {
 
 describe("renderSyncPane history header", () => {
   it("shows clear-all control when history has entries", () => {
-    const state = minimalSyncState([]);
+    const state = minimalSyncState();
     state.history = [
       {
         timestamp: "2026-07-19T10:00:00.000Z",
@@ -241,7 +213,7 @@ describe("renderSyncPane history header", () => {
   });
 
   it("hides clear-all when history is empty", () => {
-    const html = renderSyncPane(minimalSyncState([]), 0);
+    const html = renderSyncPane(minimalSyncState(), 0);
     expect(html).not.toContain('data-command="history:clearAll"');
   });
 });

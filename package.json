@@ -1,8 +1,8 @@
 {
   "name": "cursor-sync",
   "displayName": "Cursor Sync (Community)",
-  "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub Gist or repository",
-	"version": "1.0.1",
+  "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub repository",
+	"version": "2.0.0",
   "icon": "assets/icon.png",
   "publisher": "FaberVi",
   "author": {
@@ -54,7 +54,12 @@
           "group": "navigation"
         },
         {
-          "command": "cursorSync.pullMirror",
+          "command": "cursorSync.resetToRemote",
+          "when": "view == cursorSync.sidebar && cursorSync.configured",
+          "group": "1_overflow"
+        },
+        {
+          "command": "cursorSync.openSyncClone",
           "when": "view == cursorSync.sidebar && cursorSync.configured",
           "group": "1_overflow"
         },
@@ -69,11 +74,6 @@
           "command": "cursorSync.exportCurrentChatBundle",
           "when": "resourceScheme == 'cursor.composer'",
           "group": "navigation"
-        },
-        {
-          "command": "cursorSync.exportCurrentChatBundleToGist",
-          "when": "resourceScheme == 'cursor.composer'",
-          "group": "navigation"
         }
       ],
       "editor/title/context": [
@@ -81,20 +81,11 @@
           "command": "cursorSync.exportCurrentChatBundle",
           "when": "resourceScheme == 'cursor.composer'",
           "group": "navigation"
-        },
-        {
-          "command": "cursorSync.exportCurrentChatBundleToGist",
-          "when": "resourceScheme == 'cursor.composer'",
-          "group": "navigation"
         }
       ],
       "commandPalette": [
         {
           "command": "cursorSync.exportCurrentChatBundle",
-          "when": "false"
-        },
-        {
-          "command": "cursorSync.exportCurrentChatBundleToGist",
           "when": "false"
         }
       ]
@@ -123,9 +114,15 @@
         "enablement": "cursorSync.configured"
       },
       {
-        "command": "cursorSync.pullMirror",
-        "title": "Cursor Sync: Mirror from Remote",
-        "icon": "$(mirror)",
+        "command": "cursorSync.resetToRemote",
+        "title": "Cursor Sync: Reset to Remote",
+        "icon": "$(discard)",
+        "enablement": "cursorSync.configured"
+      },
+      {
+        "command": "cursorSync.openSyncClone",
+        "title": "Cursor Sync: Open Sync Clone",
+        "icon": "$(repo)",
         "enablement": "cursorSync.configured"
       },
       {
@@ -137,34 +134,13 @@
         "title": "Cursor Sync: Show Status"
       },
       {
-        "command": "cursorSync.resolveConflicts",
-        "title": "Cursor Sync: Resolve Conflicts",
-        "enablement": "cursorSync.hasConflicts"
-      },
-      {
         "command": "cursorSync.reset",
         "title": "Cursor Sync: Reset Extension State"
-      },
-      {
-        "command": "cursorSync.export",
-        "title": "Cursor Sync: Export Settings to Private Gist"
-      },
-      {
-        "command": "cursorSync.import",
-        "title": "Cursor Sync: Import Settings from Private Gist"
       },
       {
         "command": "cursorSync.openCursorFolder",
         "title": "Cursor Sync: Open Cursor Data Folder",
         "icon": "$(folder-opened)"
-      },
-      {
-        "command": "cursorSync.exportTranscripts",
-        "title": "Cursor Sync: Export Agent Transcripts to Private Gist"
-      },
-      {
-        "command": "cursorSync.importTranscripts",
-        "title": "Cursor Sync: Import Agent Transcripts from Private Gist"
       },
       {
         "command": "cursorSync.saveChatLocal",
@@ -188,11 +164,6 @@
         "icon": "$(archive)"
       },
       {
-        "command": "cursorSync.exportCurrentChatBundleToGist",
-        "title": "Cursor Sync: Export into Bundle (GIST)",
-        "icon": "$(cloud-upload)"
-      },
-      {
         "command": "cursorSync.importChatBundleActivate",
         "title": "Cursor Sync: Import Chat Bundle (Activate)"
       },
@@ -203,14 +174,6 @@
       {
         "command": "cursorSync.validateChatBackups",
         "title": "Cursor Sync: Validate Chat Backups"
-      },
-      {
-        "command": "cursorSync.exportChatToGist",
-        "title": "Cursor Sync: Export Chat to Private Gist"
-      },
-      {
-        "command": "cursorSync.importChatFromGist",
-        "title": "Cursor Sync: Import Chat from Private Gist"
       },
       {
         "command": "cursorSync.setChatEncryptionPassword",
@@ -227,11 +190,6 @@
       {
         "command": "cursorSync.revealImportedTranscriptInExplorer",
         "title": "Cursor Sync: Reveal Imported Transcript in Explorer (Deprecated)"
-      },
-      {
-        "command": "cursorSync.importTranscriptsFromGist",
-        "title": "Cursor Sync: Import Transcripts from Gist URL",
-        "icon": "$(cloud-download)"
       },
       {
         "command": "cursorSync.prepareStateReconciliation",
@@ -281,7 +239,7 @@
         "cursorSync.schedule.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable periodic auto-sync (pull and push)"
+          "description": "Enable periodic auto-sync (push when local Cursor differs; skip pull until confirmed)"
         },
         "cursorSync.schedule.interval": {
           "type": "number",
@@ -305,19 +263,10 @@
           "description": "Deprecated: use schedule.interval and schedule.intervalUnit",
           "deprecationMessage": "Use cursorSync.schedule.interval and cursorSync.schedule.intervalUnit instead"
         },
-        "cursorSync.destination.type": {
-          "type": "string",
-          "enum": [
-            "repo",
-            "gist"
-          ],
-          "default": "repo",
-          "description": "Remote sync destination: classic GitHub repository or private Gist"
-        },
         "cursorSync.destination.repo": {
           "type": "string",
           "default": "",
-          "description": "GitHub repository as owner/name (required when destination.type is repo)"
+          "description": "GitHub repository as owner/name"
         },
         "cursorSync.destination.branch": {
           "type": "string",
@@ -348,11 +297,6 @@
           "default": "default",
           "description": "Profile name written to manifest"
         },
-        "cursorSync.safeMode": {
-          "type": "boolean",
-          "default": true,
-          "description": "On soft pull (not mirror Pull Now), require confirmation before overwriting local files"
-        },
         "cursorSync.syncExtensions.autoInstall": {
           "type": "boolean",
           "default": true,
@@ -370,21 +314,6 @@
           "type": "boolean",
           "default": false,
           "description": "On pull, automatically uninstall extensions that are installed locally but not in the synced list (use with caution)"
-        },
-        "cursorSync.transcripts.enabled": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable agent transcript export/import (opt-in; transcripts may contain sensitive data)"
-        },
-        "cursorSync.transcripts.maxFileSizeKB": {
-          "type": "number",
-          "default": 2048,
-          "description": "Skip transcript files larger than this size in KB"
-        },
-        "cursorSync.transcripts.importFallbackToCurrentWorkspace": {
-          "type": "boolean",
-          "default": true,
-          "description": "When manual project mapping is empty, offer mapping all source projects to the local ~/.cursor/projects/ folder that matches the open workspace"
         },
         "cursorSync.transcripts.autoReloadAfterImport": {
           "type": "boolean",
@@ -437,20 +366,20 @@
           "default": "",
           "description": "User-level override directory for transport-chat scripts (cursor_chat_io.py, cursor_composer_bridge.py). Workspace settings are ignored for security. Empty = use the extension's bundled scripts."
         },
-        "cursorSync.chatGist.encrypt": {
+        "cursorSync.chats.encrypt": {
           "type": "boolean",
           "default": true,
-          "description": "When true, chat gist exports (chat-bundle.json / chat-bundles.json) are encrypted with your chat encryption password before upload."
+          "description": "When true, the synced chat collection (cursor-chat.json) is encrypted with your chat encryption password before it is written to the clone."
         },
         "cursorSync.chats.syncEnabled": {
           "type": "boolean",
           "default": false,
-          "description": "Include chats in Sync Now, Push, and Pull (uploads cursor-chat.json to your settings Gist). Off by default."
+          "description": "Include chats in Sync Now, Push, and Pull (writes cursor-chat.json at the repository base path). Off by default."
         },
         "cursorSync.mcp.syncEnabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "When enabled, Push/Pull/Sync Now include `mcp.json` from both sync roots (`~/.cursor` and Cursor User). That file may contain MCP server URLs, tokens, and headers. Use only a **private** Gist or repository. Turning this off does not delete an already-uploaded remote `mcp.json`."
+          "markdownDescription": "When enabled, Push/Pull/Sync Now include `mcp.json` from both sync roots (`~/.cursor` and Cursor User). That file may contain MCP server URLs, tokens, and headers. Use only a **private** repository. Turning this off does not delete an already-uploaded remote `mcp.json`."
         },
         "cursorSync.chats.maxCollectionSizeKB": {
           "type": "number",
@@ -483,7 +412,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
+    "vscode:prepublish": "node esbuild.mjs",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "test": "vitest run",

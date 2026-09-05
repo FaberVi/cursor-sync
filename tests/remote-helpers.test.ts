@@ -1,5 +1,6 @@
-import "./remote-backend-harness.js";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
 import {
   applyRepoSettingsToSyncState,
@@ -14,7 +15,6 @@ import {
   repoGitPath,
   stripRemotePath,
 } from "../src/remote/path-map.js";
-import { leftoverDashedTreeEntries } from "../src/remote/repo-git-write.js";
 import type { SyncState } from "../src/types.js";
 import {
   MIN_INTERVAL_SECONDS,
@@ -80,102 +80,6 @@ describe("path-map", () => {
       "dot-cursor--skills--coding--SKILL.md"
     );
   });
-
-  it("retargets dashed-only leftovers and only deletes dashed when nested exists", () => {
-    const dashedOnly = leftoverDashedTreeEntries(
-      [
-        {
-          dashedRelative: "cursor-user--settings.json",
-          blobSha: "sha-old",
-          remoteName: "cursor-user--settings.json",
-          nestedPresent: false,
-        },
-      ],
-      "cursor-sync",
-      {},
-      new Set()
-    );
-    expect(dashedOnly).toEqual([
-      {
-        path: "cursor-sync/cursor-user/settings.json",
-        mode: "100644",
-        type: "blob",
-        sha: "sha-old",
-      },
-      {
-        path: "cursor-sync/cursor-user--settings.json",
-        mode: "100644",
-        type: "blob",
-        sha: null,
-      },
-    ]);
-
-    const nestedPresent = leftoverDashedTreeEntries(
-      [
-        {
-          dashedRelative: "cursor-user--settings.json",
-          blobSha: "sha-old",
-          remoteName: "cursor-user--settings.json",
-          nestedPresent: true,
-        },
-      ],
-      "cursor-sync",
-      {},
-      new Set()
-    );
-    expect(nestedPresent).toEqual([
-      {
-        path: "cursor-sync/cursor-user--settings.json",
-        mode: "100644",
-        type: "blob",
-        sha: null,
-      },
-    ]);
-
-    const uploading = leftoverDashedTreeEntries(
-      [
-        {
-          dashedRelative: "cursor-user--settings.json",
-          blobSha: "sha-old",
-          remoteName: "cursor-user--settings.json",
-          nestedPresent: false,
-        },
-      ],
-      "cursor-sync",
-      { "cursor-user--settings.json": "{}" },
-      new Set()
-    );
-    expect(uploading).toEqual([
-      {
-        path: "cursor-sync/cursor-user--settings.json",
-        mode: "100644",
-        type: "blob",
-        sha: null,
-      },
-    ]);
-
-    const deleting = leftoverDashedTreeEntries(
-      [
-        {
-          dashedRelative: "cursor-user--settings.json",
-          blobSha: "sha-old",
-          remoteName: "cursor-user--settings.json",
-          nestedPresent: false,
-        },
-      ],
-      "cursor-sync",
-      {},
-      new Set(["cursor-user--settings.json"])
-    );
-    expect(deleting).toEqual([
-      {
-        path: "cursor-sync/cursor-user--settings.json",
-        mode: "100644",
-        type: "blob",
-        sha: null,
-      },
-    ]);
-  });
 });
 
 describe("applyRepoSettingsToSyncState", () => {
@@ -183,7 +87,6 @@ describe("applyRepoSettingsToSyncState", () => {
     const state: SyncState = {
       lastSyncTimestamp: new Date().toISOString(),
       lastSyncDirection: "push",
-      gistId: "",
       destination: {
         type: "repo",
         owner: "acme",
@@ -206,7 +109,6 @@ describe("applyRepoSettingsToSyncState", () => {
       repo: "backup",
       branch: "main",
       basePath: "new-path",
-      gistId: undefined,
     });
     expect(next?.localChecksums).toEqual({ a: "1" });
   });

@@ -18,13 +18,12 @@ export interface Manifest {
   files: Record<string, ManifestFileEntry>;
 }
 
-export type SyncDestinationType = "gist" | "repo";
+export type SyncDestinationType = "repo";
 
 export interface SyncDestination {
   type: SyncDestinationType;
-  gistId?: string;
-  owner?: string;
-  repo?: string;
+  owner: string;
+  repo: string;
   branch?: string;
   basePath?: string;
 }
@@ -32,11 +31,16 @@ export interface SyncDestination {
 export interface SyncState {
   lastSyncTimestamp: string;
   lastSyncDirection: "push" | "pull";
-  /** @deprecated Prefer destination; kept for backward compatibility with gist sync. */
-  gistId: string;
   destination?: SyncDestination;
   localChecksums: Record<string, string>;
   remoteChecksums: Record<string, string>;
+  /**
+   * True only after a successful push or pull copy into Cursor folders.
+   * Not set by Connect / discover.
+   */
+  completedFileSync?: boolean;
+  /** owner/repo@branch:path of the last clone used for a completed copy. */
+  cloneIdentity?: string;
 }
 
 export interface PackagedFile {

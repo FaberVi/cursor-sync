@@ -15,13 +15,16 @@ export type MessageKey =
   | "never"
   | "push"
   | "pull"
-  | "pullMirror"
-  | "pullMirrorHint"
+  | "resetToRemote"
+  | "resetToRemoteHint"
+  | "openSyncClone"
+  | "openSyncCloneHint"
+  | "pullReplaceConfirm"
+  | "pullReplaceConfirmFilesOnly"
+  | "pullReplaceConfirmChatsOnly"
   | "syncNowHint"
   | "pushHint"
   | "pullHint"
-  | "exportHint"
-  | "importHint"
   | "openCursorFolder"
   | "openCursorFolderHint"
   | "openCursorFolderPick"
@@ -37,20 +40,6 @@ export type MessageKey =
   | "importBundleHint"
   | "prevHint"
   | "nextHint"
-  | "conflictsKeepLocalHint"
-  | "conflictsKeepRemoteHint"
-  | "conflictsSkipHint"
-  | "conflictsApplyAllLocalHint"
-  | "conflictsApplyAllRemoteHint"
-  | "conflictsApplyAllSkipHint"
-  | "conflictsTitle"
-  | "conflictsKeepLocal"
-  | "conflictsKeepRemote"
-  | "conflictsSkip"
-  | "conflictsApplyAllLocal"
-  | "conflictsApplyAllRemote"
-  | "conflictsApplyAllSkip"
-  | "conflictsResolvedBanner"
   | "couldNotResolveChatFolder"
   | "filesTracked"
   | "fileTracked"
@@ -82,16 +71,12 @@ export type MessageKey =
   | "minutes"
   | "minIntervalHint"
   | "destination"
-  | "remoteType"
-  | "githubGist"
   | "githubRepository"
   | "repositoryOwnerName"
   | "branch"
   | "pathInRepo"
   | "connectRepository"
-  | "connectGithub"
   | "connectRepoHint"
-  | "connectGistHint"
   | "language"
   | "languageEn"
   | "languageIt"
@@ -147,7 +132,6 @@ export type MessageKey =
   | "transcriptsWritten"
   | "syncFailed"
   | "destBadgeRepo"
-  | "destBadgeGist"
   | "extensionVersionTitle"
   | "invalidConversationId"
   | "invalidWorkspaceKey"
@@ -289,9 +273,7 @@ export function webviewI18nPayload(lang: UiLanguage = readUiLanguage()): Record<
     "noImportHistory",
     "noBundleFiles",
     "connectRepository",
-    "connectGithub",
     "connectRepoHint",
-    "connectGistHint",
     "chatsCount",
     "prev",
     "next",
@@ -299,13 +281,13 @@ export function webviewI18nPayload(lang: UiLanguage = readUiLanguage()): Record<
     "syncNow",
     "push",
     "pull",
-    "pullMirror",
-    "pullMirrorHint",
+    "resetToRemote",
+    "resetToRemoteHint",
+    "openSyncClone",
+    "openSyncCloneHint",
     "syncNowHint",
     "pushHint",
     "pullHint",
-    "exportHint",
-    "importHint",
     "stopSyncHint",
     "openChatHint",
     "revealFilesHint",

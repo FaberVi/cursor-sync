@@ -101,7 +101,9 @@ describe("sync-debug", () => {
       expect(prompt).toContain("src/scheduler.ts");
       expect(prompt).toContain("src/extension.ts");
       expect(prompt).toContain("src/diagnostics.ts");
-      expect(prompt).toContain("src/gist.ts");
+      expect(prompt).toContain("src/sync-clone.ts");
+      expect(prompt).toContain("src/git-cli.ts");
+      expect(prompt).not.toContain("src/gist.ts");
       expect(prompt).toMatch(/permanent.*fix|exact user action/i);
       expect(prompt).toMatch(/output channel|sync history/i);
     });

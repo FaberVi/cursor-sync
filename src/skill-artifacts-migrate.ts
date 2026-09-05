@@ -1,18 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type * as vscode from "vscode";
-import { getToken } from "./auth.js";
-import { getLogger, loadSyncState, saveSyncState } from "./diagnostics.js";
-import { packageFiles } from "./packaging.js";
+import { getLogger } from "./diagnostics.js";
 import {
   isSkillArtifactSegment,
-  listSkillArtifactSyncKeys,
   resolveSyncRoots,
-  syncKeyToGistFileName,
 } from "./paths.js";
-import { createRemoteBackend } from "./remote/factory.js";
-import { readDestinationSettings } from "./remote/destination.js";
-import type { Manifest } from "./types.js";
 import {
   collectSkillFileEntries,
   isDisposableSkillWorkspace,
@@ -166,132 +159,15 @@ export async function migrateAndLogSkillArtifacts(
  * Publish recovered skill files and delete only skill-creator artifact keys
  * from the remote in one write. Never uploads unrelated settings.
  */
+/**
+ * Publish recovered skill files on the next Push (clone extra-delete).
+ * Remote Git Data / Gist writes were removed in 2.0.
+ */
 export async function purgeRemoteSkillArtifacts(
-  context: vscode.ExtensionContext,
-  migration?: SkillArtifactMigrationResult
+  _context: vscode.ExtensionContext,
+  _migration?: SkillArtifactMigrationResult
 ): Promise<number> {
-  const logger = getLogger();
-  const token = await getToken(context);
-  if (!token) {
-    return 0;
-  }
-
-  const destSettings = readDestinationSettings();
-  if (destSettings.type === "repo" && !destSettings.repo) {
-    return 0;
-  }
-
-  const syncState = await loadSyncState(context);
-  const backend = createRemoteBackend(context, token, syncState);
-  if (!backend) {
-    return 0;
-  }
-
-  const snapshotResult = await backend.getSnapshot({
-    onlyFiles: ["manifest.json"],
-  });
-  if (!snapshotResult.ok) {
-    logger.appendLine(
-      `[${new Date().toISOString()}] Skill artifact remote purge skipped: ${snapshotResult.error.message}`
-    );
-    return 0;
-  }
-
-  const manifestContent = snapshotResult.data.files["manifest.json"];
-  if (!manifestContent) {
-    return 0;
-  }
-
-  let manifest: Manifest;
-  try {
-    manifest = JSON.parse(manifestContent) as Manifest;
-  } catch {
-    logger.appendLine(
-      `[${new Date().toISOString()}] Skill artifact remote purge skipped: invalid manifest`
-    );
-    return 0;
-  }
-
-  const artifactKeys = listSkillArtifactSyncKeys(manifest.files);
-  const dotCursorRoot = resolveSyncRoots().dotCursor;
-  const recoveredDirs = migration?.recoveredSkillDirs ?? [];
-  const skillEntries = await collectSkillFileEntries(dotCursorRoot, recoveredDirs);
-  const { packaged, manifest: recoveredManifest, skipped } = await packageFiles(
-    skillEntries,
-    manifest.syncProfileName || "default"
-  );
-
-  if (skipped.length > 0) {
-    for (const item of skipped) {
-      logger.appendLine(
-        `[${new Date().toISOString()}] Skill artifact remote purge skip file: ${item.relativeSyncKey} (${item.reason})`
-      );
-    }
-  }
-
-  if (artifactKeys.length === 0 && packaged.size === 0) {
-    return 0;
-  }
-
-  const files = { ...manifest.files };
-  for (const key of artifactKeys) {
-    delete files[key];
-  }
-  for (const [key, entry] of Object.entries(recoveredManifest.files)) {
-    files[key] = entry;
-  }
-
-  const nextManifest: Manifest = {
-    ...manifest,
-    createdAt: new Date().toISOString(),
-    files,
-  };
-
-  const remoteFiles: Record<string, string> = {
-    "manifest.json": JSON.stringify(nextManifest, null, 2),
-  };
-  for (const [syncKey, packagedFile] of packaged) {
-    remoteFiles[syncKeyToGistFileName(syncKey)] = packagedFile.content;
-  }
-
-  const deleteNames = artifactKeys.map(syncKeyToGistFileName);
-  const writeResult = await backend.writeFiles(remoteFiles, { deleteNames });
-  if (!writeResult.ok) {
-    logger.appendLine(
-      `[${new Date().toISOString()}] Skill artifact remote purge failed: ${writeResult.error.message}`
-    );
-    return 0;
-  }
-
-  if (syncState) {
-    const localChecksums = { ...syncState.localChecksums };
-    const artifactSet = new Set(artifactKeys);
-    for (const key of Object.keys(localChecksums)) {
-      if (artifactSet.has(key)) {
-        delete localChecksums[key];
-      }
-    }
-    for (const [key, entry] of packaged) {
-      localChecksums[key] = entry.checksum;
-    }
-    const remoteChecksums: Record<string, string> = {};
-    for (const [key, entry] of Object.entries(files)) {
-      remoteChecksums[key] = entry.checksum;
-    }
-    await saveSyncState(context, {
-      ...syncState,
-      localChecksums,
-      remoteChecksums,
-      lastSyncTimestamp: new Date().toISOString(),
-      lastSyncDirection: "push",
-      gistId: writeResult.data.id || syncState.gistId,
-    });
-  }
-
-  logger.appendLine(
-    `[${new Date().toISOString()}] Skill artifact remote purge: removed ${artifactKeys.length} artifact file(s), published ${packaged.size} recovered file(s)`
-  );
-  return artifactKeys.length + packaged.size;
+  return 0;
 }
 
 async function removeArtifactSegmentDirs(

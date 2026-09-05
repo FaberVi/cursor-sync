@@ -41,14 +41,10 @@ export async function prepareChatSyncPushPayload(
   let remoteFetcher: (() => Promise<ChatBundle[] | null>) | undefined;
   let resolvedProgress = progress;
   if (typeof fetchRemote === "string" || fetchRemote === undefined) {
-    const gistId = fetchRemote;
-    const token = typeof tokenOrProgress === "string" ? tokenOrProgress : "";
     if (typeof tokenOrProgress !== "string" && tokenOrProgress) {
       resolvedProgress = tokenOrProgress;
     }
-    if (gistId && token) {
-      remoteFetcher = () => fetchRemoteChatCollection(context, gistId, token);
-    }
+    remoteFetcher = () => fetchRemoteChatCollection(context);
   } else {
     remoteFetcher = fetchRemote;
     if (tokenOrProgress && typeof tokenOrProgress !== "string") {

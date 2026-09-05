@@ -1,25 +1,18 @@
 (function (CSW) {
-  CSW.updateConnectButton = function (isRepo) {
+  CSW.updateConnectButton = function () {
     var connectBtn = document.querySelector(
       ".settings-connect-btn[data-command='configure']"
     );
     if (!connectBtn) return;
     connectBtn.innerHTML =
       '<span class="codicon codicon-github-alt"></span> ' +
-      (isRepo
-        ? CSW.tr("connectRepository", "Connect repository")
-        : CSW.tr("connectGithub", "Connect GitHub"));
+      CSW.tr("connectRepository", "Connect repository");
     connectBtn.setAttribute(
       "title",
-      isRepo
-        ? CSW.tr(
-            "connectRepoHint",
-            "Connect verifies the PAT and repo access."
-          )
-        : CSW.tr(
-            "connectGistHint",
-            "Saves a PAT with gist scope and discovers an existing Cursor Sync Gist if present."
-          )
+      CSW.tr(
+        "connectRepoHint",
+        "Connect verifies the PAT and repo access."
+      )
     );
   };
 
@@ -143,7 +136,6 @@
         return input.value;
       }
       extra.destination = {
-        type: settingValue("destination.type"),
         repo: settingValue("destination.repo"),
         branch: settingValue("destination.branch"),
         path: settingValue("destination.path"),
@@ -163,18 +155,6 @@
         : el.type === "number"
           ? Number(el.value)
           : el.value;
-    if (key === "destination.type") {
-      var repoFields = document.getElementById("destination-repo-fields");
-      if (repoFields) {
-        repoFields.style.display = value === "repo" ? "" : "none";
-      }
-      var connectBtnLive = document.querySelector(
-        ".settings-connect-btn[data-command='configure']"
-      );
-      if (connectBtnLive) {
-        CSW.updateConnectButton(value === "repo");
-      }
-    }
     CSW.onSettingChange(key, value);
   };
 
@@ -192,13 +172,9 @@
           var newSync = document.getElementById("sync-pane");
           if (newSync) newSync.style.display = "none";
         }
-        var conflictCount = document.querySelectorAll(".conflict-row").length;
         var syncTab = document.querySelector('.tab-btn[data-tab="sync-pane"]');
         if (syncTab) {
-          var label = CSW.tr("tabSync", "Sync");
-          syncTab.innerHTML = conflictCount
-            ? label + ' <span class="tab-badge">' + conflictCount + "</span>"
-            : label;
+          syncTab.innerHTML = CSW.tr("tabSync", "Sync");
         }
         CSW.setSyncActionsLocked(CSW.syncActionsLocked);
       }
@@ -263,16 +239,11 @@
         if (el6.type === "checkbox") el6.checked = Boolean(vals[key]);
         else el6.value = vals[key];
       });
-      var repoFields2 = document.getElementById("destination-repo-fields");
-      if (repoFields2 && vals["destination.type"]) {
-        repoFields2.style.display =
-          vals["destination.type"] === "repo" ? "" : "none";
-      }
       var connectBtn = document.querySelector(
         ".settings-connect-btn[data-command='configure']"
       );
-      if (connectBtn && vals["destination.type"]) {
-        CSW.updateConnectButton(vals["destination.type"] === "repo");
+      if (connectBtn) {
+        CSW.updateConnectButton(true);
       }
     }
   };

@@ -59,4 +59,35 @@ describe("rollback", () => {
     await expect(fs.access(created)).rejects.toThrow();
     await expect(fs.access(tmp)).rejects.toThrow();
   });
+
+  it("backupSkillDirectories copies leftovers and restoreSkillDirectories replaces the tree", async () => {
+    const skillDir = path.join(tmpDir, "skills", "foo");
+    await fs.mkdir(path.join(skillDir, "node_modules", "leftpad"), { recursive: true });
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), "old\n", "utf-8");
+    await fs.writeFile(
+      path.join(skillDir, "node_modules", "leftpad", "index.js"),
+      "leftover\n",
+      "utf-8"
+    );
+    const backupDir = path.join(tmpDir, "backup");
+    const { backupSkillDirectories, restoreSkillDirectories, pathIsInsideDirectory } =
+      await import("../src/rollback.js");
+    const restores = await backupSkillDirectories([skillDir], backupDir);
+    expect(restores).toHaveLength(1);
+    await fs.rm(skillDir, { recursive: true, force: true });
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), "remote\n", "utf-8");
+    await fs.writeFile(path.join(skillDir, "new-remote.py"), "new\n", "utf-8");
+    const restored = await restoreSkillDirectories(restores);
+    expect(restored).toHaveLength(1);
+    expect(await fs.readFile(path.join(skillDir, "SKILL.md"), "utf-8")).toBe("old\n");
+    expect(
+      await fs.readFile(path.join(skillDir, "node_modules", "leftpad", "index.js"), "utf-8")
+    ).toBe("leftover\n");
+    await expect(fs.access(path.join(skillDir, "new-remote.py"))).rejects.toThrow();
+    expect(pathIsInsideDirectory(path.join(skillDir, "SKILL.md"), skillDir)).toBe(true);
+    expect(
+      pathIsInsideDirectory(path.join(tmpDir, "skills", "foo-workspace", "x"), skillDir)
+    ).toBe(false);
+  });
 });

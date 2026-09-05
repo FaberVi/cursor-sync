@@ -19,10 +19,7 @@ import {
   isNativeChatJsonDocument,
   nativeCollectionFromBundles,
 } from "./native-chat-json/index.js";
-import { GistBackend } from "./remote/gist-backend.js";
-import { createRemoteBackend } from "./remote/factory.js";
-import {
-  decryptChatGistPayload,
+import { decryptChatGistPayload,
   encryptChatGistPayload,
   isEncryptedChatGistPayload,
   ChatGistCryptoError,
@@ -373,19 +370,21 @@ export async function fetchRemoteChatCollectionFromFiles(
 }
 
 export async function fetchRemoteChatCollection(
-  context: vscode.ExtensionContext,
-  gistId: string,
-  token: string
+  context: vscode.ExtensionContext
 ): Promise<ChatBundle[] | null> {
-  const syncState = await loadSyncState(context);
-  const backend =
-    createRemoteBackend(context, token, syncState) ??
-    new GistBackend(token, gistId);
-  const snap = await backend.getSnapshot();
-  if (!snap.ok) {
-    throw new Error(snap.error.message);
+  const { readCloneChatRaw } = await import("./sync-copy.js");
+  const { getSyncClonePath, readRepoIdentity } = await import("./sync-clone.js");
+  const identity = readRepoIdentity();
+  if (!identity) {
+    return null;
   }
-  return fetchRemoteChatCollectionFromFiles(context, snap.data.files);
+  const raw = await readCloneChatRaw(getSyncClonePath(context), identity.basePath);
+  if (raw === undefined) {
+    return null;
+  }
+  return fetchRemoteChatCollectionFromFiles(context, {
+    [CURSOR_CHAT_GIST_FILE_NAME]: raw,
+  });
 }
 
 export async function buildChatCollectionForSync(

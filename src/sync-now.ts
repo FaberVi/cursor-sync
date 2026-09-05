@@ -13,20 +13,25 @@ import {
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
 import { createSidebarSyncProgress } from "./sync-progress-events.js";
-import { getPendingConflicts, getUnresolvedConflicts } from "./conflicts.js";
 import {
   beginSyncAbort,
   endSyncAbort,
   getSyncAbortSignal,
   isAbortError,
-  isSyncAborted,
 } from "./sync-abort.js";
+import { enterSyncLock, leaveSyncLock } from "./sync-lock.js";
 
 export async function executeSyncNow(
   context: vscode.ExtensionContext
 ): Promise<void> {
   const logger = getLogger();
   logger.appendLine(`[${new Date().toISOString()}] Sync Now triggered`);
+
+  const lockHold = enterSyncLock();
+  if (lockHold === "busy") {
+    vscode.window.showWarningMessage("A sync operation is already in progress.");
+    return;
+  }
 
   const progress = createSidebarSyncProgress("syncNow");
   beginSyncAbort();
@@ -45,44 +50,12 @@ export async function executeSyncNow(
         break;
       case "pull":
         progress.report({ message: "Pulling…" });
-        progress.complete(await executePull(context, { trigger: "syncNow" }));
+        progress.complete(await executePull(context, { trigger: "syncNow", skipLock: true }));
         break;
       case "push":
         progress.report({ message: "Pushing…" });
-        progress.complete(await executePush(context));
+        progress.complete(await executePush(context, { skipLock: true, trigger: "syncNow" }));
         break;
-      case "pull-push": {
-        progress.report({ message: "Pulling…" });
-        const pullOk = await executePull(context, { trigger: "syncNow" });
-        if (pullOk && !getSyncAbortSignal()?.aborted) {
-          progress.report({ message: "Pushing…" });
-          progress.complete(await executePush(context));
-        } else {
-          progress.complete(false);
-        }
-        break;
-      }
-      case "conflict": {
-        await vscode.commands.executeCommand("cursorSync.resolveConflicts");
-        if (isSyncAborted()) {
-          progress.complete(false);
-          break;
-        }
-        const still = getUnresolvedConflicts(getPendingConflicts());
-        if (still.length > 0) {
-          const conflictMessage = `${still.length} conflict(s) detected. Resolve them first.`;
-          void showSyncFailureWithDebug(
-            context,
-            buildSyncDebugFailure("syncNow", "manual", conflictMessage, {
-              category: "CONFLICT",
-              conflictCount: still.length,
-            }),
-            { level: "warning", title: conflictMessage }
-          );
-        }
-        progress.complete(false);
-        break;
-      }
       case "error": {
         const errorMessage = `Sync failed: ${result.reason}`;
         void showSyncFailureWithDebug(
@@ -115,5 +88,6 @@ export async function executeSyncNow(
     progress.complete(false);
   } finally {
     endSyncAbort();
+    leaveSyncLock(lockHold);
   }
 }

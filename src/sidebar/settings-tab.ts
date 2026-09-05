@@ -10,7 +10,6 @@ export const SIDEBAR_SETTING_KEYS = [
   "schedule.enabled",
   "schedule.interval",
   "schedule.intervalUnit",
-  "destination.type",
   "destination.repo",
   "destination.branch",
   "destination.path",
@@ -35,7 +34,6 @@ export type SettingsTabValues = Record<SidebarSettingKey, boolean | number | str
 
 const PULL_POLICY_OPTIONS = ["skip", "remoteWins", "newerWins", "ask"] as const;
 const INTERVAL_UNITS = ["seconds", "minutes"] as const;
-const DESTINATION_TYPES = ["repo", "gist"] as const;
 const UI_LANGUAGES: UiLanguage[] = ["en", "it"];
 
 export function readSettingsValues(): SettingsTabValues {
@@ -47,7 +45,6 @@ export function readSettingsValues(): SettingsTabValues {
     "schedule.enabled": schedule.enabled,
     "schedule.interval": schedule.displayValue,
     "schedule.intervalUnit": schedule.unit,
-    "destination.type": dest.type,
     "destination.repo": dest.repo,
     "destination.branch": dest.branch,
     "destination.path": dest.path,
@@ -120,12 +117,6 @@ export async function updateSettingValue(
       }
       next = value;
       break;
-    case "destination.type":
-      if (value !== "gist" && value !== "repo") {
-        throw new Error("destination.type must be gist or repo");
-      }
-      next = value;
-      break;
     case "destination.repo":
     case "destination.branch":
     case "destination.path":
@@ -170,8 +161,6 @@ export function renderSettingsPane(values: SettingsTabValues): string {
     </div>`;
   }
 
-  const destType = String(values["destination.type"]);
-  const repoFieldsHidden = destType === "repo" ? "" : " style=\"display:none\"";
   const lang = String(values["ui.language"]) as UiLanguage;
 
   return `<div id="settings-pane" class="tab-pane" style="display:none">
@@ -216,17 +205,9 @@ export function renderSettingsPane(values: SettingsTabValues): string {
     <div class="section-header">${escapeHtml(t("destination"))}</div>
     <div class="settings-list">
       <div class="settings-row settings-row-field">
-        <label class="settings-label" for="destination.type">${escapeHtml(t("remoteType"))}</label>
-        <select id="destination.type" data-setting-key="destination.type" class="settings-input settings-input-text">
-          ${DESTINATION_TYPES.map(
-            (opt) =>
-              `<option value="${opt}"${destType === opt ? " selected" : ""}>${escapeHtml(
-                opt === "gist" ? t("githubGist") : t("githubRepository")
-              )}</option>`
-          ).join("")}
-        </select>
+        <label class="settings-label">${escapeHtml(t("githubRepository"))}</label>
       </div>
-      <div id="destination-repo-fields"${repoFieldsHidden}>
+      <div id="destination-repo-fields">
         <div class="settings-row settings-row-field">
           <label class="settings-label" for="destination.repo">${escapeHtml(t("repositoryOwnerName"))}</label>
           <input type="text" id="destination.repo" data-setting-key="destination.repo" value="${escapeHtml(String(values["destination.repo"]))}" class="settings-input settings-input-text settings-input-wide" placeholder="owner/repo" />
@@ -241,14 +222,12 @@ export function renderSettingsPane(values: SettingsTabValues): string {
         </div>
       </div>
       <button type="button" class="configure-btn settings-connect-btn" data-command="configure" title="${escapeHtml(
-        destType === "repo" ? t("connectRepoHint") : t("connectGistHint")
+        t("connectRepoHint")
       )}">
         <span class="codicon codicon-github-alt"></span>
-        ${escapeHtml(destType === "repo" ? t("connectRepository") : t("connectGithub"))}
+        ${escapeHtml(t("connectRepository"))}
       </button>
-      <div class="settings-hint">${escapeHtml(
-        destType === "repo" ? t("connectRepoHint") : t("connectGistHint")
-      )}</div>
+      <div class="settings-hint">${escapeHtml(t("connectRepoHint"))}</div>
     </div>
   </div>
   <div class="section">

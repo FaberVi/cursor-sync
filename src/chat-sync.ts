@@ -1,7 +1,5 @@
 import { Buffer } from "node:buffer";
 import * as vscode from "vscode";
-import { fetchGistFileContent } from "./gist.js";
-import type { GistFile } from "./types.js";
 import { getLogger } from "./diagnostics.js";
 import { computeChecksum } from "./packaging.js";
 import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
@@ -177,22 +175,6 @@ export async function pullChatCollectionFromRemoteFiles(
     updated,
     warnings,
   };
-}
-
-export async function pullChatCollectionFromGist(
-  context: vscode.ExtensionContext,
-  gistFiles: Record<string, GistFile | undefined>,
-  token: string,
-  progress: vscode.Progress<{ message?: string; increment?: number }> = noopChatSyncProgress
-): Promise<ChatSyncPullResult> {
-  const files: Record<string, string> = {};
-  for (const [name, file] of Object.entries(gistFiles)) {
-    if (!file) {
-      continue;
-    }
-    files[name] = await fetchGistFileContent(file, token);
-  }
-  return pullChatCollectionFromRemoteFiles(context, files, progress);
 }
 
 export async function computeLocalChatCollectionChecksum(

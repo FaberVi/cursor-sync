@@ -9,12 +9,11 @@ export interface SyncTabState {
   lastSyncTime: string | undefined;
   lastSyncDirection: "push" | "pull" | undefined;
   fileCount: number;
-  gistId: string | undefined;
-  /** Human-readable remote destination (Gist id or owner/repo@branch). */
+  /** Human-readable remote destination (owner/repo@branch). */
   remoteLabel: string | undefined;
   remoteUrl: string | undefined;
   /** Active remote kind for the status badge. */
-  destinationKind: "gist" | "repo" | undefined;
+  destinationKind: "repo" | undefined;
   /** Extension package version (e.g. 0.10.0). */
   extensionVersion: string;
   history: SyncHistoryEntry[];
@@ -25,7 +24,6 @@ export interface SyncTabState {
   remoteChatCount: number | undefined;
   /** True while local/remote chat counts are still being computed. */
   chatCountsLoading?: boolean;
-  pendingConflicts?: Array<{ relativeSyncKey: string; resolution?: string }>;
 }
 
 export function relativeTime(isoString: string): string {
@@ -212,39 +210,6 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
     loading: state.historyLoading === true,
   });
 
-  const conflictRows = state.pendingConflicts ?? [];
-  const conflictsHtml =
-    conflictRows.length === 0
-      ? ""
-      : `<div class="section conflicts-section">
-    <div class="section-header">${escapeHtml(t("conflictsTitle"))} <span class="tab-badge">${conflictRows.length}</span></div>
-    <div class="conflict-actions-all">
-      <button type="button" class="action-btn" data-command="conflicts:setAll" data-resolution="keepLocal" title="${escapeHtml(t("conflictsApplyAllLocalHint"))}">${escapeHtml(t("conflictsApplyAllLocal"))}</button>
-      <button type="button" class="action-btn" data-command="conflicts:setAll" data-resolution="keepRemote" title="${escapeHtml(t("conflictsApplyAllRemoteHint"))}">${escapeHtml(t("conflictsApplyAllRemote"))}</button>
-      <button type="button" class="action-btn action-btn-secondary" data-command="conflicts:setAll" data-resolution="skip" title="${escapeHtml(t("conflictsApplyAllSkipHint"))}">${escapeHtml(t("conflictsApplyAllSkip"))}</button>
-    </div>
-    ${
-      conflictRows.every(
-        (c) => c.resolution === "keepLocal" || c.resolution === "keepRemote"
-      )
-        ? `<div class="conflict-resolved-banner">${escapeHtml(t("conflictsResolvedBanner"))}</div>`
-        : ""
-    }
-    ${conflictRows
-      .map((c) => {
-        const current = c.resolution;
-        return `<div class="conflict-row" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}">
-      <div class="conflict-key">${escapeHtml(c.relativeSyncKey)}</div>
-      <div class="conflict-buttons">
-        <button type="button" class="pager-btn${current === "keepLocal" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="keepLocal" title="${escapeHtml(t("conflictsKeepLocalHint"))}">${escapeHtml(t("conflictsKeepLocal"))}</button>
-        <button type="button" class="pager-btn${current === "keepRemote" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="keepRemote" title="${escapeHtml(t("conflictsKeepRemoteHint"))}">${escapeHtml(t("conflictsKeepRemote"))}</button>
-        <button type="button" class="pager-btn${current === "skip" ? " pager-btn-active" : ""}" data-command="conflicts:set" data-relative-sync-key="${escapeHtml(c.relativeSyncKey)}" data-resolution="skip" title="${escapeHtml(t("conflictsSkipHint"))}">${escapeHtml(t("conflictsSkip"))}</button>
-      </div>
-    </div>`;
-      })
-      .join("")}
-  </div>`;
-
   const chatStatusLine = state.chatCountsLoading
     ? `<span class="chat-sync-loading">${escapeHtml(t("loading"))}</span>`
     : state.chatsSyncEnabled
@@ -291,9 +256,7 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
         }
         ${
           state.destinationKind
-            ? `<span class="dest-badge dest-badge-${state.destinationKind}">${
-                state.destinationKind === "repo" ? t("destBadgeRepo") : t("destBadgeGist")
-              }</span>`
+            ? `<span class="dest-badge dest-badge-repo">${escapeHtml(t("destBadgeRepo"))}</span>`
             : ""
         }
       </div>`
@@ -304,7 +267,7 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
 
   <div class="file-count chat-sync-status">${chatStatusLine}</div>
 
-  ${conflictsHtml}
+  ${""}
 
   <button class="sync-now-btn" data-command="syncNow" title="${escapeHtml(t("syncNowHint"))}">
     <span class="codicon codicon-sync" aria-hidden="true"></span>
@@ -316,9 +279,8 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
     <div class="action-grid">
       <button class="action-btn" data-command="push" title="${escapeHtml(t("pushHint"))}"><span class="codicon codicon-cloud-upload"></span> ${escapeHtml(t("push"))}</button>
       <button class="action-btn" data-command="pull" title="${escapeHtml(t("pullHint"))}"><span class="codicon codicon-cloud-download"></span> ${escapeHtml(t("pull"))}</button>
-      <button class="action-btn action-btn-secondary" data-command="pullMirror" title="${escapeHtml(t("pullMirrorHint"))}"><span class="codicon codicon-mirror"></span> ${escapeHtml(t("pullMirror"))}</button>
-      <button class="action-btn" data-command="export" title="${escapeHtml(t("exportHint"))}"><span class="codicon codicon-export"></span> ${escapeHtml(t("export"))}</button>
-      <button class="action-btn action-btn-secondary" data-command="import" title="${escapeHtml(t("importHint"))}"><span class="codicon codicon-desktop-download"></span> ${escapeHtml(t("import"))}</button>
+      <button class="action-btn action-btn-secondary" data-command="resetToRemote" title="${escapeHtml(t("resetToRemoteHint"))}"><span class="codicon codicon-discard"></span> ${escapeHtml(t("resetToRemote"))}</button>
+      <button class="action-btn action-btn-secondary" data-command="openSyncClone" title="${escapeHtml(t("openSyncCloneHint"))}"><span class="codicon codicon-repo"></span> ${escapeHtml(t("openSyncClone"))}</button>
       <button class="action-btn action-btn-secondary" data-command="openCursorFolder" title="${escapeHtml(t("openCursorFolderHint"))}"><span class="codicon codicon-folder-opened"></span> ${escapeHtml(t("openCursorFolder"))}</button>
     </div>
   </div>

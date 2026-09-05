@@ -381,7 +381,9 @@ export async function syncExtensionsFromRemoteFiles(
   remoteFiles: Record<string, string>,
   logger: ExtensionSyncLogger
 ): Promise<void> {
-  const extContent = remoteFiles[REMOTE_EXTENSIONS_GIST_FILE];
+  const extContent =
+    remoteFiles[REMOTE_EXTENSIONS_GIST_FILE] ??
+    remoteFiles["cursor-user/extensions.json"];
   if (!extContent) {
     return;
   }

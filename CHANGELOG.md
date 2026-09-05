@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Push no longer passes `git push --ff-only` (that flag is only for merge/pull). Default `git push` already refuses non-fast-forward updates
+- Push, pull, Sync Now, and the scheduler share one lock so they cannot run on the same clone at once
+- Failed push/pull rolls back the file journal and resets the clone (previously only Stop Sync did)
+- Turning `mcp.syncEnabled` off no longer deletes or pulls a remote `mcp.json`; chat collection in the clone is left in place when chat sync is off
+- Chat sync fingerprint is stored only after a successful push, not after packaging
+- Timed-out git processes are killed (including the Windows process tree)
+- Creating a missing clone branch tracks `origin/<branch>` instead of resetting from the current HEAD
+- Reset Extension State refuses while a sync is in progress so it cannot delete the clone mid-push
+- After a successful `git push`, a later failure no longer `reset --hard` the clone behind origin
+- Pull now stores the chat collection checksum in sync state so Sync Now / scheduler do not immediately push again
+- Pull fails (and rolls back) if chat import throws; it no longer records success when decrypt/import fails
+- Sync Now / scheduler report `not_configured` when `destination.repo` is missing instead of attempting a push
+- `cursorSync.configured` requires both a PAT and `owner/name`
+- Debug-with-Cursor prompt inspects clone/git modules, not the removed Gist backend
+- Chat-only pull uses a dedicated confirm message; Sync Now history uses trigger `syncNow`
+- Dead transcript Gist settings (`transcripts.enabled` / `maxFileSizeKB` / `importFallbackToCurrentWorkspace`) removed from contributes
+- Reset Extension State also clears `chats.*` and `mcp.syncEnabled`
+- Leftover conflict-panel CSS/JS and Gist destination badge styles removed from the sidebar webview
+
+## v2.0.0
+
+### Breaking
+- Push/pull use a system-git clone under extension global storage (`sync-repo`), then copy into Cursor folders. GitHub Gist destination, Git Data API writes, one-shot Gist export/import (settings, chats, transcripts), Mirror, and Keep Local/Remote conflicts are removed
+- Destination is repository-only (`cursorSync.destination.repo` / `branch` / `path`). Leftover `destination.type = gist` shows a connect-repository warning; Gist content is not migrated
+- Fast-forward only: no merge, no force-push. Diverged clone → Push refused until **Reset to remote** or a manual git fix. Origin ahead → Pull first
+- Pull replace is confirmed with a modal (file update/delete counts and skill folders). Scheduled sync never shows that modal: it skips pull and records history `"pull required"`
+- Chat encryption setting is `cursorSync.chats.encrypt` (still reads leftover `chatGist.encrypt`; default true). PAT requires **`repo`** scope (or fine-grained Contents access). Git must be on PATH
+
+### Added
+- **Reset to remote** and **Open clone** (OS file manager). Stop Sync can `git reset --hard` the clone to the SHA captured before copy
+- Skill-folder replace on pull uses an empty Keep Local set (full folder wipe/replace from the clone)
+
 ## v1.0.1
 
 ### Changed

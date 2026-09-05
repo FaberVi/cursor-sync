@@ -10,20 +10,39 @@ export interface BackupEntry {
   backupPath: string;
 }
 
+export interface DirectoryRestore {
+  absolutePath: string;
+  backupPath: string;
+}
+
+export function pathIsInsideDirectory(absPath: string, dir: string): boolean {
+  const resolvedPath = path.resolve(absPath);
+  const resolvedDir = path.resolve(dir);
+  if (resolvedPath === resolvedDir) {
+    return true;
+  }
+  const prefix = resolvedDir.endsWith(path.sep) ? resolvedDir : resolvedDir + path.sep;
+  if (process.platform === "win32") {
+    return resolvedPath.toLowerCase().startsWith(prefix.toLowerCase());
+  }
+  return resolvedPath.startsWith(prefix);
+}
+
+export function createBackupDirectory(context: vscode.ExtensionContext): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return path.join(context.globalStorageUri.fsPath, "backups", timestamp);
+}
+
 export async function createBackup(
   context: vscode.ExtensionContext,
-  filePaths: string[]
+  filePaths: string[],
+  existingBackupDir?: string
 ): Promise<{ backupDir: string; entries: BackupEntry[] }> {
   if (filePaths.length === 0) {
-    return { backupDir: "", entries: [] };
+    return { backupDir: existingBackupDir ?? "", entries: [] };
   }
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backupDir = path.join(
-    context.globalStorageUri.fsPath,
-    "backups",
-    timestamp
-  );
+  const backupDir = existingBackupDir ?? createBackupDirectory(context);
   await fs.mkdir(backupDir, { recursive: true });
 
   const entries: BackupEntry[] = [];
@@ -41,6 +60,62 @@ export async function createBackup(
   }
 
   return { backupDir, entries };
+}
+
+/**
+ * Recursive copy of existing skill folders for Mirror wipe rollback.
+ * Missing local dirs are skipped (nothing to restore).
+ */
+export async function backupSkillDirectories(
+  absDirs: string[],
+  backupDir: string
+): Promise<DirectoryRestore[]> {
+  const directoryRestores: DirectoryRestore[] = [];
+  if (absDirs.length === 0) {
+    return directoryRestores;
+  }
+  await fs.mkdir(backupDir, { recursive: true });
+  for (const absDir of absDirs) {
+    const resolved = path.resolve(absDir);
+    try {
+      const st = await fs.lstat(resolved);
+      if (!st.isDirectory()) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    const dest = path.join(
+      backupDir,
+      "skill-folders",
+      path.resolve(absDir).replace(/[<>:"/\\|?*]/g, "--")
+    );
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.cp(resolved, dest, { recursive: true });
+    directoryRestores.push({ absolutePath: resolved, backupPath: dest });
+  }
+  return directoryRestores;
+}
+
+/** Replace-restore: rm live dir then copy backup tree back. */
+export async function restoreSkillDirectories(
+  restores: DirectoryRestore[]
+): Promise<DirectoryRestore[]> {
+  const logger = getLogger();
+  const restored: DirectoryRestore[] = [];
+  for (const entry of restores) {
+    try {
+      await fs.rm(entry.absolutePath, { recursive: true, force: true });
+      await fs.mkdir(path.dirname(entry.absolutePath), { recursive: true });
+      await fs.cp(entry.backupPath, entry.absolutePath, { recursive: true });
+      restored.push(entry);
+    } catch (err) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] Skill-folder rollback failed for ${entry.absolutePath}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+  return restored;
 }
 
 /** Ensures the parent directory exists and is writable (replaces broken symlinks/junctions). */

@@ -136,20 +136,17 @@ describe("scheduler", () => {
 
     vi.spyOn(Math, "random").mockReturnValue(0);
 
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue(undefined);
-
     const pushModule = await import("../src/push.js");
     const pushSpy = vi.spyOn(pushModule, "executePush").mockResolvedValue(true);
 
-    const { startScheduler, stopScheduler } = await import("../src/scheduler.js");
-    const context = {
-      globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => undefined, store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
-      subscriptions: [],
-    } as unknown as import("vscode").ExtensionContext;
+    const { startScheduler, stopScheduler, scheduledSyncActionResolver } = await import(
+      "../src/scheduler.js"
+    );
+    vi.spyOn(scheduledSyncActionResolver, "determineSyncAction").mockResolvedValue({
+      action: "push",
+    });
 
-    startScheduler(context);
+    startScheduler(mockContext());
 
     await vi.advanceTimersByTimeAsync(1);
     expect(pushSpy).toHaveBeenCalledTimes(1);
@@ -199,377 +196,186 @@ describe("determineSyncAction", () => {
     vi.resetModules();
   });
 
-  async function mockBackendWithManifest(files: Record<string, { checksum: string; sizeBytes: number }>) {
-    const remote = await import("../src/remote/factory.js");
-    vi.spyOn(remote, "createRemoteBackend").mockReturnValue({
-      type: "gist",
-      remoteLabel: () => "gist",
-      remoteUrl: () => undefined,
-      discover: async () => ({ ok: true, data: null }),
-      writeFiles: async () => ({ ok: true, data: { id: "abc123", htmlUrl: "", created: false } }),
-      getSnapshot: async () => ({
-        ok: true,
-        data: {
-          id: "abc123",
-          htmlUrl: "",
-          files: {
-            "manifest.json": JSON.stringify({
-              schemaVersion: 1,
-              syncProfileName: "default",
-              createdAt: new Date().toISOString(),
-              sourceMachineId: "machine1",
-              sourceOS: "linux",
-              files,
-            }),
-          },
-        },
-      }),
-    } as never);
-  }
-
-  it("returns push when no sync state exists", async () => {
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue(undefined);
-
-    const { determineSyncAction } = await import("../src/scheduler.js");
-    const context = {
+  function context(): import("vscode").ExtensionContext {
+    return {
       globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => undefined, store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
+      secrets: {
+        get: async () => "fake-token",
+        store: async () => {},
+        delete: async () => {},
+        onDidChange: () => ({ dispose: () => {} }),
+      },
       subscriptions: [],
     } as unknown as import("vscode").ExtensionContext;
+  }
 
-    const result = await determineSyncAction(context);
-    expect(result).toEqual({ action: "push" });
-  });
+  async function mockRepoConfig(repo = "acme/backup"): Promise<void> {
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: (key: string) => {
+        if (key === "destination.repo") return repo;
+        if (key === "destination.branch") return "main";
+        if (key === "destination.path") return "cursor-sync";
+        if (key === "chats.syncEnabled") return false;
+        return undefined;
+      },
+      has: () => true,
+      inspect: () => undefined,
+      update: async () => {},
+    } as ReturnType<typeof vscode.workspace.getConfiguration>);
+  }
 
-  it("returns push when sync state has no gistId", async () => {
+  async function mockClone(options: {
+    relation: "equal" | "ahead" | "behind" | "diverged" | "empty";
+    local?: Record<string, string>;
+    clone?: Record<string, string>;
+    stateLocal?: Record<string, string>;
+    completedFileSync?: boolean;
+    nested?: boolean;
+    token?: string | null;
+  }): Promise<void> {
+    await mockRepoConfig();
     const diagnostics = await import("../src/diagnostics.js");
     vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
       lastSyncTimestamp: new Date().toISOString(),
       lastSyncDirection: "push",
-      gistId: "",
-      localChecksums: {},
-      remoteChecksums: {},
+      destination: {
+        type: "repo",
+        owner: "acme",
+        repo: "backup",
+        branch: "main",
+        basePath: "cursor-sync",
+      },
+      localChecksums: options.stateLocal ?? options.local ?? {},
+      remoteChecksums: options.clone ?? {},
+      completedFileSync: options.completedFileSync,
     });
+    const auth = await import("../src/auth.js");
+    vi.spyOn(auth, "requireToken").mockResolvedValue(
+      options.token === null ? undefined : (options.token ?? "fake-token")
+    );
+    const clone = await import("../src/sync-clone.js");
+    vi.spyOn(clone, "ensureSyncClone").mockResolvedValue({
+      clonePath: "/tmp/clone",
+      identity: {
+        owner: "acme",
+        repo: "backup",
+        branch: "main",
+        basePath: "cursor-sync",
+      },
+      empty: options.relation === "empty",
+    });
+    vi.spyOn(clone, "relationToOrigin").mockResolvedValue(options.relation);
+    vi.spyOn(clone, "hasNestedSyncFiles").mockResolvedValue(options.nested === true);
+    const copy = await import("../src/sync-copy.js");
+    vi.spyOn(copy, "hashCursorSyncFiles").mockResolvedValue(options.local ?? {});
+    vi.spyOn(copy, "hashCloneSyncFiles").mockResolvedValue(options.clone ?? {});
+  }
+
+  it("returns not_configured when no repository is set", async () => {
+    const diagnostics = await import("../src/diagnostics.js");
+    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue(undefined);
+    const vscode = await import("vscode");
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: () => undefined,
+      has: () => true,
+      inspect: () => undefined,
+      update: async () => {},
+    } as ReturnType<typeof vscode.workspace.getConfiguration>);
 
     const { determineSyncAction } = await import("../src/scheduler.js");
-    const context = {
-      globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => undefined, store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
-      subscriptions: [],
-    } as unknown as import("vscode").ExtensionContext;
-
-    const result = await determineSyncAction(context);
-    expect(result).toEqual({ action: "push" });
+    expect(await determineSyncAction(context())).toEqual({
+      action: "error",
+      reason: "not_configured",
+    });
   });
 
   it("returns error when no token available", async () => {
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
-      lastSyncTimestamp: new Date().toISOString(),
-      lastSyncDirection: "push",
-      gistId: "abc123",
-      localChecksums: {},
-      remoteChecksums: {},
-    });
-
-    const auth = await import("../src/auth.js");
-    vi.spyOn(auth, "requireToken").mockResolvedValue(undefined);
-
+    await mockClone({ relation: "equal", token: null });
     const { determineSyncAction } = await import("../src/scheduler.js");
-    const context = {
-      globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => undefined, store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
-      subscriptions: [],
-    } as unknown as import("vscode").ExtensionContext;
-
-    const result = await determineSyncAction(context);
-    expect(result).toEqual({ action: "error", reason: "no_token" });
+    expect(await determineSyncAction(context())).toEqual({
+      action: "error",
+      reason: "no_token",
+    });
   });
 
-  it("returns none when local and remote checksums match state", async () => {
-    const checksums = { "cursor-user/settings.json": "aaa111" };
-
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
-      lastSyncTimestamp: new Date().toISOString(),
-      lastSyncDirection: "push",
-      gistId: "abc123",
-      localChecksums: checksums,
-      remoteChecksums: checksums,
+  it("returns none when clone equals origin and Cursor hashes match", async () => {
+    const hashes = { "cursor-user/settings.json": "aaa111" };
+    await mockClone({
+      relation: "equal",
+      local: hashes,
+      clone: hashes,
+      completedFileSync: true,
     });
-
-    const auth = await import("../src/auth.js");
-    vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
-
-    const remote = await import("../src/remote/factory.js");
-    vi.spyOn(remote, "createRemoteBackend").mockReturnValue({
-      type: "gist",
-      remoteLabel: () => "gist",
-      remoteUrl: () => undefined,
-      discover: async () => ({ ok: true, data: null }),
-      writeFiles: async () => ({ ok: true, data: { id: "abc123", htmlUrl: "", created: false } }),
-      getSnapshot: async () => ({
-        ok: true,
-        data: {
-          id: "abc123",
-          htmlUrl: "",
-          files: {
-            "manifest.json": JSON.stringify({
-              schemaVersion: 1,
-              syncProfileName: "default",
-              createdAt: new Date().toISOString(),
-              sourceMachineId: "machine1",
-              sourceOS: "linux",
-              files: { "cursor-user/settings.json": { checksum: "aaa111", sizeBytes: 100 } },
-            }),
-          },
-        },
-      }),
-    } as never);
-
-    const retry = await import("../src/retry.js");
-    vi.spyOn(retry, "withRetry").mockImplementation((fn: () => unknown) => fn());
-
-    const paths = await import("../src/paths.js");
-    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
-      { absolutePath: "/tmp/settings.json", relativeSyncKey: "cursor-user/settings.json" },
-    ]);
-
-    const fsPromises = await import("node:fs/promises");
-    vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from("content"));
-
-    const packaging = await import("../src/packaging.js");
-    vi.spyOn(packaging, "computeChecksum").mockReturnValue("aaa111");
-
     const { determineSyncAction } = await import("../src/scheduler.js");
-    const context = {
-      globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => "fake-token", store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
-      subscriptions: [],
-    } as unknown as import("vscode").ExtensionContext;
-
-    const result = await determineSyncAction(context);
-    expect(result).toEqual({ action: "none" });
+    expect(await determineSyncAction(context())).toEqual({ action: "none" });
   });
 
-  it("returns pull when remote checksums differ from state", async () => {
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
-      lastSyncTimestamp: new Date().toISOString(),
-      lastSyncDirection: "push",
-      gistId: "abc123",
-      localChecksums: { "cursor-user/settings.json": "aaa111" },
-      remoteChecksums: { "cursor-user/settings.json": "aaa111" },
-    });
-
-    const auth = await import("../src/auth.js");
-    vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
-
-    await mockBackendWithManifest({
-      "cursor-user/settings.json": { checksum: "bbb222", sizeBytes: 120 },
-    });
-
-    const retry = await import("../src/retry.js");
-    vi.spyOn(retry, "withRetry").mockImplementation((fn: () => unknown) => fn());
-
-    const paths = await import("../src/paths.js");
-    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
-      { absolutePath: "/tmp/settings.json", relativeSyncKey: "cursor-user/settings.json" },
-    ]);
-
-    const fsPromises = await import("node:fs/promises");
-    vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from("content"));
-
-    const packaging = await import("../src/packaging.js");
-    vi.spyOn(packaging, "computeChecksum").mockReturnValue("aaa111");
-
+  it("returns pull when origin is ahead", async () => {
+    await mockClone({ relation: "behind", completedFileSync: true });
     const { determineSyncAction } = await import("../src/scheduler.js");
-    const context = {
-      globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => "fake-token", store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
-      subscriptions: [],
-    } as unknown as import("vscode").ExtensionContext;
-
-    const result = await determineSyncAction(context);
-    expect(result).toEqual({ action: "pull" });
+    expect(await determineSyncAction(context())).toEqual({ action: "pull" });
   });
 
-  it("returns push when local checksums differ from state", async () => {
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
-      lastSyncTimestamp: new Date().toISOString(),
-      lastSyncDirection: "push",
-      gistId: "abc123",
-      localChecksums: { "cursor-user/settings.json": "aaa111" },
-      remoteChecksums: { "cursor-user/settings.json": "aaa111" },
-    });
-
-    const auth = await import("../src/auth.js");
-    vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
-
-    await mockBackendWithManifest({
-      "cursor-user/settings.json": { checksum: "aaa111", sizeBytes: 100 },
-    });
-
-    const retry = await import("../src/retry.js");
-    vi.spyOn(retry, "withRetry").mockImplementation((fn: () => unknown) => fn());
-
-    const paths = await import("../src/paths.js");
-    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
-      { absolutePath: "/tmp/settings.json", relativeSyncKey: "cursor-user/settings.json" },
-    ]);
-
-    const fsPromises = await import("node:fs/promises");
-    vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from("new-content"));
-
-    const packaging = await import("../src/packaging.js");
-    vi.spyOn(packaging, "computeChecksum").mockReturnValue("ccc333");
-
+  it("returns push when clone is ahead of origin", async () => {
+    await mockClone({ relation: "ahead", completedFileSync: true });
     const { determineSyncAction } = await import("../src/scheduler.js");
-    const context = {
-      globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => "fake-token", store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
-      subscriptions: [],
-    } as unknown as import("vscode").ExtensionContext;
-
-    const result = await determineSyncAction(context);
-    expect(result).toEqual({ action: "push" });
+    expect(await determineSyncAction(context())).toEqual({ action: "push" });
   });
 
-  it("returns pull-push when both local and remote changed different files", async () => {
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
-      lastSyncTimestamp: new Date().toISOString(),
-      lastSyncDirection: "push",
-      gistId: "abc123",
-      localChecksums: {
-        "cursor-user/settings.json": "aaa111",
-        "cursor-user/keybindings.json": "bbb222",
-      },
-      remoteChecksums: {
-        "cursor-user/settings.json": "aaa111",
-        "cursor-user/keybindings.json": "bbb222",
-      },
-    });
-
-    const auth = await import("../src/auth.js");
-    vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
-
-    await mockBackendWithManifest({
-      "cursor-user/settings.json": { checksum: "aaa111", sizeBytes: 100 },
-      "cursor-user/keybindings.json": { checksum: "ddd444", sizeBytes: 200 },
-    });
-
-    const retry = await import("../src/retry.js");
-    vi.spyOn(retry, "withRetry").mockImplementation((fn: () => unknown) => fn());
-
-    const paths = await import("../src/paths.js");
-    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
-      { absolutePath: "/tmp/settings.json", relativeSyncKey: "cursor-user/settings.json" },
-      { absolutePath: "/tmp/keybindings.json", relativeSyncKey: "cursor-user/keybindings.json" },
-    ]);
-
-    const fsPromises = await import("node:fs/promises");
-    vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from("content"));
-
-    const packaging = await import("../src/packaging.js");
-    vi.spyOn(packaging, "computeChecksum")
-      .mockReturnValueOnce("ccc333")
-      .mockReturnValueOnce("bbb222");
-
+  it("returns error when clone and origin have diverged", async () => {
+    await mockClone({ relation: "diverged", completedFileSync: true });
     const { determineSyncAction } = await import("../src/scheduler.js");
-    const context = {
-      globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => "fake-token", store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
-      subscriptions: [],
-    } as unknown as import("vscode").ExtensionContext;
-
-    const result = await determineSyncAction(context);
-    expect(result).toEqual({ action: "pull-push" });
+    expect(await determineSyncAction(context())).toEqual({
+      action: "error",
+      reason: "diverged",
+    });
   });
 
-  it("returns conflict when same file changed both locally and remotely", async () => {
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
-      lastSyncTimestamp: new Date().toISOString(),
-      lastSyncDirection: "push",
-      gistId: "abc123",
-      localChecksums: { "cursor-user/settings.json": "aaa111" },
-      remoteChecksums: { "cursor-user/settings.json": "aaa111" },
+  it("returns pull when never synced and nested clone files already exist", async () => {
+    await mockClone({
+      relation: "equal",
+      local: { "cursor-user/settings.json": "local" },
+      clone: { "cursor-user/settings.json": "remote" },
+      completedFileSync: false,
+      nested: true,
     });
-
-    const auth = await import("../src/auth.js");
-    vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
-
-    await mockBackendWithManifest({
-      "cursor-user/settings.json": { checksum: "bbb222", sizeBytes: 120 },
-    });
-
-    const retry = await import("../src/retry.js");
-    vi.spyOn(retry, "withRetry").mockImplementation((fn: () => unknown) => fn());
-
-    const conflictsMod = await import("../src/conflicts.js");
-    vi.spyOn(conflictsMod, "computeLocalChecksums").mockResolvedValue({
-      "cursor-user/settings.json": "ccc333",
-    });
-
     const { determineSyncAction } = await import("../src/scheduler.js");
-    const context = {
-      globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => "fake-token", store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
-      subscriptions: [],
-    } as unknown as import("vscode").ExtensionContext;
-
-    const result = await determineSyncAction(context);
-    expect(result.action).toBe("conflict");
-    if (result.action === "conflict") {
-      expect(result.keys).toEqual(["cursor-user/settings.json"]);
-    }
+    expect(await determineSyncAction(context())).toEqual({ action: "pull" });
   });
 
-  it("does not return conflict when all conflicts are already resolved", async () => {
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
-      lastSyncTimestamp: new Date().toISOString(),
-      lastSyncDirection: "push",
-      gistId: "abc123",
-      localChecksums: { "cursor-user/settings.json": "aaa111" },
-      remoteChecksums: { "cursor-user/settings.json": "aaa111" },
+  it("returns push when never synced and the clone has no nested files", async () => {
+    await mockClone({
+      relation: "equal",
+      local: { "cursor-user/settings.json": "local" },
+      clone: {},
+      completedFileSync: false,
+      nested: false,
     });
+    const { determineSyncAction } = await import("../src/scheduler.js");
+    expect(await determineSyncAction(context())).toEqual({ action: "push" });
+  });
 
-    const auth = await import("../src/auth.js");
-    vi.spyOn(auth, "requireToken").mockResolvedValue("fake-token");
-
-    await mockBackendWithManifest({
-      "cursor-user/settings.json": { checksum: "bbb222", sizeBytes: 120 },
+  it("does not treat matching chat fingerprint and checksum as a Cursor diff", async () => {
+    const { computeChecksum } = await import("../src/packaging.js");
+    const raw = '{"v":1}';
+    const sum = computeChecksum(Buffer.from(raw, "utf8"));
+    const hashes = { "cursor-user/settings.json": "aaa111" };
+    await mockClone({
+      relation: "equal",
+      local: hashes,
+      clone: hashes,
+      stateLocal: { ...hashes, "dot-cursor/cursor-chat.json": sum },
+      completedFileSync: true,
     });
-
-    const retry = await import("../src/retry.js");
-    vi.spyOn(retry, "withRetry").mockImplementation((fn: () => unknown) => fn());
-
-    const conflictsMod = await import("../src/conflicts.js");
-    vi.spyOn(conflictsMod, "computeLocalChecksums").mockResolvedValue({
-      "cursor-user/settings.json": "ccc333",
-    });
-    conflictsMod.setPendingResolutionsForTests([
-      {
-        relativeSyncKey: "cursor-user/settings.json",
-        resolution: "keepLocal",
-      },
-    ]);
+    const chat = await import("../src/chat-sync.js");
+    vi.spyOn(chat, "isChatSyncEnabled").mockReturnValue(true);
+    vi.spyOn(chat, "computeChatSyncLocalFingerprint").mockResolvedValue("fp");
+    vi.spyOn(chat, "readStoredChatSyncFingerprint").mockResolvedValue("fp");
+    const copy = await import("../src/sync-copy.js");
+    vi.spyOn(copy, "readCloneChatRaw").mockResolvedValue(raw);
 
     const { determineSyncAction } = await import("../src/scheduler.js");
-    const context = {
-      globalStorageUri: { fsPath: "/tmp/test" },
-      secrets: { get: async () => "fake-token", store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose: () => {} }) },
-      subscriptions: [],
-    } as unknown as import("vscode").ExtensionContext;
-
-    const result = await determineSyncAction(context);
-    expect(result.action).not.toBe("conflict");
-    expect(result.action).toBe("pull-push");
-
-    await conflictsMod.clearConflicts();
+    expect(await determineSyncAction(context())).toEqual({ action: "none" });
   });
 });

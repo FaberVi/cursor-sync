@@ -39,8 +39,8 @@ export async function showStatus(
   const identity = syncStateIdentity(syncState);
   const url = remoteUrlForState(syncState);
   items.push({
-    label: syncState.destination?.type === "repo" ? "Repository" : "Gist ID",
-    description: identity || syncState.gistId,
+    label: "Repository",
+    description: identity || "Not linked",
   });
   if (url) {
     items.push({

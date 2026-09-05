@@ -217,11 +217,6 @@ body {
   border-color: rgba(125, 211, 252, 0.28);
   background: rgba(125, 211, 252, 0.08);
 }
-.dest-badge-gist {
-  color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.28);
-  background: rgba(251, 191, 36, 0.08);
-}
 .status-label {
   flex: 1;
   min-width: 0;

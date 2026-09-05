@@ -158,79 +158,30 @@ describe("scheduled sync debug wiring", () => {
     expect(options).toMatchObject({ title: "Scheduled sync failed: no_token" });
   });
 
-  it("skips scheduled sync on conflict without debug toast", async () => {
+  it("skips scheduled pull without a modal or debug toast", async () => {
     const scheduler = await import("../src/scheduler.js");
+    const addHistory = vi.spyOn(
+      await import("../src/diagnostics.js"),
+      "addSyncHistoryEntry"
+    ).mockResolvedValue(undefined);
     vi.spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction").mockResolvedValue({
-      action: "conflict",
-      keys: ["cursor-user/settings.json"],
+      action: "pull",
     });
 
     await scheduler.scheduledTick(mockContext());
 
-    expect(showSyncFailureWithDebugMock).not.toHaveBeenCalled();
-    expect(executePushMock).not.toHaveBeenCalled();
     expect(executePullMock).not.toHaveBeenCalled();
-  });
-
-  it("does not duplicate debug toast when scheduled pull fails via executePull", async () => {
-    const scheduler = await import("../src/scheduler.js");
-    vi.spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction").mockResolvedValue({
-      action: "pull",
-    });
-
-    executePullMock.mockImplementation(async (context, options) => {
-      const { executePull } = await vi.importActual<
-        typeof import("../src/pull.js")
-      >("../src/pull.js");
-      return executePull(context, options);
-    });
-
-    const auth = await import("../src/auth.js");
-    vi.spyOn(auth, "requireToken").mockResolvedValue(undefined);
-
-    const diagnostics = await import("../src/diagnostics.js");
-    vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue({
-      lastSyncTimestamp: new Date().toISOString(),
-      lastSyncDirection: "push",
-      gistId: "abcdef1234567890abcdef1234567890",
-      localChecksums: {},
-      remoteChecksums: {},
-    });
-
-    await scheduler.scheduledTick(mockContext());
-
-    expect(executePullMock).toHaveBeenCalledWith(expect.anything(), {
-      trigger: "scheduled",
-    });
-    expect(showSyncFailureWithDebugMock).toHaveBeenCalledTimes(1);
-    const [, failure, options] = showSyncFailureWithDebugMock.mock.calls[0]!;
-    expect(failure).toMatchObject({
-      operation: "pull",
-      direction: "pull",
-      trigger: "scheduled",
-      category: "AUTH_FAILED",
-      extensionVersion: extensionVersion(),
-      platform: process.platform,
-    });
-    expect(failure.message).not.toMatch(/ghp_/);
-    expect(options).toMatchObject({
-      title: "GitHub token not configured. Configure your token to sync.",
-    });
-  });
-
-  it("does not call showSyncFailureWithDebug when scheduled pull mock returns false", async () => {
-    const scheduler = await import("../src/scheduler.js");
-    vi.spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction").mockResolvedValue({
-      action: "pull",
-    });
-    executePullMock.mockResolvedValue(false);
-
-    await scheduler.scheduledTick(mockContext());
-
-    expect(executePullMock).toHaveBeenCalledWith(expect.anything(), {
-      trigger: "scheduled",
-    });
+    expect(executePushMock).not.toHaveBeenCalled();
     expect(showSyncFailureWithDebugMock).not.toHaveBeenCalled();
+    expect(addHistory).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        direction: "pull",
+        trigger: "scheduled",
+        success: false,
+        error: "pull required",
+      })
+    );
   });
 
   it("does not call showSyncFailureWithDebug when scheduled push mock returns false", async () => {
@@ -238,32 +189,6 @@ describe("scheduled sync debug wiring", () => {
     vi.spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction").mockResolvedValue({
       action: "push",
     });
-    executePushMock.mockResolvedValue(false);
-
-    await scheduler.scheduledTick(mockContext());
-
-    expect(showSyncFailureWithDebugMock).not.toHaveBeenCalled();
-  });
-
-  it("does not call showSyncFailureWithDebug when scheduled pull-push pull mock fails", async () => {
-    const scheduler = await import("../src/scheduler.js");
-    vi.spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction").mockResolvedValue({
-      action: "pull-push",
-    });
-    executePullMock.mockResolvedValue(false);
-
-    await scheduler.scheduledTick(mockContext());
-
-    expect(executePushMock).not.toHaveBeenCalled();
-    expect(showSyncFailureWithDebugMock).not.toHaveBeenCalled();
-  });
-
-  it("does not call showSyncFailureWithDebug when scheduled pull-push push mock fails", async () => {
-    const scheduler = await import("../src/scheduler.js");
-    vi.spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction").mockResolvedValue({
-      action: "pull-push",
-    });
-    executePullMock.mockResolvedValue(true);
     executePushMock.mockResolvedValue(false);
 
     await scheduler.scheduledTick(mockContext());
@@ -289,6 +214,20 @@ describe("scheduled sync debug wiring", () => {
     expect(options).toMatchObject({
       title: "Scheduled sync failed: tick exception",
     });
+  });
+
+  it("does not call showSyncFailureWithDebug when the repository is not configured", async () => {
+    const scheduler = await import("../src/scheduler.js");
+    vi.spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction").mockResolvedValue({
+      action: "error",
+      reason: "not_configured",
+    });
+
+    await scheduler.scheduledTick(mockContext());
+
+    expect(showSyncFailureWithDebugMock).not.toHaveBeenCalled();
+    expect(executePushMock).not.toHaveBeenCalled();
+    expect(executePullMock).not.toHaveBeenCalled();
   });
 
   it("does not call showSyncFailureWithDebug when already in sync", async () => {

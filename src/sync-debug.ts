@@ -31,7 +31,6 @@ export type SyncDebugFailure = {
 };
 
 export const DEBUG_WITH_CURSOR_ACTION = "Debug with Cursor";
-export const RESOLVE_CONFLICTS_ACTION = "Resolve Conflicts";
 
 const CLIPBOARD_FALLBACK_MESSAGE =
   "The debug prompt was copied to your clipboard. Paste it into Cursor chat to continue debugging.";
@@ -111,16 +110,17 @@ export function buildSyncDebugPrompt(failure: SyncDebugFailure): string {
     "- src/push.ts",
     "- src/pull.ts",
     "- src/scheduler.ts",
+    "- src/sync-clone.ts",
+    "- src/git-cli.ts",
     "- src/extension.ts",
     "- src/diagnostics.ts",
-    "- src/gist.ts",
     `- ${EXTENSION_LABEL} output channel`,
     "- sync history JSON in extension global storage",
     "",
     "## Expected outcome",
     "Prefer a permanent code or configuration fix when appropriate.",
     "If no code fix applies, explain the exact user action required.",
-    "Do not include or request secrets such as GitHub tokens, raw Gist IDs, or private file paths unless the user explicitly provides them."
+    "Do not include or request secrets such as GitHub tokens or private file paths unless the user explicitly provides them."
   );
 
   return lines.join("\n");
@@ -284,16 +284,9 @@ export async function showSyncFailureWithDebug(
       ? vscode.window.showWarningMessage.bind(vscode.window)
       : vscode.window.showErrorMessage.bind(vscode.window);
 
-  const actions =
-    failure.category === "CONFLICT"
-      ? [RESOLVE_CONFLICTS_ACTION, DEBUG_WITH_CURSOR_ACTION]
-      : [DEBUG_WITH_CURSOR_ACTION];
+  const actions = [DEBUG_WITH_CURSOR_ACTION];
 
   const selection = await showMessage(message, ...actions);
-  if (selection === RESOLVE_CONFLICTS_ACTION) {
-    await vscode.commands.executeCommand("cursorSync.resolveConflicts");
-    return;
-  }
   if (selection === DEBUG_WITH_CURSOR_ACTION) {
     await openComposerWithPrefilledPrompt(prompt);
   }

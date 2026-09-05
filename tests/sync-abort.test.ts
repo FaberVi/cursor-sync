@@ -29,7 +29,7 @@ describe("sync-abort", () => {
     const { githubRequest } = await import("../src/remote/github-api.js");
     beginSyncAbort();
     requestSyncCancel();
-    const result = await githubRequest("GET", "/gists", "token");
+    const result = await githubRequest("GET", "/user", "token");
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.category).toBe("CANCELLED");
@@ -50,7 +50,7 @@ describe("sync-abort", () => {
     const { beginSyncAbort, requestSyncCancel } = await import("../src/sync-abort.js");
     const { githubRequest } = await import("../src/remote/github-api.js");
     beginSyncAbort();
-    const pending = githubRequest("GET", "/gists", "token");
+    const pending = githubRequest("GET", "/user", "token");
     requestSyncCancel();
     const result = await pending;
     expect(result.ok).toBe(false);
@@ -59,20 +59,16 @@ describe("sync-abort", () => {
     }
   });
 
-  it("GistClient.request returns CANCELLED when aborted", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+  it("runGit is cancelled when the current signal is aborted", async () => {
     const { beginSyncAbort, requestSyncCancel } = await import("../src/sync-abort.js");
-    const { GistClient } = await import("../src/gist.js");
+    const { runGit, __setGitSpawnForTests } = await import("../src/git-cli.js");
+    __setGitSpawnForTests(() => {
+      throw new Error("spawn should not run after abort");
+    });
     beginSyncAbort();
     requestSyncCancel();
-    const client = new GistClient("token");
-    const result = await client.getGist("abc");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.category).toBe("CANCELLED");
-    }
-    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(runGit({ args: ["status"] })).rejects.toMatchObject({ name: "SyncCancelledError" });
+    __setGitSpawnForTests(undefined);
   });
 
   it("rollbackSyncFileJournal restores backups and unlinks created files", async () => {
@@ -185,7 +181,7 @@ describe("sync-abort", () => {
     const previous = {
       lastSyncTimestamp: "2026-01-01T00:00:00.000Z",
       lastSyncDirection: "push" as const,
-      gistId: "old-gist",
+      cloneIdentity: "old-clone",
       localChecksums: { "cursor-user/settings.json": "aaa" },
       remoteChecksums: { "cursor-user/settings.json": "aaa" },
     };
@@ -202,7 +198,7 @@ describe("sync-abort", () => {
     const { saveSyncState, loadSyncState } = await import("../src/diagnostics.js");
     await saveSyncState(context, {
       ...previous,
-      gistId: "new-gist",
+      cloneIdentity: "new-clone",
       lastSyncTimestamp: "2026-02-01T00:00:00.000Z",
     });
     beginSyncAbort();
@@ -214,8 +210,50 @@ describe("sync-abort", () => {
     markJournalStateWritten();
     await rollbackSyncFileJournal(context);
     const restored = await loadSyncState(context);
-    expect(restored?.gistId).toBe("old-gist");
+    expect(restored?.cloneIdentity).toBe("old-clone");
     expect(restored?.lastSyncTimestamp).toBe("2026-01-01T00:00:00.000Z");
+    endSyncAbort();
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rollbackSyncFileJournal restores skill folders and skips unlink under them", async () => {
+    const tmpDir = path.join(os.tmpdir(), "cursor-sync-abort-skill-dir-" + Date.now());
+    const skillDir = path.join(tmpDir, "skills", "foo");
+    await fs.mkdir(path.join(skillDir, "node_modules", "leftpad"), { recursive: true });
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), "old\n", "utf-8");
+    await fs.writeFile(
+      path.join(skillDir, "node_modules", "leftpad", "index.js"),
+      "leftover\n",
+      "utf-8"
+    );
+    const backupDir = path.join(tmpDir, "backup");
+    const { backupSkillDirectories } = await import("../src/rollback.js");
+    const directoryRestores = await backupSkillDirectories([skillDir], backupDir);
+    await fs.rm(skillDir, { recursive: true, force: true });
+    await fs.mkdir(skillDir, { recursive: true });
+    const remoteWritten = path.join(skillDir, "SKILL.md");
+    const extraRemote = path.join(skillDir, "from-remote.py");
+    await fs.writeFile(remoteWritten, "remote\n", "utf-8");
+    await fs.writeFile(extraRemote, "new\n", "utf-8");
+    const {
+      beginSyncAbort,
+      endSyncAbort,
+      setSyncFileJournal,
+      rollbackSyncFileJournal,
+    } = await import("../src/sync-abort.js");
+    beginSyncAbort();
+    setSyncFileJournal({
+      backupEntries: [],
+      createdPaths: [remoteWritten, extraRemote],
+      directoryRestores,
+    });
+    const n = await rollbackSyncFileJournal();
+    expect(n).toBeGreaterThanOrEqual(1);
+    expect(await fs.readFile(path.join(skillDir, "SKILL.md"), "utf-8")).toBe("old\n");
+    expect(
+      await fs.readFile(path.join(skillDir, "node_modules", "leftpad", "index.js"), "utf-8")
+    ).toBe("leftover\n");
+    await expect(fs.access(extraRemote)).rejects.toThrow();
     endSyncAbort();
     await fs.rm(tmpDir, { recursive: true, force: true });
   });

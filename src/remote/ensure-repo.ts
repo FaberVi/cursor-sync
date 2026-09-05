@@ -2,16 +2,16 @@ import * as vscode from "vscode";
 import type { ApiResult } from "../types.js";
 import { withRetry } from "../retry.js";
 import { getLogger } from "../diagnostics.js";
-import type { RepoBackend } from "./repo-backend.js";
+import type { GitHubRepoClient } from "../github-repo.js";
 
 /**
  * Validate repo access; if missing (404), ask the user whether to create it.
  */
 export async function ensureRepoExistsInteractive(
-  backend: RepoBackend
+  client: GitHubRepoClient
 ): Promise<ApiResult<boolean>> {
   const logger = getLogger();
-  const result = await withRetry(() => backend.validateAccess());
+  const result = await withRetry(() => client.validateAccess());
   if (result.ok) {
     return result;
   }
@@ -20,7 +20,7 @@ export async function ensureRepoExistsInteractive(
     return result;
   }
 
-  const identity = backend.getIdentity();
+  const identity = client.getIdentity();
   const choice = await vscode.window.showWarningMessage(
     `Repository ${identity} does not exist. Create it on GitHub?`,
     { modal: true },
@@ -40,7 +40,7 @@ export async function ensureRepoExistsInteractive(
     };
   }
 
-  const created = await backend.createRepository({
+  const created = await client.createRepository({
     isPrivate: choice === "Create private",
   });
   if (!created.ok) {

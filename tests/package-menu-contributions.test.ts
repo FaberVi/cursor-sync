@@ -44,59 +44,56 @@ describe("package menu contributions", () => {
     });
   });
 
-  it("declares the current-chat gist bundle export command", () => {
+  it("does not contribute Gist, Mirror, or conflict commands", () => {
     const pkg = readPackageJson();
-    const command = pkg.contributes.commands.find(
-      (entry: { command: string }) => entry.command === "cursorSync.exportCurrentChatBundleToGist"
+    const commands = (pkg.contributes.commands as Array<{ command: string }>).map(
+      (c) => c.command
     );
-    expect(command).toEqual({
-      command: "cursorSync.exportCurrentChatBundleToGist",
-      title: "Cursor Sync: Export into Bundle (GIST)",
-      icon: "$(cloud-upload)",
-    });
+    expect(commands).not.toContain("cursorSync.exportCurrentChatBundleToGist");
+    expect(commands).not.toContain("cursorSync.pullMirror");
+    expect(commands).not.toContain("cursorSync.resolveConflicts");
+    expect(commands).not.toContain("cursorSync.exportChatToGist");
+    expect(commands).not.toContain("cursorSync.importChatFromGist");
+    expect(pkg.contributes.menus["editor/title"]).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ command: "cursorSync.exportCurrentChatBundleToGist" }),
+      ])
+    );
   });
 
-  it("contributes current-chat gist export to editor title and tab context menus", () => {
+  it("declares chat encryption setting default true", () => {
     const pkg = readPackageJson();
-    expect(pkg.contributes.menus["editor/title"]).toContainEqual({
-      command: "cursorSync.exportCurrentChatBundleToGist",
-      when: "resourceScheme == 'cursor.composer'",
-      group: "navigation",
-    });
-    expect(pkg.contributes.menus["editor/title/context"]).toContainEqual({
-      command: "cursorSync.exportCurrentChatBundleToGist",
-      when: "resourceScheme == 'cursor.composer'",
-      group: "navigation",
-    });
-  });
-
-  it("hides the gist context command from the Command Palette", () => {
-    const pkg = readPackageJson();
-    expect(pkg.contributes.menus.commandPalette).toContainEqual({
-      command: "cursorSync.exportCurrentChatBundleToGist",
-      when: "false",
-    });
-  });
-
-  it("declares chat gist encryption setting default true", () => {
-    const pkg = readPackageJson();
-    expect(pkg.contributes.configuration.properties["cursorSync.chatGist.encrypt"]).toEqual({
+    expect(pkg.contributes.configuration.properties["cursorSync.chats.encrypt"]).toEqual({
       type: "boolean",
       default: true,
       description: expect.stringMatching(/encrypt/i),
     });
+    expect(pkg.contributes.configuration.properties["cursorSync.chatGist.encrypt"]).toBeUndefined();
+    expect(pkg.contributes.configuration.properties["cursorSync.destination.type"]).toBeUndefined();
+    expect(pkg.contributes.configuration.properties["cursorSync.safeMode"]).toBeUndefined();
+    expect(pkg.contributes.configuration.properties["cursorSync.transcripts.enabled"]).toBeUndefined();
+    expect(pkg.contributes.configuration.properties["cursorSync.transcripts.maxFileSizeKB"]).toBeUndefined();
+    expect(
+      pkg.contributes.configuration.properties["cursorSync.transcripts.importFallbackToCurrentWorkspace"]
+    ).toBeUndefined();
   });
 
-  it("declares incremental Pull and explicit Mirror commands", () => {
+  it("declares Pull, Reset to Remote, and Open Sync Clone commands", () => {
     const pkg = readPackageJson();
     const commands = pkg.contributes.commands as Array<{ command: string; title: string }>;
     expect(commands.find((c) => c.command === "cursorSync.pull")?.title).toBe(
       "Cursor Sync: Pull Now"
     );
-    expect(commands.find((c) => c.command === "cursorSync.pullMirror")).toEqual({
-      command: "cursorSync.pullMirror",
-      title: "Cursor Sync: Mirror from Remote",
-      icon: "$(mirror)",
+    expect(commands.find((c) => c.command === "cursorSync.resetToRemote")).toEqual({
+      command: "cursorSync.resetToRemote",
+      title: "Cursor Sync: Reset to Remote",
+      icon: "$(discard)",
+      enablement: "cursorSync.configured",
+    });
+    expect(commands.find((c) => c.command === "cursorSync.openSyncClone")).toEqual({
+      command: "cursorSync.openSyncClone",
+      title: "Cursor Sync: Open Sync Clone",
+      icon: "$(repo)",
       enablement: "cursorSync.configured",
     });
   });

@@ -12,9 +12,8 @@ import { syncKeyToAbsolutePath } from "../sync-local-deletes.js";
 
 export type SidebarMessage =
   | {
-      command: "syncNow" | "push" | "pull" | "pullMirror" | "export" | "import" | "configure" | "openCursorFolder";
+      command: "syncNow" | "push" | "pull" | "resetToRemote" | "openSyncClone" | "configure" | "openCursorFolder";
       destination?: {
-        type?: string;
         repo?: string;
         branch?: string;
         path?: string;
@@ -25,7 +24,6 @@ export type SidebarMessage =
   | { command: "chats:listImports" }
   | { command: "chats:listBundles" }
   | { command: "chats:export"; conversationId: string }
-  | { command: "chats:exportGist"; conversationId: string }
   | { command: "chats:importBundle"; bundlePath?: string }
   | {
       command: "chats:open";
@@ -55,17 +53,14 @@ export type SidebarMessage =
   | { command: "history:page"; page: number }
   | { command: "settings:get" }
   | { command: "settings:set"; key: string; value: unknown }
-  | { command: "sync:cancel" }
-  | { command: "conflicts:set"; relativeSyncKey: string; resolution: string }
-  | { command: "conflicts:setAll"; resolution: string };
+  | { command: "sync:cancel" };
 
 const KNOWN_COMMANDS = new Set<string>([
   "syncNow",
   "push",
   "pull",
-  "pullMirror",
-  "export",
-  "import",
+  "resetToRemote",
+  "openSyncClone",
   "openCursorFolder",
   "configure",
   "chats:listLocal",
@@ -73,7 +68,6 @@ const KNOWN_COMMANDS = new Set<string>([
   "chats:listImports",
   "chats:listBundles",
   "chats:export",
-  "chats:exportGist",
   "chats:importBundle",
   "chats:open",
   "chats:revealFiles",
@@ -87,8 +81,6 @@ const KNOWN_COMMANDS = new Set<string>([
   "settings:get",
   "settings:set",
   "sync:cancel",
-  "conflicts:set",
-  "conflicts:setAll",
 ]);
 
 function assertSafeChatIds(msg: {
@@ -134,7 +126,7 @@ export async function dispatchSidebarMessage(
     case "syncNow":
     case "push":
     case "pull":
-    case "pullMirror": {
+    case "resetToRemote": {
       try {
         await vscode.commands.executeCommand(`cursorSync.${msg.command}`);
       } finally {
@@ -145,11 +137,8 @@ export async function dispatchSidebarMessage(
     case "sync:cancel":
       await vscode.commands.executeCommand("cursorSync.cancelSync");
       break;
-    case "export":
-      await vscode.commands.executeCommand("cursorSync.export");
-      break;
-    case "import":
-      await vscode.commands.executeCommand("cursorSync.import");
+    case "openSyncClone":
+      await vscode.commands.executeCommand("cursorSync.openSyncClone");
       break;
     case "openCursorFolder": {
       const { executeOpenCursorFolder } = await import("../open-cursor-folder.js");
@@ -224,9 +213,6 @@ export async function dispatchSidebarMessage(
     }
     case "chats:export":
       await vscode.commands.executeCommand("cursorSync.exportChatBundle");
-      break;
-    case "chats:exportGist":
-      await vscode.commands.executeCommand("cursorSync.exportChatToGist");
       break;
     case "chats:importBundle":
       await vscode.commands.executeCommand(
@@ -425,35 +411,11 @@ export async function dispatchSidebarMessage(
       if (msg.key === "chats.syncEnabled" || msg.key === "mcp.syncEnabled" || msg.key.startsWith("destination.")) {
         const { refreshSidebar } = await import("./index.js");
         refreshSidebar();
+        if (msg.key.startsWith("destination.")) {
+          const { refreshConfiguredContext } = await import("../auth.js");
+          await refreshConfiguredContext(context);
+        }
       }
-      break;
-    }
-    case "conflicts:set": {
-      const key = typeof msg.relativeSyncKey === "string" ? msg.relativeSyncKey : "";
-      const resolution = msg.resolution;
-      if (
-        !key ||
-        (resolution !== "keepLocal" &&
-          resolution !== "keepRemote" &&
-          resolution !== "skip")
-      ) {
-        break;
-      }
-      const { applyConflictResolution } = await import("../conflicts.js");
-      await applyConflictResolution(key, resolution);
-      break;
-    }
-    case "conflicts:setAll": {
-      const resolution = msg.resolution;
-      if (
-        resolution !== "keepLocal" &&
-        resolution !== "keepRemote" &&
-        resolution !== "skip"
-      ) {
-        break;
-      }
-      const { applyConflictResolutionToAll } = await import("../conflicts.js");
-      await applyConflictResolutionToAll(resolution);
       break;
     }
     default:
