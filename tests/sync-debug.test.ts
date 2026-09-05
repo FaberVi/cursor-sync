@@ -30,7 +30,7 @@ function baseFailure(overrides: Partial<SyncDebugFailure> = {}): SyncDebugFailur
     trigger: "manual",
     message: "GitHub API returned 401 Unauthorized",
     category: "AUTH_FAILED",
-    extensionVersion: "0.8.0",
+    extensionVersion: "0.9.0",
     platform: "linux",
     ...overrides,
   };
@@ -101,7 +101,9 @@ describe("sync-debug", () => {
       expect(prompt).toContain("src/scheduler.ts");
       expect(prompt).toContain("src/extension.ts");
       expect(prompt).toContain("src/diagnostics.ts");
-      expect(prompt).toContain("src/gist.ts");
+      expect(prompt).toContain("src/sync-clone.ts");
+      expect(prompt).toContain("src/git-cli.ts");
+      expect(prompt).not.toContain("src/gist.ts");
       expect(prompt).toMatch(/permanent.*fix|exact user action/i);
       expect(prompt).toMatch(/output channel|sync history/i);
     });
@@ -210,6 +212,22 @@ describe("sync-debug", () => {
       });
 
       await showSyncFailureWithDebug(mockContext, baseFailure());
+
+      expect(executed).toEqual([]);
+    });
+
+    it("does not offer Debug with Cursor for CANCELLED", async () => {
+      __setShowErrorMessageResult(DEBUG_WITH_CURSOR_ACTION);
+      const executed: string[] = [];
+      __setExecuteCommandImpl(async (command) => {
+        executed.push(command);
+        return undefined;
+      });
+
+      await showSyncFailureWithDebug(
+        mockContext,
+        baseFailure({ category: "CANCELLED", message: "cancelled" })
+      );
 
       expect(executed).toEqual([]);
     });

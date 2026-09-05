@@ -4,15 +4,13 @@ vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execPython } from "./python-cmd.js";
 import { isDiskKvKeyInConversationScope } from "../src/chat-bundle-format.js";
 import {
   cursorDiskKvValueAsText,
   exportDiskKvSnapshot,
 } from "../src/chat-disk-kv-export.js";
 
-const execFileAsync = promisify(execFile);
 const CID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const FIXTURE = path.join(
   process.cwd(),
@@ -69,7 +67,7 @@ conn.execute("INSERT INTO cursorDiskKV VALUES (?, ?);", (f"bubbleId:{cid}:{bid_t
 conn.commit()
 conn.close()
 `;
-    await execFileAsync("python3", ["-c", py, CID, dbPath, composerPath, bubbleToolPath, bubbleTextPath]);
+    await execPython(["-c", py, CID, dbPath, composerPath, bubbleToolPath, bubbleTextPath]);
   });
 
   afterEach(async () => {

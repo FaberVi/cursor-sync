@@ -1,10 +1,9 @@
 import * as vscode from "vscode";
-import { configureGithub, getToken } from "./auth.js";
+import { configureGithub, refreshConfiguredContext } from "./auth.js";
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import { executePush } from "./push.js";
-import { executePull } from "./pull.js";
-import { executeExport } from "./export.js";
-import { executeImport } from "./import.js";
-import { executeExportTranscripts, executeImportTranscripts } from "./transcripts.js";
+import { executePull, executeResetToRemote } from "./pull.js";
+import { executeCancelSyncCommand } from "./sync-abort.js";
 import {
   executeSaveChatLocal,
   executeLoadChatLocal,
@@ -14,23 +13,13 @@ import {
   executeImportChatBundleActivate,
   executeVerifyChatImport,
 } from "./chat-persistence.js";
-import {
-  executeExportChatToGist,
-  executeExportCurrentChatBundleToGist,
-} from "./export-gist-chat.js";
-import { executeImportChatFromGist } from "./import-gist-chat.js";
+import { executeValidateChatBackups } from "./chat-backup-validate.js";
 import { executeSetChatEncryptionPassword } from "./chat-encryption-auth.js";
-import { executeImportTranscriptsFromGist } from "./import-gist-transcripts.js";
 import { showStatus } from "./diagnostics.js";
-import { resolveConflictsCommand } from "./conflicts.js";
 import { executeReset } from "./reset.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
-import { determineSyncAction } from "./scheduler.js";
 import { getLogger, loadSyncState } from "./diagnostics.js";
-import {
-  buildSyncDebugFailure,
-  showSyncFailureWithDebug,
-} from "./sync-debug.js";
+import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
 import { initializeSidebar } from "./sidebar/index.js";
 import { initializeStatusBar, updateStatusBar } from "./statusbar.js";
 import { getOrCreateClientId } from "./analytics.js";
@@ -40,40 +29,46 @@ import {
   notifyPendingStateBundleIfAny,
 } from "./state-reconciliation.js";
 import { executePrepareSyncFromLandingZone } from "./sync-engine.js";
+import { executeOpenCursorFolder } from "./open-cursor-folder.js";
+import { executeOpenSyncClone } from "./open-sync-clone.js";
 import {
   disposeActivationWatcher,
   registerActivationWatcher,
 } from "./chat-import-activate-watcher.js";
 import { flushPendingSidebarWriteback } from "./chat-import-sidebar-writeback.js";
-import { executeInstallSkillTransportChat } from "./install-skill-transport-chat.js";
+import { executeSyncNow } from "./sync-now.js";
+import { isLegacyGistConfigured } from "./remote/destination.js";
+
+export { executeSyncNow } from "./sync-now.js";
+
 let configListener: vscode.Disposable | undefined;
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const logger = getLogger();
+
+  initializeStatusBar(context);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.refreshImportedTranscripts", () => {
       vscode.window.showInformationMessage(
-        "Imported Transcripts moved to the Chats tab of the Cursor Sync sidebar."
+        `Imported Transcripts moved to the Chats tab of the ${EXTENSION_LABEL} sidebar.`
       );
     })
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.openImportedTranscript", () => {
       vscode.window.showInformationMessage(
-        "Imported Transcripts moved to the Chats tab of the Cursor Sync sidebar."
+        `Imported Transcripts moved to the Chats tab of the ${EXTENSION_LABEL} sidebar.`
       );
     })
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.revealImportedTranscriptInExplorer", () => {
       vscode.window.showInformationMessage(
-        "Imported Transcripts moved to the Chats tab of the Cursor Sync sidebar."
+        `Imported Transcripts moved to the Chats tab of the ${EXTENSION_LABEL} sidebar.`
       );
     })
   );
-
-  initializeStatusBar(context);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.configureGithub", () =>
@@ -82,56 +77,42 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.push", () =>
-      executePush(context)
+    vscode.commands.registerCommand("cursorSync.push", () => executePush(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.pull", () => executePull(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.resetToRemote", () =>
+      executeResetToRemote(context)
     )
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.pull", () =>
-      executePull(context)
+    vscode.commands.registerCommand("cursorSync.openSyncClone", () =>
+      executeOpenSyncClone(context)
     )
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.showStatus", () =>
-      showStatus(context)
+    vscode.commands.registerCommand("cursorSync.cancelSync", () =>
+      executeCancelSyncCommand()
     )
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.resolveConflicts", () =>
-      resolveConflictsCommand(context)
-    )
+    vscode.commands.registerCommand("cursorSync.showStatus", () => showStatus(context))
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.reset", () =>
-      executeReset(context)
-    )
+    vscode.commands.registerCommand("cursorSync.reset", () => executeReset(context))
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.export", () =>
-      executeExport(context)
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.import", () =>
-      executeImport(context)
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.exportTranscripts", () =>
-      executeExportTranscripts(context)
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.importTranscripts", () =>
-      executeImportTranscripts(context)
+    vscode.commands.registerCommand("cursorSync.openCursorFolder", () =>
+      executeOpenCursorFolder({ pick: true })
     )
   );
 
@@ -148,8 +129,8 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.importChatBundle", () =>
-      executeImportChatBundle(context)
+    vscode.commands.registerCommand("cursorSync.importChatBundle", (bundlePath?: string) =>
+      executeImportChatBundle(context, bundlePath)
     )
   );
 
@@ -178,20 +159,8 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.exportChatToGist", () =>
-      executeExportChatToGist(context)
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.exportCurrentChatBundleToGist", (target) =>
-      executeExportCurrentChatBundleToGist(context, target)
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.importChatFromGist", () =>
-      executeImportChatFromGist(context)
+    vscode.commands.registerCommand("cursorSync.validateChatBackups", () =>
+      executeValidateChatBackups(context)
     )
   );
 
@@ -202,21 +171,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.installSkillTransportChat", () =>
-      executeInstallSkillTransportChat(context)
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.importTranscriptsFromGist", () =>
-      executeImportTranscriptsFromGist(context)
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("cursorSync.syncNow", () =>
-      executeSyncNow(context)
-    )
+    vscode.commands.registerCommand("cursorSync.syncNow", () => executeSyncNow(context))
   );
 
   context.subscriptions.push(
@@ -268,7 +223,32 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerActivationWatcher(context);
 
-  logger.appendLine(`[${new Date().toISOString()}] Cursor Sync activated`);
+  if (isLegacyGistConfigured()) {
+    void vscode.window
+      .showWarningMessage(
+        "Cursor Sync 2.0 only supports a GitHub repository. Private Gist sync was removed. Connect a repository to continue.",
+        "Connect repository"
+      )
+      .then((choice) => {
+        if (choice === "Connect repository") {
+          return configureGithub(context);
+        }
+        return undefined;
+      });
+  }
+
+  void (async () => {
+    try {
+      await migrateAndLogSkillArtifacts();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.appendLine(
+        `[${new Date().toISOString()}] Skill artifact migrate failed: ${msg}`
+      );
+    }
+  })();
+
+  logger.appendLine(`[${new Date().toISOString()}] ${EXTENSION_LABEL} activated`);
 }
 
 export function deactivate(): void {
@@ -276,81 +256,10 @@ export function deactivate(): void {
   stopScheduler();
 }
 
-export async function executeSyncNow(
-  context: vscode.ExtensionContext
-): Promise<void> {
-  const logger = getLogger();
-  logger.appendLine(`[${new Date().toISOString()}] Sync Now triggered`);
-
-  try {
-    const result = await determineSyncAction(context);
-    switch (result.action) {
-      case "none":
-        vscode.window.showInformationMessage("Already in sync, nothing to do.");
-        break;
-      case "pull":
-        await executePull(context);
-        break;
-      case "push":
-        await executePush(context);
-        break;
-      case "pull-push": {
-        const pullOk = await executePull(context);
-        if (pullOk) {
-          await executePush(context);
-        }
-        break;
-      }
-      case "conflict": {
-        const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them first.`;
-        void showSyncFailureWithDebug(
-          context,
-          buildSyncDebugFailure("syncNow", "manual", conflictMessage, {
-            category: "CONFLICT",
-            conflictCount: result.keys.length,
-          }),
-          { level: "warning", title: conflictMessage }
-        );
-        vscode.commands.executeCommand("cursorSync.resolveConflicts");
-        break;
-      }
-      case "error": {
-        const errorMessage = `Sync failed: ${result.reason}`;
-        void showSyncFailureWithDebug(
-          context,
-          buildSyncDebugFailure("syncNow", "manual", result.reason, {
-            category: result.reason,
-          }),
-          { title: errorMessage }
-        );
-        break;
-      }
-    }
-  } catch (err) {
-    const errMessage = err instanceof Error ? err.message : String(err);
-    logger.appendLine(
-      `[${new Date().toISOString()}] Sync Now failed: ${errMessage}`
-    );
-    const errorMessage = `Sync failed: ${errMessage}`;
-    void showSyncFailureWithDebug(
-      context,
-      buildSyncDebugFailure("syncNow", "manual", errMessage),
-      { title: errorMessage }
-    );
-  }
-}
-
 async function updateConfiguredContext(
   context: vscode.ExtensionContext
 ): Promise<void> {
-  const token = await getToken(context);
-  const isConfigured = token !== undefined;
-  
-  await vscode.commands.executeCommand(
-    "setContext",
-    "cursorSync.configured",
-    isConfigured
-  );
+  const isConfigured = await refreshConfiguredContext(context);
 
   if (isConfigured) {
     const syncState = await loadSyncState(context);

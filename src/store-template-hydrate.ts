@@ -19,9 +19,7 @@ export interface BundleForStoreHydrate {
   }>;
 }
 import { getChatTimestampMs } from "./chats-manifest.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
-
-const { runSqliteScript, querySqliteRows } = __chatPersistenceInternals;
+import { querySqliteRows, runSqliteScript } from "./transcripts-sqlite.js";
 
 export const GOLDEN_STORE_TEMPLATE_VERSION = 2;
 

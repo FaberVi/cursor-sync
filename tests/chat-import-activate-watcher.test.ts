@@ -120,7 +120,7 @@ describe("chat-import-activate-watcher", () => {
     const loaded = await loadPendingManifest(paths);
     expect(loaded?.composerId).toBe(FIXTURE_CID);
     expect(loaded?.version).toBe(MANIFEST_VERSION);
-    expect(loaded?.workspaceFolder).toBe(FIXTURE_REPO);
+    expect(loaded?.workspaceFolder).toBe(path.resolve(FIXTURE_REPO));
   });
 
   it("processPendingActivation skips when workspace folder is not open", async () => {

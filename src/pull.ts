@@ -1,494 +1,374 @@
 import * as vscode from "vscode";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import { GistClient } from "./gist.js";
-import { requireToken } from "./auth.js";
-import { withRetry } from "./retry.js";
-import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
-import { resolveSyncRoots, gistFileNameToSyncKey } from "./paths.js";
-import { computeChecksum } from "./packaging.js";
-import { detectConflicts, clearConflicts, getResolutionForKey, getPendingConflicts } from "./conflicts.js";
-import { createBackup, rollbackFromBackup, pruneOldBackups } from "./rollback.js";
-import { findMissingExtensions, findExtraExtensions } from "./extensions.js";
-import { updateStatusBar } from "./statusbar.js";
+import { getLogger, addSyncHistoryEntry, saveSyncState, loadSyncState } from "./diagnostics.js";
+import { notifySyncQuiet } from "./sync-notify.js";
+import { updateStatusBar, restoreStatusBarAfterCancel } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
 import {
   buildSyncDebugFailure,
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
-import { TRANSCRIPT_MANIFEST_FILE_NAME } from "./transcript-bundle.js";
-import type { SyncState, Manifest } from "./types.js";
+import { createSidebarSyncProgress } from "./sync-progress-events.js";
+import type { SyncProgressReport } from "./sync-progress-events.js";
+import { formatElapsedPrecise } from "./elapsed.js";
+import {
+  beginSyncAbort,
+  commitSyncFileJournal,
+  endSyncAbort,
+  finishCancelledOperation,
+  isAbortError,
+  isSyncAborted,
+  markJournalStateWritten,
+  rollbackSyncFileJournal,
+  setSyncFileJournal,
+  throwIfAborted,
+} from "./sync-abort.js";
+import { t } from "./sidebar/i18n.js";
+import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
+import {
+  isChatSyncEnabled,
+  pullChatCollectionFromRemoteFiles,
+  storeChatSyncFingerprint,
+  computeChatSyncLocalFingerprint,
+  readStoredChatSyncFingerprint,
+  CURSOR_CHAT_GIST_FILE_NAME,
+  CURSOR_CHAT_SYNC_KEY,
+} from "./chat-sync.js";
+import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
+import { computeChecksum } from "./packaging.js";
+import { syncExtensionsFromRemoteFiles } from "./extensions.js";
+import {
+  applyCloneToCursor,
+  cloneAbsForSyncKey,
+  planCloneToCursor,
+  pullConfirmCounts,
+  withChatCollectionChecksum,
+  type PullReplacePlan,
+} from "./sync-copy.js";
+import {
+  currentHeadSha,
+  ffMergeFromOrigin,
+  resetCloneWorktree,
+  resetHardToOrigin,
+} from "./sync-clone.js";
+import { buildRepoSyncState } from "./remote/destination.js";
+import { blockOnRelation, failSync, prepareRepoSync, type SyncOpTrigger } from "./sync-prepare.js";
+import { enterSyncLock, isSyncLocked, leaveSyncLock } from "./sync-lock.js";
+import * as fs from "node:fs/promises";
 
-export type PullTrigger = "manual" | "scheduled";
+export type PullTrigger = SyncOpTrigger;
 
-let pullLock = false;
+export type PullOptions = {
+  trigger?: PullTrigger;
+  /** Discard local clone commits and match origin, then copy into Cursor. */
+  resetToRemote?: boolean;
+  skipLock?: boolean;
+};
 
 export function isPullLocked(): boolean {
-  return pullLock;
+  return isSyncLocked();
 }
 
 export async function executePull(
   context: vscode.ExtensionContext,
-  options?: { trigger?: PullTrigger }
+  options?: PullOptions
 ): Promise<boolean> {
   const trigger = options?.trigger ?? "manual";
-  const logger = getLogger();
+  const resetToRemote = options?.resetToRemote === true;
 
-  if (pullLock) {
+  const lockHold = enterSyncLock({ skipLock: options?.skipLock });
+  if (lockHold === "busy") {
     vscode.window.showWarningMessage("A sync operation is already in progress.");
     return false;
   }
 
-  pullLock = true;
   updateStatusBar("syncing");
+  beginSyncAbort();
+  const progress = createSidebarSyncProgress("pull");
+  const startedAt = Date.now();
   try {
-    const success = await doPull(context, trigger);
+    progress.report({
+      message: resetToRemote ? "Starting reset to remote…" : "Starting pull…",
+    });
+    const success = await doPull(context, trigger, progress, resetToRemote);
+    if (!success && isSyncAborted()) {
+      await finishCancelledOperation(context, "pull", trigger);
+      progress.complete(false);
+      restoreStatusBarAfterCancel();
+      refreshSidebar();
+      return false;
+    }
+    if (success) {
+      commitSyncFileJournal();
+    } else {
+      await rollbackSyncFileJournal(context);
+    }
+    progress.complete(success);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Pull finished in ${formatElapsedPrecise(Date.now() - startedAt)} (${success ? "ok" : "failed"}).`
+    );
     updateStatusBar(success ? "ok" : "error", new Date());
     refreshSidebar();
     return success;
   } catch (err) {
+    progress.complete(false);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Pull finished in ${formatElapsedPrecise(Date.now() - startedAt)} (failed).`
+    );
+    if (isAbortError(err) || isSyncAborted()) {
+      await finishCancelledOperation(context, "pull", trigger);
+      restoreStatusBarAfterCancel();
+      refreshSidebar();
+      return false;
+    }
+    await rollbackSyncFileJournal(context);
     updateStatusBar("error", new Date());
     refreshSidebar();
-    throw err;
+    const errMessage = err instanceof Error ? err.message : String(err);
+    void showSyncFailureWithDebug(
+      context,
+      buildSyncDebugFailure("pull", trigger, errMessage, {
+        direction: "pull",
+      }),
+      { title: `Pull failed: ${errMessage}` }
+    );
+    return false;
   } finally {
-    pullLock = false;
+    leaveSyncLock(lockHold);
+    endSyncAbort();
   }
+}
+
+export async function executeResetToRemote(
+  context: vscode.ExtensionContext
+): Promise<boolean> {
+  return executePull(context, { trigger: "manual", resetToRemote: true });
 }
 
 async function doPull(
   context: vscode.ExtensionContext,
-  trigger: PullTrigger = "manual"
+  trigger: PullTrigger,
+  progress: vscode.Progress<SyncProgressReport> & { percent?: number },
+  resetToRemote: boolean
 ): Promise<boolean> {
   const logger = getLogger();
-  logger.appendLine(`[${new Date().toISOString()}] Pull started (trigger=${trigger})`);
+  logger.appendLine(
+    `[${new Date().toISOString()}] Pull started (trigger=${trigger}, reset=${resetToRemote})`
+  );
 
-  let syncState = await loadSyncState(context);
-  let gistId = syncState?.gistId;
-
-  const token = await requireToken(context);
-  if (!token) {
-    const authFailedMessage =
-      "GitHub token not configured. Configure your token to sync.";
-    void showSyncFailureWithDebug(
-      context,
-      buildSyncDebugFailure("pull", trigger, authFailedMessage, {
-        direction: "pull",
-        category: "AUTH_FAILED",
-      }),
-      { title: authFailedMessage }
-    );
-    logger.appendLine(`[${new Date().toISOString()}] Pull failed: AUTH_FAILED`);
-    sendEvent(context, "sync_failed", { direction: "pull", reason: "not_configured", trigger });
+  const prepared = await prepareRepoSync(context, "pull", trigger, progress);
+  if (!prepared) {
     return false;
   }
 
-  const client = new GistClient(token);
-
-  if (!gistId) {
-    const existingResult = await withRetry(() => client.findExistingGist());
-    if (!existingResult.ok) {
-      void showSyncFailureWithDebug(
-        context,
-        buildSyncDebugFailure("pull", trigger, existingResult.error.message, {
-          direction: "pull",
-          category: existingResult.error.category,
-          statusCode: existingResult.error.statusCode,
-        }),
-        { title: `Pull failed: ${existingResult.error.message}` }
-      );
-      logger.appendLine(`[${new Date().toISOString()}] Pull failed: ${existingResult.error.category} - ${existingResult.error.message}`);
-      sendEvent(context, "sync_failed", {
-        direction: "pull",
-        reason: existingResult.error.category,
-        status_code: existingResult.error.statusCode,
-        trigger,
-      });
-      return false;
-    }
-
-    if (existingResult.data) {
-      gistId = existingResult.data.id;
-      syncState = {
-        lastSyncTimestamp: new Date().toISOString(),
-        lastSyncDirection: "pull",
-        gistId: gistId,
-        localChecksums: syncState?.localChecksums || {},
-        remoteChecksums: syncState?.remoteChecksums || {}
-      };
-      await saveSyncState(context, syncState);
-      logger.appendLine(`[${new Date().toISOString()}] Found existing Gist: ${gistId}`);
-    } else {
-      const notConfiguredMessage =
-        "Not configured. Push first or configure a Gist ID.";
-      void showSyncFailureWithDebug(
-        context,
-        buildSyncDebugFailure("pull", trigger, notConfiguredMessage, {
-          direction: "pull",
-          category: "not_configured",
-        }),
-        { title: notConfiguredMessage }
-      );
-      logger.appendLine(`[${new Date().toISOString()}] Pull failed: not configured`);
-      sendEvent(context, "sync_failed", { direction: "pull", reason: "not_configured", trigger });
-      return false;
+  if (!resetToRemote) {
+    const blocked = blockOnRelation(prepared.relation, "pull");
+    if (blocked) {
+      return failSync(context, "pull", trigger, blocked, "CONFLICT");
     }
   }
 
-  const gistResult = await withRetry(() => client.getGist(gistId));
-
-  if (!gistResult.ok) {
-    void showSyncFailureWithDebug(
+  const { clone, token } = prepared;
+  if (clone.empty && !resetToRemote) {
+    return failSync(
       context,
-      buildSyncDebugFailure("pull", trigger, gistResult.error.message, {
-        direction: "pull",
-        category: gistResult.error.category,
-        statusCode: gistResult.error.statusCode,
-      }),
-      { title: `Pull failed: ${gistResult.error.message}` }
+      "pull",
+      trigger,
+      "Remote repository has no commits yet. Push first.",
+      "not_configured"
     );
-    logger.appendLine(
-      `[${new Date().toISOString()}] Pull failed: ${gistResult.error.category} - ${gistResult.error.message}`
+  }
+
+  const preSha = (await currentHeadSha(clone.clonePath)) ?? "HEAD";
+  await resetCloneWorktree(clone.clonePath);
+  setSyncFileJournal({
+    backupEntries: [],
+    createdPaths: [],
+    previousSyncState: await loadSyncState(context),
+    cloneReset: { clonePath: clone.clonePath, sha: preSha },
+  });
+
+  if (resetToRemote) {
+    progress.report({ message: "Resetting clone to origin…" });
+    await resetHardToOrigin(clone.clonePath, clone.identity.branch, token);
+  } else {
+    progress.report({ message: "Fast-forwarding clone…" });
+    await ffMergeFromOrigin(clone.clonePath, clone.identity.branch);
+  }
+
+  progress.report({ message: "Comparing clone to Cursor folders…" });
+  const plan = await planCloneToCursor(clone.clonePath, clone.identity.basePath);
+  const counts = pullConfirmCounts(plan);
+  const importChat = await chatImportNeeded(context, plan);
+
+  if (counts.n === 0 && counts.m === 0 && counts.k === 0 && !importChat) {
+    await saveCompletedState(
+      context,
+      clone.identity,
+      withChatCollectionChecksum(plan.remoteChecksums, plan.chatRaw),
+      "pull"
     );
+    if (trigger === "manual" || trigger === "syncNow") {
+      notifySyncQuiet("Pull complete: already in sync.");
+    }
     await addSyncHistoryEntry(context, {
       timestamp: new Date().toISOString(),
       direction: "pull",
       trigger,
       fileCount: 0,
-      success: false,
-      error: gistResult.error.message,
+      success: true,
+      files: [],
     });
-    sendEvent(context, "sync_failed", {
-      direction: "pull",
-      reason: gistResult.error.category,
-      status_code: gistResult.error.statusCode,
-      trigger,
-    });
-    return false;
+    return true;
   }
 
-  const gistData = gistResult.data;
-  const manifestFile = gistData.files["manifest.json"];
-  if (!manifestFile) {
-    const message =
-      gistData.files[TRANSCRIPT_MANIFEST_FILE_NAME] !== undefined
-        ? "Pull failed: This Gist contains agent transcripts, not settings. Update the configured Gist to one from Cursor Sync export/push, or use Cursor Sync: Import Agent Transcripts from Private Gist."
-        : "Pull failed: manifest.json not found in Gist.";
-    void showSyncFailureWithDebug(
-      context,
-      buildSyncDebugFailure("pull", trigger, message, {
-        direction: "pull",
-        category: "missing_manifest",
-      }),
-      { title: message }
+  if (trigger === "manual" || trigger === "syncNow") {
+    const confirmMessage =
+      counts.n === 0 && counts.m === 0 && counts.k === 0 && importChat
+        ? t("pullReplaceConfirmChatsOnly")
+        : counts.k > 0
+          ? t("pullReplaceConfirm", {
+              n: counts.n,
+              m: counts.m,
+              k: counts.k,
+            })
+          : t("pullReplaceConfirmFilesOnly", { n: counts.n, m: counts.m });
+    const choice = await vscode.window.showWarningMessage(
+      confirmMessage,
+      { modal: true },
+      "Proceed",
+      "Cancel"
     );
-    logger.appendLine(`[${new Date().toISOString()}] Pull failed: missing manifest`);
-    sendEvent(context, "sync_failed", { direction: "pull", reason: "missing_manifest", trigger });
-    return false;
-  }
-
-  let manifest: Manifest;
-  try {
-    manifest = JSON.parse(manifestFile.content) as Manifest;
-  } catch {
-    const invalidManifestMessage = "Pull failed: invalid manifest.json.";
-    void showSyncFailureWithDebug(
-      context,
-      buildSyncDebugFailure("pull", trigger, invalidManifestMessage, {
-        direction: "pull",
-        category: "invalid_manifest",
-      }),
-      { title: invalidManifestMessage }
-    );
-    logger.appendLine(`[${new Date().toISOString()}] Pull failed: invalid manifest`);
-    sendEvent(context, "sync_failed", { direction: "pull", reason: "invalid_manifest", trigger });
-    return false;
-  }
-
-  const remoteChecksums: Record<string, string> = {};
-  for (const [key, entry] of Object.entries(manifest.files)) {
-    remoteChecksums[key] = entry.checksum;
-  }
-
-  const conflicts = await detectConflicts(context, remoteChecksums);
-  if (conflicts.length > 0) {
-    const unresolved = conflicts.filter((c) => {
-      const resolution = getResolutionForKey(c.relativeSyncKey);
-      return !resolution || resolution === "skip";
-    });
-    if (unresolved.length > 0) {
-      const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pulling.`;
-      void showSyncFailureWithDebug(
-        context,
-        buildSyncDebugFailure("pull", trigger, conflictMessage, {
-          direction: "pull",
-          category: "CONFLICT",
-          conflictCount: unresolved.length,
-        }),
-        { level: "warning", title: conflictMessage }
-      );
-      logger.appendLine(`[${new Date().toISOString()}] Pull blocked: CONFLICT`);
-      sendEvent(context, "sync_failed", { direction: "pull", reason: "CONFLICT", trigger });
-      return false;
-    }
-  }
-
-  const roots = resolveSyncRoots();
-  const filesToWrite: Array<{ absolutePath: string; syncKey: string; content: Buffer }> = [];
-
-  for (const [gistFileName, gistFile] of Object.entries(gistData.files)) {
-    if (gistFileName === "manifest.json") {
-      continue;
-    }
-
-    const syncKey = gistFileNameToSyncKey(gistFileName);
-    const manifestEntry = manifest.files[syncKey];
-    if (!manifestEntry) {
-      continue;
-    }
-
-    if (conflicts.length > 0) {
-      const resolution = getResolutionForKey(syncKey);
-      if (resolution === "keepLocal") {
-        continue;
-      }
-    }
-
-    const absolutePath = syncKeyToAbsolutePath(syncKey, roots);
-    if (!absolutePath) {
-      continue;
-    }
-
-    const content =
-      manifestEntry.encoding === "base64"
-        ? Buffer.from(gistFile.content, "base64")
-        : Buffer.from(gistFile.content, "utf-8");
-
-    filesToWrite.push({ absolutePath, syncKey, content });
-  }
-
-  const config = vscode.workspace.getConfiguration("cursorSync");
-  const safeMode = config.get<boolean>("safeMode") ?? true;
-
-  if (trigger === "manual" && safeMode && filesToWrite.length > 0) {
-    const items = filesToWrite.map((f) => ({
-      label: f.syncKey,
-      picked: true,
-    }));
-    const selected = await vscode.window.showQuickPick(items, {
-      canPickMany: true,
-      title: "Files to overwrite",
-      placeHolder: "Deselect files you do not want to overwrite",
-    });
-
-    if (!selected) {
+    if (choice !== "Proceed") {
       logger.appendLine(`[${new Date().toISOString()}] Pull cancelled by user`);
       sendEvent(context, "sync_failed", { direction: "pull", reason: "cancelled", trigger });
       return false;
     }
-
-    const selectedKeys = new Set(selected.map((s) => s.label));
-    const filtered = filesToWrite.filter((f) => selectedKeys.has(f.syncKey));
-    filesToWrite.length = 0;
-    filesToWrite.push(...filtered);
   }
 
-  if (filesToWrite.length === 0) {
-    if (trigger === "manual") {
-      vscode.window.showInformationMessage("Pull complete: no files to update.");
-    }
-    sendEvent(context, "sync_completed", { direction: "pull", file_count: 0, trigger });
-    return true;
-  }
+  throwIfAborted();
+  progress.report({ message: "Writing Cursor files…" });
+  const applied = await applyCloneToCursor(context, plan);
+  const journal = (await import("./sync-abort.js")).getSyncFileJournal();
+  setSyncFileJournal({
+    backupEntries: [...(journal?.backupEntries ?? []), ...applied.backupEntries],
+    createdPaths: [...(journal?.createdPaths ?? []), ...applied.createdPaths],
+    directoryRestores: [
+      ...(journal?.directoryRestores ?? []),
+      ...applied.directoryRestores,
+    ],
+    previousSyncState: journal?.previousSyncState,
+    cloneReset: journal?.cloneReset,
+  });
 
-  const { entries: backupEntries } = await createBackup(
-    context,
-    filesToWrite.map((f) => f.absolutePath)
-  );
+  await migrateAndLogSkillArtifacts();
+  await applyExtensionsFromClone(context, clone.clonePath, clone.identity.basePath, logger);
 
-  const writtenBackups: typeof backupEntries = [];
-  let writeError = false;
-
-  for (const file of filesToWrite) {
-    try {
-      const dir = path.dirname(file.absolutePath);
-      await fs.mkdir(dir, { recursive: true });
-      const tmpPath = file.absolutePath + ".tmp";
-      await fs.writeFile(tmpPath, file.content);
-      await fs.rename(tmpPath, file.absolutePath);
-      const backup = backupEntries.find((b) => b.absolutePath === file.absolutePath);
-      if (backup) {
-        writtenBackups.push(backup);
-      }
-    } catch (err) {
-      logger.appendLine(
-        `[${new Date().toISOString()}] Write failed for ${file.absolutePath}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      writeError = true;
-      break;
-    }
-  }
-
-  if (writeError) {
-    logger.appendLine(`[${new Date().toISOString()}] Rolling back partial writes`);
-    await rollbackFromBackup(writtenBackups);
-    const writeErrorMessage =
-      "Pull failed: file write error. Changes have been rolled back.";
-    void showSyncFailureWithDebug(
+  if (importChat && plan.chatRaw !== undefined) {
+    progress.report({ message: "Importing chat backup…" });
+    await pullChatCollectionFromRemoteFiles(
       context,
-      buildSyncDebugFailure("pull", trigger, writeErrorMessage, {
-        direction: "pull",
-        category: "FILE_SYSTEM_ERROR",
-      }),
-      { title: writeErrorMessage }
+      {
+        [CURSOR_CHAT_GIST_FILE_NAME]: plan.chatRaw,
+        [CHAT_BUNDLES_GIST_FILE_NAME]: plan.chatRaw,
+      },
+      progress
     );
-    logger.appendLine(`[${new Date().toISOString()}] Pull failed: FILE_SYSTEM_ERROR`);
-    await addSyncHistoryEntry(context, {
-      timestamp: new Date().toISOString(),
-      direction: "pull",
-      trigger,
-      fileCount: 0,
-      success: false,
-      error: "File write error",
-    });
-    sendEvent(context, "sync_failed", { direction: "pull", reason: "FILE_SYSTEM_ERROR", trigger });
-    return false;
+    await storeChatSyncFingerprint(context, await computeChatSyncLocalFingerprint());
   }
 
-  await pruneOldBackups(context);
+  const next = await saveCompletedState(
+    context,
+    clone.identity,
+    withChatCollectionChecksum(applied.checksums, plan.chatRaw),
+    "pull"
+  );
+  markJournalStateWritten();
 
-  const newLocalChecksums: Record<string, string> = {};
-  for (const file of filesToWrite) {
-    newLocalChecksums[file.syncKey] = computeChecksum(file.content);
-  }
-
-  const newState: SyncState = {
-    lastSyncTimestamp: new Date().toISOString(),
-    lastSyncDirection: "pull",
-    gistId: syncState?.gistId || gistId,
-    localChecksums: { ...(syncState?.localChecksums || {}), ...newLocalChecksums },
-    remoteChecksums: remoteChecksums,
-  };
-  await saveSyncState(context, newState);
-  clearConflicts();
-
+  const files = [...applied.writtenKeys, ...applied.deletedKeys].sort();
   await addSyncHistoryEntry(context, {
-    timestamp: new Date().toISOString(),
+    timestamp: next.lastSyncTimestamp,
     direction: "pull",
     trigger,
-    fileCount: filesToWrite.length,
+    fileCount: files.length,
+    totalFileCount: Object.keys(applied.checksums).length,
     success: true,
+    files,
   });
   sendEvent(context, "sync_completed", {
     direction: "pull",
-    file_count: filesToWrite.length,
     trigger,
+    file_count: files.length,
   });
-  await syncExtensionsAfterPull(gistData.files, logger);
-
-  vscode.window.showInformationMessage(
-    `Pull complete: ${filesToWrite.length} file(s) updated.`
-  );
-  logger.appendLine(
-    `[${new Date().toISOString()}] Pull succeeded: ${filesToWrite.length} files`
-  );
+  if (trigger === "manual" || trigger === "syncNow") {
+    notifySyncQuiet(`Pulled ${applied.writtenKeys.length} file(s).`);
+  }
   return true;
 }
 
-function syncKeyToAbsolutePath(
-  syncKey: string,
-  roots: { cursorUser: string; dotCursor: string }
-): string | undefined {
-  if (syncKey.startsWith("cursor-user/")) {
-    const rel = syncKey.slice("cursor-user/".length);
-    return path.join(roots.cursorUser, ...rel.split("/"));
-  }
-
-  if (syncKey.startsWith("dot-cursor/")) {
-    const rel = syncKey.slice("dot-cursor/".length);
-    return path.join(roots.dotCursor, ...rel.split("/"));
-  }
-
-  return undefined;
+async function saveCompletedState(
+  context: vscode.ExtensionContext,
+  identity: {
+    owner: string;
+    repo: string;
+    branch: string;
+    basePath: string;
+  },
+  checksums: Record<string, string>,
+  direction: "push" | "pull"
+) {
+  const next = buildRepoSyncState({
+    previous: await loadSyncState(context),
+    owner: identity.owner,
+    repo: identity.repo,
+    branch: identity.branch,
+    basePath: identity.basePath,
+    checksums,
+    direction,
+    completedFileSync: true,
+  });
+  await saveSyncState(context, next);
+  return next;
 }
 
-const CONCURRENT_INSTALLS = 2;
-
-async function syncExtensionsAfterPull(
-  gistFiles: Record<string, { content: string }>,
+async function applyExtensionsFromClone(
+  context: vscode.ExtensionContext,
+  clonePath: string,
+  basePath: string,
   logger: vscode.OutputChannel
 ): Promise<void> {
-  const extFile = gistFiles["cursor-user--extensions.json"];
-  if (!extFile) {
-    return;
-  }
-
-  let entries: Array<{ id: string; version: string }>;
+  const nested = cloneAbsForSyncKey(clonePath, basePath, "cursor-user/extensions.json");
+  let content: string | undefined;
   try {
-    entries = JSON.parse(extFile.content) as Array<{ id: string; version: string }>;
+    content = await fs.readFile(nested, "utf8");
   } catch {
+    content = undefined;
+  }
+  if (!content) {
     return;
   }
+  await syncExtensionsFromRemoteFiles(
+    context,
+    { "cursor-user/extensions.json": content },
+    logger
+  );
+}
 
-  const config = vscode.workspace.getConfiguration("cursorSync");
-  const autoInstall = config.get<boolean>("syncExtensions.autoInstall") ?? true;
-  const autoUninstall = config.get<boolean>("syncExtensions.autoUninstall") ?? false;
-
-  const missing = findMissingExtensions(entries);
-  if (autoInstall && missing.length > 0) {
-    for (let i = 0; i < missing.length; i += CONCURRENT_INSTALLS) {
-      const batch = missing.slice(i, i + CONCURRENT_INSTALLS);
-      await Promise.all(
-        batch.map(async (entry) => {
-          try {
-            await vscode.commands.executeCommand(
-              "workbench.extensions.installExtension",
-              entry.id
-            );
-          } catch (err) {
-            logger.appendLine(
-              `[${new Date().toISOString()}] Failed to install extension ${entry.id}: ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
-        })
-      );
-    }
-  } else if (!autoInstall && missing.length > 0) {
-    const names = missing.map((m) => m.id).join(", ");
-    vscode.window.showInformationMessage(
-      `Extensions present remotely but not installed locally: ${names}`
-    );
+async function chatImportNeeded(
+  context: vscode.ExtensionContext,
+  plan: PullReplacePlan
+): Promise<boolean> {
+  if (!isChatSyncEnabled() || plan.chatRaw === undefined) {
+    return false;
   }
+  const fingerprint = await computeChatSyncLocalFingerprint();
+  const stored = await readStoredChatSyncFingerprint(context);
+  const cloneSum = computeChecksum(Buffer.from(plan.chatRaw, "utf8"));
+  const last = (await loadSyncState(context))?.localChecksums[CURSOR_CHAT_SYNC_KEY];
+  return stored !== fingerprint || last !== cloneSum;
+}
 
-  const extras = findExtraExtensions(entries);
-  if (extras.length === 0) {
-    return;
-  }
-
-  let shouldUninstall = autoUninstall;
-  if (!shouldUninstall) {
-    const choice = await vscode.window.showWarningMessage(
-      `Remove ${extras.length} extension(s) that are not in the synced list?`,
-      "Yes",
-      "No"
-    );
-    shouldUninstall = choice === "Yes";
-  }
-
-  if (!shouldUninstall) {
-    return;
-  }
-
-  for (const id of extras) {
-    try {
-      await vscode.commands.executeCommand(
-        "workbench.extensions.uninstallExtension",
-        id
-      );
-    } catch (err) {
-      logger.appendLine(
-        `[${new Date().toISOString()}] Failed to uninstall extension ${id}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  }
+export function isEmptyPullPlan(plan: PullReplacePlan): boolean {
+  const c = pullConfirmCounts(plan);
+  return c.n === 0 && c.m === 0 && c.k === 0;
 }

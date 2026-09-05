@@ -1,24 +1,30 @@
 {
   "name": "cursor-sync",
-  "displayName": "Cursor Sync",
-  "description": "Sync user-level Cursor settings and assets to a private GitHub Gist",
-  "version": "0.8.0",
+  "displayName": "Cursor Sync (Community)",
+  "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub repository",
+	"version": "2.0.0",
   "icon": "assets/icon.png",
-  "publisher": "MarceloBarella",
+  "publisher": "FaberVi",
+  "author": {
+    "name": "Vincenzo Fabiano"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Marcelo-Barella/cursor-sync.git"
+    "url": "https://github.com/FaberVi/cursor-sync.git"
+  },
+  "homepage": "https://github.com/FaberVi/cursor-sync",
+  "bugs": {
+    "url": "https://github.com/FaberVi/cursor-sync/issues"
   },
   "license": "MIT",
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.128.0"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onView:cursorSync.sidebar"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -46,16 +52,26 @@
           "command": "cursorSync.syncNow",
           "when": "view == cursorSync.sidebar && cursorSync.configured",
           "group": "navigation"
+        },
+        {
+          "command": "cursorSync.resetToRemote",
+          "when": "view == cursorSync.sidebar && cursorSync.configured",
+          "group": "1_overflow"
+        },
+        {
+          "command": "cursorSync.openSyncClone",
+          "when": "view == cursorSync.sidebar && cursorSync.configured",
+          "group": "1_overflow"
+        },
+        {
+          "command": "cursorSync.openCursorFolder",
+          "when": "view == cursorSync.sidebar",
+          "group": "1_overflow"
         }
       ],
       "editor/title": [
         {
           "command": "cursorSync.exportCurrentChatBundle",
-          "when": "resourceScheme == 'cursor.composer'",
-          "group": "navigation"
-        },
-        {
-          "command": "cursorSync.exportCurrentChatBundleToGist",
           "when": "resourceScheme == 'cursor.composer'",
           "group": "navigation"
         }
@@ -65,20 +81,11 @@
           "command": "cursorSync.exportCurrentChatBundle",
           "when": "resourceScheme == 'cursor.composer'",
           "group": "navigation"
-        },
-        {
-          "command": "cursorSync.exportCurrentChatBundleToGist",
-          "when": "resourceScheme == 'cursor.composer'",
-          "group": "navigation"
         }
       ],
       "commandPalette": [
         {
           "command": "cursorSync.exportCurrentChatBundle",
-          "when": "false"
-        },
-        {
-          "command": "cursorSync.exportCurrentChatBundleToGist",
           "when": "false"
         }
       ]
@@ -107,33 +114,33 @@
         "enablement": "cursorSync.configured"
       },
       {
-        "command": "cursorSync.showStatus",
-        "title": "Cursor Sync: Show Status"
+        "command": "cursorSync.resetToRemote",
+        "title": "Cursor Sync: Reset to Remote",
+        "icon": "$(discard)",
+        "enablement": "cursorSync.configured"
       },
       {
-        "command": "cursorSync.resolveConflicts",
-        "title": "Cursor Sync: Resolve Conflicts",
-        "enablement": "cursorSync.hasConflicts"
+        "command": "cursorSync.openSyncClone",
+        "title": "Cursor Sync: Open Sync Clone",
+        "icon": "$(repo)",
+        "enablement": "cursorSync.configured"
+      },
+      {
+        "command": "cursorSync.cancelSync",
+        "title": "Cursor Sync: Stop Sync"
+      },
+      {
+        "command": "cursorSync.showStatus",
+        "title": "Cursor Sync: Show Status"
       },
       {
         "command": "cursorSync.reset",
         "title": "Cursor Sync: Reset Extension State"
       },
       {
-        "command": "cursorSync.export",
-        "title": "Cursor Sync: Export Settings to Private Gist"
-      },
-      {
-        "command": "cursorSync.import",
-        "title": "Cursor Sync: Import Settings from Private Gist"
-      },
-      {
-        "command": "cursorSync.exportTranscripts",
-        "title": "Cursor Sync: Export Agent Transcripts to Private Gist"
-      },
-      {
-        "command": "cursorSync.importTranscripts",
-        "title": "Cursor Sync: Import Agent Transcripts from Private Gist"
+        "command": "cursorSync.openCursorFolder",
+        "title": "Cursor Sync: Open Cursor Data Folder",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "cursorSync.saveChatLocal",
@@ -157,11 +164,6 @@
         "icon": "$(archive)"
       },
       {
-        "command": "cursorSync.exportCurrentChatBundleToGist",
-        "title": "Cursor Sync: Export into Bundle (GIST)",
-        "icon": "$(cloud-upload)"
-      },
-      {
         "command": "cursorSync.importChatBundleActivate",
         "title": "Cursor Sync: Import Chat Bundle (Activate)"
       },
@@ -170,12 +172,8 @@
         "title": "Cursor Sync: Verify Chat Import"
       },
       {
-        "command": "cursorSync.exportChatToGist",
-        "title": "Cursor Sync: Export Chat to Private Gist"
-      },
-      {
-        "command": "cursorSync.importChatFromGist",
-        "title": "Cursor Sync: Import Chat from Private Gist"
+        "command": "cursorSync.validateChatBackups",
+        "title": "Cursor Sync: Validate Chat Backups"
       },
       {
         "command": "cursorSync.setChatEncryptionPassword",
@@ -194,11 +192,6 @@
         "title": "Cursor Sync: Reveal Imported Transcript in Explorer (Deprecated)"
       },
       {
-        "command": "cursorSync.importTranscriptsFromGist",
-        "title": "Cursor Sync: Import Transcripts from Gist URL",
-        "icon": "$(cloud-download)"
-      },
-      {
         "command": "cursorSync.prepareStateReconciliation",
         "title": "Cursor Sync: Prepare State Reconciliation (chats.json)"
       },
@@ -209,14 +202,10 @@
       {
         "command": "cursorSync.prepareSyncFromLandingZone",
         "title": "Cursor Sync: Prepare Sync from Landing Zone"
-      },
-      {
-        "command": "cursorSync.installSkillTransportChat",
-        "title": "Cursor Sync: Install Skill - Transport Chat"
       }
     ],
     "configuration": {
-      "title": "Cursor Sync",
+      "title": "Cursor Sync (Community)",
       "properties": {
         "cursorSync.enabledPaths": {
           "type": "array",
@@ -231,7 +220,11 @@
             "vsix/**",
             "skills/**",
             "commands/**/*.md",
-            "rules/*.mdc"
+            "rules/*.mdc",
+            "agents/*.md",
+            "cli-config.json",
+            "hooks.json",
+            "tasks.json"
           ],
           "description": "Glob patterns for included sync paths"
         },
@@ -246,13 +239,53 @@
         "cursorSync.schedule.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable periodic auto-sync (pull and push)"
+          "description": "Enable periodic auto-sync (push when local Cursor differs; skip pull until confirmed)"
+        },
+        "cursorSync.schedule.interval": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "description": "Interval between scheduled syncs (see schedule.intervalUnit)"
+        },
+        "cursorSync.schedule.intervalUnit": {
+          "type": "string",
+          "enum": [
+            "seconds",
+            "minutes"
+          ],
+          "default": "minutes",
+          "description": "Unit for schedule.interval (seconds or minutes)"
         },
         "cursorSync.schedule.intervalMin": {
           "type": "number",
           "default": 30,
           "minimum": 5,
-          "description": "Minutes between scheduled syncs"
+          "description": "Deprecated: use schedule.interval and schedule.intervalUnit",
+          "deprecationMessage": "Use cursorSync.schedule.interval and cursorSync.schedule.intervalUnit instead"
+        },
+        "cursorSync.destination.repo": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub repository as owner/name"
+        },
+        "cursorSync.destination.branch": {
+          "type": "string",
+          "default": "main",
+          "description": "Branch used when syncing to a GitHub repository"
+        },
+        "cursorSync.destination.path": {
+          "type": "string",
+          "default": "cursor-sync",
+          "description": "Directory inside the repository where sync files are stored"
+        },
+        "cursorSync.ui.language": {
+          "type": "string",
+          "enum": [
+            "en",
+            "it"
+          ],
+          "default": "en",
+          "description": "Sidebar UI language (English or Italian)"
         },
         "cursorSync.maxFileSizeKB": {
           "type": "number",
@@ -264,35 +297,23 @@
           "default": "default",
           "description": "Profile name written to manifest"
         },
-        "cursorSync.safeMode": {
-          "type": "boolean",
-          "default": true,
-          "description": "Require confirmation before pull overwrites local files"
-        },
         "cursorSync.syncExtensions.autoInstall": {
           "type": "boolean",
           "default": true,
-          "description": "On pull, automatically install extensions that are in the synced list but not installed locally"
+          "description": "On pull/sync, prompt to install extensions from the synced list that are not installed locally. Installs always require confirmation (never silent). Turn off to skip the prompt entirely."
+        },
+        "cursorSync.syncExtensions.allowedPublishers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "When non-empty, only offer to install extensions whose publisher (id prefix before '.') is in this list. Empty means all publishers are eligible. Installs still require confirmation."
         },
         "cursorSync.syncExtensions.autoUninstall": {
           "type": "boolean",
           "default": false,
           "description": "On pull, automatically uninstall extensions that are installed locally but not in the synced list (use with caution)"
-        },
-        "cursorSync.transcripts.enabled": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable agent transcript export/import (opt-in; transcripts may contain sensitive data)"
-        },
-        "cursorSync.transcripts.maxFileSizeKB": {
-          "type": "number",
-          "default": 2048,
-          "description": "Skip transcript files larger than this size in KB"
-        },
-        "cursorSync.transcripts.importFallbackToCurrentWorkspace": {
-          "type": "boolean",
-          "default": true,
-          "description": "When manual project mapping is empty, offer mapping all source projects to the local ~/.cursor/projects/ folder that matches the open workspace"
         },
         "cursorSync.transcripts.autoReloadAfterImport": {
           "type": "boolean",
@@ -302,12 +323,27 @@
         "cursorSync.chatImport.activateDefault": {
           "type": "boolean",
           "default": false,
-          "description": "Run composer.createComposer activation after disk restore when importing a chat bundle (import-v2)"
+          "description": "Run composer.createNew activation after disk restore when importing a chat bundle (import-v2)"
         },
         "cursorSync.chatImport.activateStrict": {
           "type": "boolean",
           "default": false,
-          "description": "Fail import if activation is staged only (no confirmed composer.createComposer or result.json)"
+          "description": "Fail import if activation is staged only (no confirmed composer.createNew or result.json)"
+        },
+        "cursorSync.chatImport.useProtobufHydration": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hydrate composer partialState from bundle diskKv / native JSON before IDE activation (recommended)."
+        },
+        "cursorSync.chatImport.useIdeHydration": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip protobuf hydration and rely on IDE composer.createNew only (use when hydration causes issues)."
+        },
+        "cursorSync.chatImport.strictDiskGates": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fail import when partialState stays empty after protobuf hydration."
         },
         "cursorSync.chatImport.bridgeWaitResultSeconds": {
           "type": "number",
@@ -323,23 +359,60 @@
         "cursorSync.chatImport.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to a Python 3 interpreter for chat-transport scripts. Empty = auto-detect (python3, python)."
+          "description": "Absolute path to a Python 3 interpreter for chat-transport scripts. Empty = auto-detect (py -3 on Windows; python3/python elsewhere). Workspace settings are ignored for security."
         },
         "cursorSync.chatImport.transportChatScriptDir": {
           "type": "string",
           "default": "",
           "description": "User-level override directory for transport-chat scripts (cursor_chat_io.py, cursor_composer_bridge.py). Workspace settings are ignored for security. Empty = use the extension's bundled scripts."
         },
-        "cursorSync.chatGist.encrypt": {
+        "cursorSync.chats.encrypt": {
           "type": "boolean",
           "default": true,
-          "description": "When true, chat gist exports (chat-bundle.json / chat-bundles.json) are encrypted with your chat encryption password before upload."
+          "description": "When true, the synced chat collection (cursor-chat.json) is encrypted with your chat encryption password before it is written to the clone."
+        },
+        "cursorSync.chats.syncEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include chats in Sync Now, Push, and Pull (writes cursor-chat.json at the repository base path). Off by default."
+        },
+        "cursorSync.mcp.syncEnabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "When enabled, Push/Pull/Sync Now include `mcp.json` from both sync roots (`~/.cursor` and Cursor User). That file may contain MCP server URLs, tokens, and headers. Use only a **private** repository. Turning this off does not delete an already-uploaded remote `mcp.json`."
+        },
+        "cursorSync.chats.maxCollectionSizeKB": {
+          "type": "number",
+          "default": 8192,
+          "minimum": 0,
+          "description": "Maximum size in KB for the synced chat collection (default 8192). Chats are packed newest-first; skipped chats are named in the push toast and Output log."
+        },
+        "cursorSync.chats.syncOnlyFullBackups": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, chat sync push skips transcript-only chats (requires resumable tier: store.db and/or Layer 4 diskKv)."
+        },
+        "cursorSync.chats.pullUpdates": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, pull may re-import chats that already exist locally (see pullUpdatePolicy)."
+        },
+        "cursorSync.chats.pullUpdatePolicy": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "remoteWins",
+            "newerWins",
+            "ask"
+          ],
+          "default": "newerWins",
+          "description": "How to handle remote chat bundles for conversation IDs already on this machine when pullUpdates is enabled."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
+    "vscode:prepublish": "node esbuild.mjs",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "test": "vitest run",
@@ -347,15 +420,15 @@
     "lint": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/vscode": "^1.74.0",
-    "@vscode/vsce": "^3.0.0",
-    "esbuild": "^0.24.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "@types/node": "^26.4.1",
+    "@types/vscode": "^1.125.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "hash-wasm": "^4.12.0",
-    "minimatch": "^10.0.0"
+    "minimatch": "^10.2.6"
   }
 }

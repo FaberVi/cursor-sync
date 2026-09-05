@@ -68,6 +68,42 @@ export class Disposable {
   }
 }
 
+export class CancellationTokenSource {
+  token = {
+    isCancellationRequested: false,
+    onCancellationRequested: (_listener: () => void) => ({ dispose: () => {} }),
+  };
+  cancel(): void {
+    this.token.isCancellationRequested = true;
+  }
+  dispose(): void {}
+}
+
+export enum ConfigurationTarget {
+  Global = 1,
+  Workspace = 2,
+  WorkspaceFolder = 3,
+}
+
+const mockGlobalConfig: Record<string, unknown> = {
+  "chats.syncEnabled": false,
+  "chatImport.activateDefault": false,
+  "chatImport.activateStrict": false,
+  "chatImport.bridgeWaitResultSeconds": 0,
+  "transcripts.autoReloadAfterImport": false,
+  "chatImport.pythonPath": "",
+};
+
+export function __setMockGlobalConfig(values: Record<string, unknown>): void {
+  Object.assign(mockGlobalConfig, values);
+}
+
+export function __clearMockGlobalConfigKeys(...keys: string[]): void {
+  for (const key of keys) {
+    delete mockGlobalConfig[key];
+  }
+}
+
 export const workspace = {
   get workspaceFolders() {
     return mockWorkspaceFolders.length ? mockWorkspaceFolders : undefined;
@@ -86,6 +122,9 @@ export const workspace = {
   onDidChangeWorkspaceFolders: (_cb: () => void) => ({ dispose: () => {} }),
   getConfiguration: (_section?: string) => ({
     get: <T>(key: string, defaultValue?: T): T | undefined => {
+      if (Object.prototype.hasOwnProperty.call(mockGlobalConfig, key)) {
+        return mockGlobalConfig[key] as T;
+      }
       const defaults: Record<string, unknown> = {
         enabledPaths: [
           "settings.json",
@@ -94,19 +133,33 @@ export const workspace = {
           "extensions.json",
           "vsix/**",
           "skills/**",
-          "skills-cursor/**/SKILL.md",
           "commands/**/*.md",
           "rules/*.mdc",
+          "agents/*.md",
+          "cli-config.json",
+          "hooks.json",
+          "tasks.json",
         ],
         excludeGlobs: [],
         maxFileSizeKB: 512,
         syncProfileName: "default",
-        safeMode: true,
         "schedule.enabled": false,
+        "schedule.interval": 30,
+        "schedule.intervalUnit": "minutes",
         "schedule.intervalMin": 30,
+        "destination.repo": "",
+        "destination.branch": "main",
+        "destination.path": "cursor-sync",
+        "mcp.syncEnabled": false,
+        "chats.syncEnabled": false,
       };
       return (defaults[key] as T) ?? defaultValue;
     },
+    update: async (key: string, value: unknown) => {
+      mockGlobalConfig[key] = value;
+    },
+    inspect: () => undefined,
+    has: () => true,
   }),
   onDidChangeConfiguration: () => ({ dispose: () => {} }),
 };
@@ -154,6 +207,7 @@ export function __resetMessageMocks(): void {
 }
 
 export const env = {
+  language: "en",
   clipboard: {
     writeText: async (text: string) => clipboardWriteTextImpl(text),
   },
@@ -224,8 +278,32 @@ export const commands = {
 };
 
 export const extensions = {
-  all: [],
+  all: [] as Array<{
+    id: string;
+    packageJSON?: {
+      version?: string;
+      isBuiltin?: boolean;
+      isUserBuiltin?: boolean;
+    };
+  }>,
 };
+
+export function __setExtensionsAll(
+  items: Array<{
+    id: string;
+    packageJSON?: {
+      version?: string;
+      isBuiltin?: boolean;
+      isUserBuiltin?: boolean;
+    };
+  }>
+): void {
+  extensions.all = items;
+}
+
+export function __resetExtensionsAll(): void {
+  extensions.all = [];
+}
 
 export enum ExtensionKind {
   UI = 1,

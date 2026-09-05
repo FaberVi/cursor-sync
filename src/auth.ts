@@ -1,10 +1,17 @@
 import * as vscode from "vscode";
-import { GistClient } from "./gist.js";
 import { withRetry } from "./retry.js";
 import { getLogger, loadSyncState, saveSyncState } from "./diagnostics.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
+import {
+  applyRepoSettingsToSyncState,
+  parseOwnerRepo,
+  persistDestinationSettings,
+  readDestinationSettings,
+} from "./remote/destination.js";
+import { GitHubRepoClient } from "./github-repo.js";
+import { ensureRepoExistsInteractive } from "./remote/ensure-repo.js";
 
 const SECRET_KEY = "cursorSync.githubPAT";
 
@@ -12,9 +19,11 @@ export async function configureGithub(
   context: vscode.ExtensionContext
 ): Promise<void> {
   const logger = getLogger();
+  let dest = readDestinationSettings();
 
   const pat = await vscode.window.showInputBox({
-    prompt: "Enter your GitHub Personal Access Token (requires gist scope)",
+    prompt:
+      "Enter your GitHub Personal Access Token (requires repo scope, or fine-grained access to the target repository)",
     password: true,
     ignoreFocusOut: true,
     placeHolder: "ghp_xxxxxxxxxxxx",
@@ -30,57 +39,105 @@ export async function configureGithub(
     return;
   }
 
-  const client = new GistClient(pat.trim());
-  const result = await withRetry(() => client.validateToken());
+  const token = pat.trim();
 
+  let repo = dest.repo;
+  if (!parseOwnerRepo(repo || "")) {
+    const entered = await vscode.window.showInputBox({
+      prompt: "GitHub repository (owner/name)",
+      ignoreFocusOut: true,
+      placeHolder: "owner/repo",
+      value: repo && !repo.includes("/") ? `${repo}/` : repo || "",
+      validateInput: (value) => {
+        if (!parseOwnerRepo(value || "")) {
+          return "Use owner/name format (example: FaberVi/cursor-backup)";
+        }
+        return undefined;
+      },
+    });
+    if (!entered) {
+      return;
+    }
+    repo = entered.trim();
+  }
+
+  const parsed = parseOwnerRepo(repo);
+  if (!parsed) {
+    vscode.window.showErrorMessage("Invalid repository. Use owner/name.");
+    return;
+  }
+
+  dest = await persistDestinationSettings({
+    repo,
+    branch: dest.branch,
+    path: dest.path,
+  });
+
+  const client = new GitHubRepoClient(token, parsed.owner, parsed.repo);
+  const result = await ensureRepoExistsInteractive(client);
   if (!result.ok) {
     logger.appendLine(
-      `[${new Date().toISOString()}] Token validation failed: ${result.error.message}`
+      `[${new Date().toISOString()}] Token/repo validation failed: ${result.error.message}`
     );
     vscode.window.showErrorMessage(
-      `GitHub token validation failed: ${result.error.message}`
+      `GitHub repository validation failed: ${result.error.message}`
     );
     return;
   }
 
-  await context.secrets.store(SECRET_KEY, pat.trim());
-  await vscode.commands.executeCommand("setContext", "cursorSync.configured", true);
+  await context.secrets.store(SECRET_KEY, token);
+  await refreshConfiguredContext(context);
+
+  const previous = await loadSyncState(context);
+  const previousPath = previous?.destination?.basePath;
+  const applied = applyRepoSettingsToSyncState(previous, dest);
+  if (applied) {
+    await saveSyncState(context, applied);
+    if (previousPath && previousPath !== dest.path) {
+      logger.appendLine(
+        `[${new Date().toISOString()}] Repo sync path updated: ${previousPath} → ${dest.path}`
+      );
+      vscode.window.showInformationMessage(
+        `Repository path updated to "${dest.path}". Next push/pull will use this folder.`
+      );
+    }
+  }
 
   const syncState = await loadSyncState(context);
   const lastSync = syncState ? new Date(syncState.lastSyncTimestamp) : undefined;
   updateStatusBar("ok", lastSync);
-  
+
   vscode.window.showInformationMessage("GitHub token configured successfully.");
   logger.appendLine(`[${new Date().toISOString()}] GitHub token configured`);
 
   try {
-    const existingGistResult = await withRetry(() => client.findExistingGist());
-    if (existingGistResult.ok && existingGistResult.data) {
-      sendEvent(context, "user_configured", { has_existing_gist: true });
-      const gistId = existingGistResult.data.id;
-      const syncState = await loadSyncState(context);
-      if (!syncState || syncState.gistId !== gistId) {
-        await saveSyncState(context, {
-          lastSyncTimestamp: syncState?.lastSyncTimestamp || new Date().toISOString(),
-          lastSyncDirection: syncState?.lastSyncDirection || "pull",
-          gistId: gistId,
-          localChecksums: syncState?.localChecksums || {},
-          remoteChecksums: syncState?.remoteChecksums || {},
-        });
-        logger.appendLine(`[${new Date().toISOString()}] Discovered existing Gist: ${gistId}`);
-        vscode.window.showInformationMessage("Found existing Cursor Sync Gist. You can now pull your settings.");
-        
-        const newSyncState = await loadSyncState(context);
-        updateStatusBar("ok", newSyncState ? new Date(newSyncState.lastSyncTimestamp) : undefined);
-        refreshSidebar();
-      }
-    } else {
-      sendEvent(context, "user_configured", { has_existing_gist: false });
+    const access = await withRetry(() => client.validateAccess());
+    sendEvent(context, "user_configured", {
+      has_existing_remote: access.ok,
+      destination_type: "repo",
+    });
+    if (access.ok) {
+      vscode.window.showInformationMessage(
+        "Repository accessible. You can now pull your settings."
+      );
     }
+    refreshSidebar();
   } catch (err) {
-    logger.appendLine(`[${new Date().toISOString()}] Error discovering existing Gist: ${err instanceof Error ? err.message : String(err)}`);
-    sendEvent(context, "user_configured", { has_existing_gist: false });
+    logger.appendLine(
+      `[${new Date().toISOString()}] Error discovering existing remote: ${err instanceof Error ? err.message : String(err)}`
+    );
+    sendEvent(context, "user_configured", { has_existing_remote: false });
+    refreshSidebar();
   }
+}
+
+export async function refreshConfiguredContext(
+  context: vscode.ExtensionContext
+): Promise<boolean> {
+  const token = await getToken(context);
+  const configured = Boolean(token && parseOwnerRepo(readDestinationSettings().repo));
+  await vscode.commands.executeCommand("setContext", "cursorSync.configured", configured);
+  return configured;
 }
 
 export async function getToken(
@@ -121,17 +178,20 @@ export async function validateStoredToken(
     return false;
   }
 
-  const client = new GistClient(token);
-  const result = await withRetry(() => client.validateToken());
-
+  const dest = readDestinationSettings();
+  const parsed = parseOwnerRepo(dest.repo);
+  if (!parsed) {
+    return true;
+  }
+  const client = new GitHubRepoClient(token, parsed.owner, parsed.repo);
+  const result = await withRetry(() => client.validateAccess());
   if (!result.ok) {
     vscode.window.showErrorMessage(
-      "Stored GitHub token is no longer valid. Please reconfigure."
+      "Stored GitHub token cannot access the configured repository. Please reconfigure (repo scope required)."
     );
     await vscode.commands.executeCommand("setContext", "cursorSync.configured", false);
     updateStatusBar("unconfigured");
     return false;
   }
-
   return true;
 }

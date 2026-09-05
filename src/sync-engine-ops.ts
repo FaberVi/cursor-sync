@@ -5,9 +5,11 @@ import {
   escapeSqlLiteral,
   mergeComposerHeadersChain,
 } from "./composer-merge.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
-
-const { querySqliteRows, runSqliteScript, listGlobalStateVscdbPaths } = __chatPersistenceInternals;
+import {
+  listGlobalStateVscdbPaths,
+  querySqliteRows,
+  runSqliteScript,
+} from "./transcripts-sqlite.js";
 
 export function getWorkspaceStorageRootCandidates(): string[] {
   const home = os.homedir();

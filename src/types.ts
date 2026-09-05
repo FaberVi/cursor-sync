@@ -18,12 +18,29 @@ export interface Manifest {
   files: Record<string, ManifestFileEntry>;
 }
 
+export type SyncDestinationType = "repo";
+
+export interface SyncDestination {
+  type: SyncDestinationType;
+  owner: string;
+  repo: string;
+  branch?: string;
+  basePath?: string;
+}
+
 export interface SyncState {
   lastSyncTimestamp: string;
   lastSyncDirection: "push" | "pull";
-  gistId: string;
+  destination?: SyncDestination;
   localChecksums: Record<string, string>;
   remoteChecksums: Record<string, string>;
+  /**
+   * True only after a successful push or pull copy into Cursor folders.
+   * Not set by Connect / discover.
+   */
+  completedFileSync?: boolean;
+  /** owner/repo@branch:path of the last clone used for a completed copy. */
+  cloneIdentity?: string;
 }
 
 export interface PackagedFile {
@@ -50,6 +67,7 @@ export type FailureCategory =
   | "NETWORK_ERROR"
   | "CONFLICT"
   | "FILE_SYSTEM_ERROR"
+  | "CANCELLED"
   | "UNKNOWN";
 
 export interface GistFile {
@@ -85,8 +103,16 @@ export interface ResolvedConflict {
 export interface SyncHistoryEntry {
   timestamp: string;
   direction: "push" | "pull";
-  trigger: "manual" | "scheduled";
+  trigger: "manual" | "scheduled" | "syncNow";
+  /** Files uploaded (push) or written (pull) in this operation. */
   fileCount: number;
+  /**
+   * Total tracked sync files in the remote/manifest after (or for) this op.
+   * Absent on older history entries.
+   */
+  totalFileCount?: number;
   success: boolean;
   error?: string;
+  /** Sync keys involved in this operation (absent on older history entries). */
+  files?: string[];
 }

@@ -93,6 +93,7 @@ describe("paths", () => {
       await fs.mkdir(path.join(cursorUser, "snippets"), { recursive: true });
       await fs.mkdir(path.join(cursorUser, "vsix"), { recursive: true });
       await fs.mkdir(path.join(dotCursor, "rules"), { recursive: true });
+      await fs.mkdir(path.join(dotCursor, "agents"), { recursive: true });
       await fs.mkdir(path.join(dotCursor, "skills", "coding"), { recursive: true });
       await fs.mkdir(path.join(dotCursor, "extensions"), { recursive: true });
       await fs.mkdir(path.join(dotCursor, "logs"), { recursive: true });
@@ -107,6 +108,10 @@ describe("paths", () => {
       await fs.writeFile(
         path.join(dotCursor, "rules", "test.mdc"),
         "rule"
+      );
+      await fs.writeFile(
+        path.join(dotCursor, "agents", "reviewer.md"),
+        "subagent"
       );
       await fs.writeFile(
         path.join(dotCursor, "skills", "coding", "SKILL.md"),
@@ -124,6 +129,8 @@ describe("paths", () => {
     });
 
     afterEach(async () => {
+      const { __clearMockGlobalConfigKeys } = await import("./__mocks__/vscode.js");
+      __clearMockGlobalConfigKeys("enabledPaths", "mcp.syncEnabled");
       await fs.rm(tmpDir, { recursive: true, force: true });
     });
 
@@ -141,11 +148,60 @@ describe("paths", () => {
       expect(keys).toContain("cursor-user/snippets/ts.json");
       expect(keys).toContain("cursor-user/vsix/sample.vsix");
       expect(keys).toContain("dot-cursor/rules/test.mdc");
+      expect(keys).toContain("dot-cursor/agents/reviewer.md");
       expect(keys).toContain("dot-cursor/skills/coding/SKILL.md");
       expect(keys).toContain("dot-cursor/skills/coding/template.txt");
 
       expect(keys).not.toContain("dot-cursor/extensions/ext.json");
       expect(keys).not.toContain("dot-cursor/logs/app.log");
+    });
+
+    it("excludes nested node_modules and .git path segments", async () => {
+      const skillRoot = path.join(tmpDir, "dotCursor", "skills", "coding");
+      const nodeModules = path.join(skillRoot, "node_modules", "leftpad");
+      const gitDir = path.join(skillRoot, ".git");
+      await fs.mkdir(nodeModules, { recursive: true });
+      await fs.mkdir(gitDir, { recursive: true });
+      await fs.writeFile(path.join(nodeModules, "index.js"), "module.exports = 1;\n");
+      await fs.writeFile(path.join(gitDir, "config"), "[core]\n");
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const files = await enumerateSyncFiles(roots);
+      const keys = files.map((f) => f.relativeSyncKey);
+
+      expect(keys).not.toContain(
+        "dot-cursor/skills/coding/node_modules/leftpad/index.js"
+      );
+      expect(keys).not.toContain("dot-cursor/skills/coding/.git/config");
+      expect(keys).toContain("dot-cursor/skills/coding/SKILL.md");
+    });
+
+    it("excludes nested __pycache__ and .pyc files", async () => {
+      const pycache = path.join(tmpDir, "dotCursor", "skills", "coding", "__pycache__");
+      await fs.mkdir(pycache, { recursive: true });
+      await fs.writeFile(path.join(pycache, "mod.cpython-313.pyc"), Buffer.from([0x16, 0x0d]));
+      await fs.writeFile(
+        path.join(tmpDir, "dotCursor", "skills", "coding", "helper.pyc"),
+        Buffer.from([0x16, 0x0d])
+      );
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const files = await enumerateSyncFiles(roots);
+      const keys = files.map((f) => f.relativeSyncKey);
+
+      expect(keys).not.toContain(
+        "dot-cursor/skills/coding/__pycache__/mod.cpython-313.pyc"
+      );
+      expect(keys).not.toContain("dot-cursor/skills/coding/helper.pyc");
+      expect(keys).toContain("dot-cursor/skills/coding/SKILL.md");
     });
 
     it("excludes files exceeding max size", async () => {
@@ -178,6 +234,244 @@ describe("paths", () => {
       const keys = files.map((f) => f.relativeSyncKey);
 
       expect(keys).toContain("cursor-user/vsix/big.vsix");
+    });
+
+    it("skips mcp.json even when listed in enabledPaths unless the MCP toggle is on", async () => {
+      const { __setMockGlobalConfig } = await import("./__mocks__/vscode.js");
+      __setMockGlobalConfig({
+        enabledPaths: [
+          "settings.json",
+          "skills/**",
+          "agents/*.md",
+          "mcp.json",
+        ],
+        "mcp.syncEnabled": false,
+      });
+
+      await fs.writeFile(
+        path.join(tmpDir, "dotCursor", "mcp.json"),
+        '{"servers":{}}'
+      );
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const files = await enumerateSyncFiles(roots);
+      const keys = files.map((f) => f.relativeSyncKey);
+
+      expect(keys).not.toContain("dot-cursor/mcp.json");
+      expect(keys).toContain("dot-cursor/agents/reviewer.md");
+    });
+
+    it("includes mcp.json from both roots when the MCP toggle is on", async () => {
+      const { __setMockGlobalConfig } = await import("./__mocks__/vscode.js");
+      __setMockGlobalConfig({ "mcp.syncEnabled": true });
+      await fs.writeFile(
+        path.join(tmpDir, "dotCursor", "mcp.json"),
+        '{"servers":{}}'
+      );
+      await fs.writeFile(
+        path.join(tmpDir, "cursorUser", "mcp.json"),
+        '{"servers":{}}'
+      );
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const keys = (await enumerateSyncFiles(roots)).map((f) => f.relativeSyncKey);
+      expect(keys).toContain("dot-cursor/mcp.json");
+      expect(keys).toContain("cursor-user/mcp.json");
+    });
+
+    it("enumerates default globs on both roots (tasks.json in User, cli-config in ~/.cursor)", async () => {
+      await fs.writeFile(
+        path.join(tmpDir, "cursorUser", "tasks.json"),
+        '{"version":"2.0.0"}'
+      );
+      await fs.writeFile(
+        path.join(tmpDir, "dotCursor", "cli-config.json"),
+        "{}"
+      );
+      await fs.writeFile(path.join(tmpDir, "dotCursor", "hooks.json"), "{}");
+      await fs.writeFile(path.join(tmpDir, "dotCursor", "argv.json"), "{}");
+      await fs.mkdir(path.join(tmpDir, "dotCursor", "plugins", "cache"), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(tmpDir, "dotCursor", "plugins", "cache", "x.json"),
+        "{}"
+      );
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const keys = (await enumerateSyncFiles(roots)).map((f) => f.relativeSyncKey);
+      expect(keys).toContain("cursor-user/tasks.json");
+      expect(keys).toContain("dot-cursor/cli-config.json");
+      expect(keys).toContain("dot-cursor/hooks.json");
+      expect(keys).not.toContain("dot-cursor/argv.json");
+      expect(keys).not.toContain("dot-cursor/plugins/cache/x.json");
+      expect(keys).not.toContain("dot-cursor/mcp.json");
+    });
+
+    it("matches the same glob on both roots as distinct sync keys", async () => {
+      await fs.writeFile(path.join(tmpDir, "cursorUser", "hooks.json"), "{}");
+      await fs.writeFile(path.join(tmpDir, "dotCursor", "hooks.json"), "{}");
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const keys = (await enumerateSyncFiles(roots)).map((f) => f.relativeSyncKey);
+      expect(keys).toContain("cursor-user/hooks.json");
+      expect(keys).toContain("dot-cursor/hooks.json");
+    });
+
+    it("excludes skill-creator workspace snapshots and backups", async () => {
+      const workspaceRoot = path.join(tmpDir, "dotCursor", "skills");
+      await fs.mkdir(
+        path.join(workspaceRoot, "my-skill-workspace", "skill-snapshot"),
+        { recursive: true }
+      );
+      await fs.mkdir(
+        path.join(workspaceRoot, "foo-workspace", "skill-snapshot-grilling"),
+        { recursive: true }
+      );
+      await fs.mkdir(
+        path.join(workspaceRoot, "bar-workspace", "skill-postedit-backup"),
+        { recursive: true }
+      );
+      await fs.mkdir(
+        path.join(workspaceRoot, "my-agent-workspace", "scripts"),
+        { recursive: true }
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "my-skill-workspace", "skill-snapshot", "SKILL.md"),
+        "snapshot"
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "foo-workspace", "skill-snapshot-grilling", "SKILL.md"),
+        "grilling"
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "bar-workspace", "skill-postedit-backup", "SKILL.md"),
+        "backup"
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "my-agent-workspace", "SKILL.md"),
+        "agent"
+      );
+      await fs.writeFile(
+        path.join(workspaceRoot, "my-agent-workspace", "scripts", "run.py"),
+        "print(1)\n"
+      );
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const roots = {
+        cursorUser: path.join(tmpDir, "cursorUser"),
+        dotCursor: path.join(tmpDir, "dotCursor"),
+      };
+      const files = await enumerateSyncFiles(roots);
+      const keys = files.map((f) => f.relativeSyncKey);
+
+      expect(keys).toContain("dot-cursor/skills/coding/SKILL.md");
+      expect(keys).toContain("dot-cursor/skills/my-agent-workspace/SKILL.md");
+      expect(keys).toContain("dot-cursor/skills/my-agent-workspace/scripts/run.py");
+      expect(keys).not.toContain(
+        "dot-cursor/skills/my-skill-workspace/skill-snapshot/SKILL.md"
+      );
+      expect(keys).not.toContain(
+        "dot-cursor/skills/foo-workspace/skill-snapshot-grilling/SKILL.md"
+      );
+      expect(keys).not.toContain(
+        "dot-cursor/skills/bar-workspace/skill-postedit-backup/SKILL.md"
+      );
+    });
+  });
+
+  describe("isSkillSyncArtifact / isExcludedSyncKey", () => {
+    afterEach(async () => {
+      const { __clearMockGlobalConfigKeys } = await import("./__mocks__/vscode.js");
+      __clearMockGlobalConfigKeys("mcp.syncEnabled");
+    });
+    it("detects workspace and snapshot artifact paths", async () => {
+      const { isSkillSyncArtifact } = await import("../src/paths.js");
+      expect(isSkillSyncArtifact("skills/coding/SKILL.md")).toBe(false);
+      expect(
+        isSkillSyncArtifact("skills/my-skill-workspace/skill-snapshot/SKILL.md")
+      ).toBe(true);
+      expect(
+        isSkillSyncArtifact("skills/foo-workspace/skill-snapshot-grilling/SKILL.md")
+      ).toBe(true);
+      expect(
+        isSkillSyncArtifact("skills/bar-workspace/skill-postedit-backup/SKILL.md")
+      ).toBe(true);
+      expect(
+        isSkillSyncArtifact("skills/coding/skill-snapshot/SKILL.md")
+      ).toBe(true);
+      expect(
+        isSkillSyncArtifact("skills/foo-workspace/iteration-1/out.txt")
+      ).toBe(true);
+      expect(isSkillSyncArtifact("skills/my-agent-workspace/SKILL.md")).toBe(
+        false
+      );
+      expect(
+        isSkillSyncArtifact("skills/my-agent-workspace/scripts/run.py")
+      ).toBe(false);
+      expect(isSkillSyncArtifact("skills/skill-snapshot/SKILL.md")).toBe(true);
+    });
+
+    it("excludes skill artifact sync keys from pull/import restore", async () => {
+      const { isExcludedSyncKey } = await import("../src/paths.js");
+      expect(isExcludedSyncKey("dot-cursor/skills/coding/SKILL.md", [])).toBe(false);
+      expect(
+        isExcludedSyncKey(
+          "dot-cursor/skills/my-skill-workspace/skill-snapshot/SKILL.md",
+          []
+        )
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey(
+          "dot-cursor/skills/foo-workspace/skill-snapshot-grilling/SKILL.md",
+          []
+        )
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey(
+          "dot-cursor/skills/bar-workspace/skill-postedit-backup/SKILL.md",
+          []
+        )
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey("dot-cursor/skills/my-agent-workspace/SKILL.md", [])
+      ).toBe(false);
+      expect(isExcludedSyncKey("cursor-user/settings.json", [])).toBe(false);
+      expect(isExcludedSyncKey("dot-cursor/mcp.json", [])).toBe(true);
+      expect(
+        isExcludedSyncKey("dot-cursor/skills/coding/notes.md", ["skills/**/notes.md"])
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey(
+          "dot-cursor/skills/foo/node_modules/leftpad/index.js",
+          []
+        )
+      ).toBe(true);
+      expect(
+        isExcludedSyncKey("dot-cursor/skills/foo/.git/config", [])
+      ).toBe(true);
+    });
+
+    it("does not exclude mcp.json when the MCP toggle is on", async () => {
+      const { __setMockGlobalConfig } = await import("./__mocks__/vscode.js");
+      __setMockGlobalConfig({ "mcp.syncEnabled": true });
+      const { isExcludedSyncKey } = await import("../src/paths.js");
+      expect(isExcludedSyncKey("dot-cursor/mcp.json", [])).toBe(false);
     });
   });
 });

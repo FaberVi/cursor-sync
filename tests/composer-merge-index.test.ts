@@ -1,14 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { parseComposerHeadersBlob } from "../src/composer-merge.js";
 
-const querySqliteRowsMock = vi.fn();
-const resolveStateDbCandidatesMock = vi.fn();
+const querySqliteRowsMock = vi.hoisted(() => vi.fn());
+const resolveStateDbCandidatesMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../src/transcripts.js", () => ({
-  __chatPersistenceInternals: {
-    querySqliteRows: (...args: unknown[]) => querySqliteRowsMock(...args),
-    resolveStateDbCandidates: () => resolveStateDbCandidatesMock(),
-  },
+vi.mock("../src/transcripts-sqlite.js", () => ({
+  querySqliteRows: (...args: unknown[]) => querySqliteRowsMock(...args),
+  resolveStateDbCandidates: () => resolveStateDbCandidatesMock(),
 }));
 
 describe("composer name index", () => {
