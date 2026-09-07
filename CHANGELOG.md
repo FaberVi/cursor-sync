@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.2.0
+
+### Added
+- `cursorSync.excludeJsonKeys` omits top-level JSON keys from checksums, clone push, and pull merge (default `python.defaultInterpreterPath`) so machine-specific interpreter paths do not ping-pong `settings.json`
+
 ## v2.1.1
 
 ### Added

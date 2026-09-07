@@ -35,6 +35,7 @@ export async function executeReset(context: vscode.ExtensionContext): Promise<vo
     const keys = [
       "enabledPaths",
       "excludeGlobs",
+      "excludeJsonKeys",
       "schedule.enabled",
       "schedule.interval",
       "schedule.intervalUnit",

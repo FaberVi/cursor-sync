@@ -32,6 +32,11 @@ import { CURSOR_CHAT_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import { CURSOR_CHAT_SYNC_KEY } from "./chat-sync-collection.js";
 import { isChatSyncEnabled } from "./chat-sync.js";
+import {
+  readExcludeJsonKeys,
+  restoreExcludedJsonKeys,
+  stripExcludedJsonKeys,
+} from "./json-key-filter.js";
 
 const MANIFEST_NAME = "manifest.json";
 const SPECIAL_ROOT_FILES = new Set([
@@ -188,11 +193,14 @@ export async function hashCursorSyncFiles(
   roots?: SyncRoots
 ): Promise<Record<string, string>> {
   const entries = await enumerateSyncFiles(roots);
+  const excludeKeys = readExcludeJsonKeys();
   const out: Record<string, string> = {};
   for (const entry of entries) {
     try {
       const buf = await fs.readFile(entry.absolutePath);
-      out[entry.relativeSyncKey] = computeChecksum(buf);
+      out[entry.relativeSyncKey] = computeChecksum(
+        stripExcludedJsonKeys(buf, excludeKeys)
+      );
     } catch {
       // skip unreadable
     }
@@ -207,6 +215,7 @@ export async function hashCloneSyncFiles(
   const index = await indexCloneSyncFiles(clonePath, basePath);
   const manifest = await readCloneManifest(clonePath, basePath);
   const keys = new Set([...index.nested.keys(), ...index.dashed.keys()]);
+  const excludeKeys = readExcludeJsonKeys();
   const out: Record<string, string> = {};
   for (const key of keys) {
     if (key === CURSOR_CHAT_SYNC_KEY || isToggleOffPreservedSyncKey(key)) {
@@ -218,7 +227,7 @@ export async function hashCloneSyncFiles(
     }
     try {
       const buf = await readCloneBuffer(abs, key, manifest);
-      out[key] = computeChecksum(buf);
+      out[key] = computeChecksum(stripExcludedJsonKeys(buf, excludeKeys));
     } catch {
       // skip
     }
@@ -271,19 +280,21 @@ export async function copyCursorToClone(options: {
   const checksums: Record<string, string> = {};
   const writtenKeys: string[] = [];
   const manifestFiles: Record<string, ManifestFileEntry> = {};
+  const excludeKeys = readExcludeJsonKeys();
 
   for (const entry of entries) {
     throwIfAborted();
     const buf = await fs.readFile(entry.absolutePath);
+    const stripped = stripExcludedJsonKeys(buf, excludeKeys);
     const dest = cloneAbsForSyncKey(options.clonePath, options.basePath, entry.relativeSyncKey);
-    await writeAtomic(dest, buf);
-    const checksum = computeChecksum(buf);
+    await writeAtomic(dest, stripped);
+    const checksum = computeChecksum(stripped);
     checksums[entry.relativeSyncKey] = checksum;
     writtenKeys.push(entry.relativeSyncKey);
     keepRel.add(entry.relativeSyncKey);
     manifestFiles[entry.relativeSyncKey] = {
       checksum,
-      sizeBytes: buf.length,
+      sizeBytes: stripped.length,
     };
   }
 
@@ -381,6 +392,7 @@ export async function planCloneToCursor(
   const wipePrefixes = [...folderPlan.replace, ...folderPlan.deleteLocalOnly];
 
   const localHashes = await hashCursorSyncFiles(roots);
+  const excludeKeys = readExcludeJsonKeys();
   const filesToWrite: PullReplacePlan["filesToWrite"] = [];
   for (const key of remoteKeys) {
     if (key === CURSOR_CHAT_SYNC_KEY || isToggleOffPreservedSyncKey(key)) {
@@ -394,13 +406,20 @@ export async function planCloneToCursor(
     if (!cursorAbs) {
       continue;
     }
-    const content = await readCloneBuffer(abs, key, manifest);
+    const cloneBuf = await readCloneBuffer(abs, key, manifest);
     const underReplace = folderPlan.replace.some((prefix) =>
       key === prefix || key.startsWith(`${prefix}/`)
     );
-    if (!underReplace && localHashes[key] === computeChecksum(content)) {
+    if (!underReplace && localHashes[key] === remoteChecksums[key]) {
       continue;
     }
+    let localBuf = Buffer.alloc(0);
+    try {
+      localBuf = await fs.readFile(cursorAbs);
+    } catch {
+      localBuf = Buffer.alloc(0);
+    }
+    const content = restoreExcludedJsonKeys(cloneBuf, localBuf, excludeKeys);
     filesToWrite.push({ syncKey: key, absolutePath: cursorAbs, content });
   }
 
@@ -482,7 +501,6 @@ export async function applyCloneToCursor(
       createdPaths.push(file.absolutePath);
     }
     writtenKeys.push(file.syncKey);
-    checksums[file.syncKey] = computeChecksum(file.content);
   }
 
   const deleteResult = await applyLocalDeletes(context, plan.keysToDelete, roots, {

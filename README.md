@@ -110,7 +110,7 @@ When `cursorSync.mcp.syncEnabled` is true, Push/Pull also include `mcp.json`. Th
 
 ### Always excluded
 
-Extension caches, logs, databases, cookies, `node_modules`, `.git`, and other denylisted paths are skipped. Skill-creator artifact folders under `.cursor/skills/` are excluded. Files above `cursorSync.maxFileSizeKB` (default 512 KB) are skipped.
+Extension caches, logs, databases, cookies, `node_modules`, `.git`, and other denylisted paths are skipped. Skill-creator artifact folders under `.cursor/skills/` are excluded. Files above `cursorSync.maxFileSizeKB` (default 512 KB) are skipped. `cursorSync.excludeJsonKeys` (default `python.defaultInterpreterPath`) omits those top-level keys from synced JSON object files; use `excludeGlobs` for whole files.
 
 ### Optional chat collection
 

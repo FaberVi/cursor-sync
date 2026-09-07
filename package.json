@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync (Community)",
   "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub repository",
-	"version": "2.1.1",
+	"version": "2.2.0",
   "icon": "assets/icon.png",
   "publisher": "FaberVi",
   "author": {
@@ -235,6 +235,16 @@
           },
           "default": [],
           "description": "Additional glob patterns to exclude from sync"
+        },
+        "cursorSync.excludeJsonKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "python.defaultInterpreterPath"
+          ],
+          "description": "Top-level JSON object keys omitted from synced JSON files (checksums, clone push, and pull merge). Local values are kept on pull. File-level excludes stay on cursorSync.excludeGlobs."
         },
         "cursorSync.schedule.enabled": {
           "type": "boolean",

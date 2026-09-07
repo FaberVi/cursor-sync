@@ -119,6 +119,9 @@ describe("package menu contributions", () => {
       expect.arrayContaining(["cli-config.json", "hooks.json", "tasks.json"])
     );
     expect(props["cursorSync.enabledPaths"].default).not.toContain("mcp.json");
+    expect(props["cursorSync.excludeJsonKeys"].default).toEqual([
+      "python.defaultInterpreterPath",
+    ]);
   });
 
   it("declares set chat encryption password command", () => {

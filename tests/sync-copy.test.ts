@@ -8,6 +8,7 @@ vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 import {
   copyCursorToClone,
   hashCloneSyncFiles,
+  hashCursorSyncFiles,
   indexCloneSyncFiles,
   planCloneToCursor,
   readCloneBuffer,
@@ -15,12 +16,16 @@ import {
 } from "../src/sync-copy.js";
 import * as paths from "../src/paths.js";
 import type { Manifest } from "../src/types.js";
+import { stripExcludedJsonKeys } from "../src/json-key-filter.js";
+import { computeChecksum } from "../src/packaging.js";
+import { __clearMockGlobalConfigKeys, __setMockGlobalConfig } from "./__mocks__/vscode.js";
 
 describe("sync-copy", () => {
   let tmp = "";
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    __clearMockGlobalConfigKeys("excludeJsonKeys");
     if (tmp) {
       await fs.rm(tmp, { recursive: true, force: true });
       tmp = "";
@@ -279,5 +284,166 @@ describe("sync-copy", () => {
       true
     );
     expect(mirrored.keysToDelete).toContain("dot-cursor/rules/old.mdc");
+  });
+
+  it("treats settings.json that differ only in python.defaultInterpreterPath as equal", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-copy-"));
+    const cursorUser = path.join(tmp, "user");
+    const dotCursor = path.join(tmp, "dot");
+    const clone = path.join(tmp, "clone");
+    await fs.mkdir(cursorUser, { recursive: true });
+    await fs.mkdir(dotCursor, { recursive: true });
+    const localSettings = {
+      "git.autofetch": true,
+      "python.defaultInterpreterPath": "c:\\\\Users\\\\Utente\\\\python.exe",
+    };
+    const remoteSettings = {
+      "git.autofetch": true,
+      "python.defaultInterpreterPath": "c:\\\\Users\\\\Vincenzo\\\\python.exe",
+    };
+    const settings = path.join(cursorUser, "settings.json");
+    await fs.writeFile(settings, JSON.stringify(localSettings, null, 4));
+    const remoteAbs = path.join(clone, "cursor-sync", "cursor-user", "settings.json");
+    await fs.mkdir(path.dirname(remoteAbs), { recursive: true });
+    await fs.writeFile(remoteAbs, JSON.stringify(remoteSettings, null, 4));
+
+    vi.spyOn(paths, "resolveSyncRoots").mockReturnValue({ cursorUser, dotCursor });
+    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
+      { absolutePath: settings, relativeSyncKey: "cursor-user/settings.json" },
+    ]);
+
+    const localHashes = await hashCursorSyncFiles({ cursorUser, dotCursor });
+    const cloneHashes = await hashCloneSyncFiles(clone, "cursor-sync");
+    expect(localHashes["cursor-user/settings.json"]).toBe(
+      cloneHashes["cursor-user/settings.json"]
+    );
+
+    const plan = await planCloneToCursor(clone, "cursor-sync");
+    expect(plan.filesToWrite.map((f) => f.syncKey)).not.toContain(
+      "cursor-user/settings.json"
+    );
+  });
+
+  it("strips python.defaultInterpreterPath from the clone on push and leaves the live file", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-copy-"));
+    const cursorUser = path.join(tmp, "user");
+    const dotCursor = path.join(tmp, "dot");
+    const clone = path.join(tmp, "clone");
+    await fs.mkdir(cursorUser, { recursive: true });
+    await fs.mkdir(dotCursor, { recursive: true });
+    const live = {
+      "git.autofetch": true,
+      "python.defaultInterpreterPath": "c:\\\\Users\\\\Utente\\\\python.exe",
+    };
+    const settings = path.join(cursorUser, "settings.json");
+    const liveRaw = JSON.stringify(live, null, 4);
+    await fs.writeFile(settings, liveRaw);
+
+    vi.spyOn(paths, "resolveSyncRoots").mockReturnValue({ cursorUser, dotCursor });
+    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
+      { absolutePath: settings, relativeSyncKey: "cursor-user/settings.json" },
+    ]);
+
+    await copyCursorToClone({
+      clonePath: clone,
+      basePath: "cursor-sync",
+      profileName: "default",
+    });
+
+    expect(await fs.readFile(settings, "utf8")).toBe(liveRaw);
+    const nested = path.join(clone, "cursor-sync", "cursor-user", "settings.json");
+    expect(JSON.parse(await fs.readFile(nested, "utf8"))).toEqual({
+      "git.autofetch": true,
+    });
+  });
+
+  it("keeps the local interpreter path when pulling a settings.json that also changed", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-copy-"));
+    const cursorUser = path.join(tmp, "user");
+    const dotCursor = path.join(tmp, "dot");
+    const clone = path.join(tmp, "clone");
+    await fs.mkdir(cursorUser, { recursive: true });
+    await fs.mkdir(dotCursor, { recursive: true });
+    const settings = path.join(cursorUser, "settings.json");
+    await fs.writeFile(
+      settings,
+      JSON.stringify(
+        {
+          "git.autofetch": true,
+          "python.defaultInterpreterPath": "c:\\\\Users\\\\Utente\\\\python.exe",
+        },
+        null,
+        4
+      )
+    );
+    const remoteAbs = path.join(clone, "cursor-sync", "cursor-user", "settings.json");
+    await fs.mkdir(path.dirname(remoteAbs), { recursive: true });
+    await fs.writeFile(
+      remoteAbs,
+      JSON.stringify(
+        {
+          "git.autofetch": false,
+          "python.defaultInterpreterPath": "c:\\\\Users\\\\Vincenzo\\\\python.exe",
+        },
+        null,
+        4
+      )
+    );
+
+    vi.spyOn(paths, "resolveSyncRoots").mockReturnValue({ cursorUser, dotCursor });
+    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
+      { absolutePath: settings, relativeSyncKey: "cursor-user/settings.json" },
+    ]);
+
+    const plan = await planCloneToCursor(clone, "cursor-sync");
+    const write = plan.filesToWrite.find((f) => f.syncKey === "cursor-user/settings.json");
+    expect(write).toBeDefined();
+    const merged = JSON.parse(write!.content.toString("utf8")) as Record<string, unknown>;
+    expect(merged["git.autofetch"]).toBe(false);
+    expect(merged["python.defaultInterpreterPath"]).toBe(
+      "c:\\\\Users\\\\Utente\\\\python.exe"
+    );
+    const remoteRaw = await fs.readFile(remoteAbs);
+    expect(plan.remoteChecksums["cursor-user/settings.json"]).toBe(
+      computeChecksum(
+        stripExcludedJsonKeys(remoteRaw, ["python.defaultInterpreterPath"])
+      )
+    );
+    expect(plan.remoteChecksums["cursor-user/settings.json"]).not.toBe(
+      computeChecksum(write!.content)
+    );
+  });
+
+  it("writes and hashes raw JSON when excludeJsonKeys is empty", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-copy-"));
+    const cursorUser = path.join(tmp, "user");
+    const dotCursor = path.join(tmp, "dot");
+    const clone = path.join(tmp, "clone");
+    await fs.mkdir(cursorUser, { recursive: true });
+    await fs.mkdir(dotCursor, { recursive: true });
+    const live = {
+      "python.defaultInterpreterPath": "c:\\\\Users\\\\Utente\\\\python.exe",
+    };
+    const settings = path.join(cursorUser, "settings.json");
+    const liveRaw = JSON.stringify(live, null, 4);
+    await fs.writeFile(settings, liveRaw);
+
+    __setMockGlobalConfig({ excludeJsonKeys: [] });
+    vi.spyOn(paths, "resolveSyncRoots").mockReturnValue({ cursorUser, dotCursor });
+    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
+      { absolutePath: settings, relativeSyncKey: "cursor-user/settings.json" },
+    ]);
+
+    try {
+      await copyCursorToClone({
+        clonePath: clone,
+        basePath: "cursor-sync",
+        profileName: "default",
+      });
+      const nested = path.join(clone, "cursor-sync", "cursor-user", "settings.json");
+      expect(await fs.readFile(nested, "utf8")).toBe(liveRaw);
+    } finally {
+      __clearMockGlobalConfigKeys("excludeJsonKeys");
+    }
   });
 });

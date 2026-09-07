@@ -141,6 +141,7 @@ export const workspace = {
           "tasks.json",
         ],
         excludeGlobs: [],
+        excludeJsonKeys: ["python.defaultInterpreterPath"],
         maxFileSizeKB: 512,
         syncProfileName: "default",
         "schedule.enabled": false,
