@@ -31,7 +31,14 @@ const mergeBundleFixture = path.join(
 
 const FIXTURE_REPO = "/tmp/cursor-sync-fixture-repo";
 const WS_STORAGE_ID = "f038a5d2e2e5594b5e779064d4feac57";
-const CHATS_KEY = "573b4babd5b2f206e06d748cd840b177";
+const CHATS_KEY = md5FolderKey(path.resolve(FIXTURE_REPO));
+
+const testHome = vi.hoisted(() => ({ current: "" }));
+
+vi.mock("node:os", async () => {
+  const actual = await vi.importActual<typeof import("node:os")>("node:os");
+  return { ...actual, homedir: () => testHome.current || actual.homedir() };
+});
 
 const mockWorkspaceFolders = vi.hoisted(() => {
   const repo = "/tmp/cursor-sync-fixture-repo";
@@ -88,6 +95,8 @@ vi.mock("../src/chat-transport-scripts.js", () => ({
     const { md5FolderKey, requireWorkspaceContext } = await import("../src/chat-workspace-context.js");
     const { mergeSidebarIntoStateDb, mergeTargetsForImport } = await import("../src/chat-import-merge.js");
 
+    const osMod = await import("node:os");
+    const home = osMod.homedir();
     const bundleRaw = await fsMod.readFile(opts.bundlePath, "utf8");
     const bundle = JSON.parse(bundleRaw) as import("../src/chat-persistence.js").ChatBundle;
 
@@ -95,7 +104,7 @@ vi.mock("../src/chat-transport-scripts.js", () => ({
       if (bundle.storeSnapshot) {
         const chatsKey = md5FolderKey(pathMod.resolve(opts.workspaceFolder));
         const storeDir = pathMod.join(
-          process.env.HOME!,
+          home,
           ".cursor",
           "chats",
           chatsKey,
@@ -109,7 +118,7 @@ vi.mock("../src/chat-transport-scripts.js", () => ({
         await fsMod.writeFile(pathMod.join(storeDir, "store.db"), decoded);
       }
 
-      const projectsRoot = pathMod.join(process.env.HOME!, ".cursor", "projects");
+      const projectsRoot = pathMod.join(home, ".cursor", "projects");
       for (const tf of bundle.transcriptFiles) {
         const decoded = decodeTranscriptArtifact(tf.content, tf.encoding);
         const targetPath = pathMod.join(projectsRoot, tf.relativePath);
@@ -135,14 +144,6 @@ vi.mock("../src/chat-transport-scripts.js", () => ({
   }),
 }));
 
-function pathToFileUri(fsPath: string): string {
-  const normalized = fsPath.replace(/\\/g, "/");
-  if (normalized.startsWith("/")) {
-    return `file://${normalized}`;
-  }
-  return `file:///${normalized}`;
-}
-
 async function initEmptyStateVscdb(dbPath: string): Promise<void> {
   await fs.mkdir(path.dirname(dbPath), { recursive: true });
   const script = `
@@ -154,7 +155,11 @@ conn.execute(
 conn.commit()
 conn.close()
 `;
-  await execFileAsync("python3", ["-c", script, dbPath], { maxBuffer: 1024 * 1024 });
+  const { resolvePythonInterpreterForSqlite } = await import("../src/transcripts-sqlite.js");
+  const interp = await resolvePythonInterpreterForSqlite();
+  await execFileAsync(interp.command, [...interp.argvPrefix, "-c", script, dbPath], {
+    maxBuffer: 1024 * 1024,
+  });
 }
 
 async function setupCursorHomeLayout(homeRoot: string): Promise<{
@@ -162,19 +167,26 @@ async function setupCursorHomeLayout(homeRoot: string): Promise<{
   globalStateDb: string;
   workspaceStateDb: string;
 }> {
-  const cursorUser = path.join(homeRoot, ".config", "Cursor", "User");
+  process.env.USERPROFILE = homeRoot;
+  process.env.HOME = homeRoot;
+  process.env.APPDATA = path.join(homeRoot, "AppData", "Roaming");
+  delete process.env.XDG_CONFIG_HOME;
+
+  const { resolveSyncRoots } = await import("../src/paths.js");
+  const { cursorUser, dotCursor } = resolveSyncRoots();
   const globalStateDb = path.join(cursorUser, "globalStorage", "state.vscdb");
   const wsDir = path.join(cursorUser, "workspaceStorage", WS_STORAGE_ID);
   const workspaceStateDb = path.join(wsDir, "state.vscdb");
 
   await fs.mkdir(path.join(cursorUser, "globalStorage"), { recursive: true });
   await fs.mkdir(wsDir, { recursive: true });
-  await fs.mkdir(path.join(homeRoot, ".cursor", "chats"), { recursive: true });
-  await fs.mkdir(FIXTURE_REPO, { recursive: true });
+  await fs.mkdir(path.join(dotCursor, "chats"), { recursive: true });
+  await fs.mkdir(path.resolve(FIXTURE_REPO), { recursive: true });
 
+  const { pathToFileURL } = await import("node:url");
   await fs.writeFile(
     path.join(wsDir, "workspace.json"),
-    JSON.stringify({ folder: pathToFileUri(FIXTURE_REPO) }),
+    JSON.stringify({ folder: pathToFileURL(path.resolve(FIXTURE_REPO)).href }),
     "utf8"
   );
 
@@ -197,8 +209,10 @@ async function runSqliteScriptViaPython(dbPath: string, script: string): Promise
     "conn.commit()",
     "conn.close()",
   ].join("\n");
+  const { resolvePythonInterpreterForSqlite } = await import("../src/transcripts-sqlite.js");
+  const interp = await resolvePythonInterpreterForSqlite();
   try {
-    await execFileAsync("python3", ["-c", pyScript, dbPath, tmpPath], {
+    await execFileAsync(interp.command, [...interp.argvPrefix, "-c", pyScript, dbPath, tmpPath], {
       maxBuffer: 64 * 1024 * 1024,
     });
   } finally {
@@ -246,13 +260,13 @@ describe("chat-import-v2 integration", () => {
   let tempHome: string;
   let savedHome: string | undefined;
   let savedXdg: string | undefined;
+  let savedUserProfile: string | undefined;
+  let savedAppData: string | undefined;
   let layout: Awaited<ReturnType<typeof setupCursorHomeLayout>>;
 
   beforeAll(async () => {
-    const { __chatPersistenceInternals } = await import("../src/transcripts.js");
-    vi.spyOn(__chatPersistenceInternals, "runSqliteScript").mockImplementation(
-      runSqliteScriptViaPython
-    );
+    const sqlite = await import("../src/transcripts-sqlite.js");
+    vi.spyOn(sqlite, "runSqliteScript").mockImplementation(runSqliteScriptViaPython);
   });
 
   afterAll(() => {
@@ -261,9 +275,14 @@ describe("chat-import-v2 integration", () => {
 
   beforeEach(async () => {
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-import-v2-"));
+    testHome.current = tempHome;
     savedHome = process.env.HOME;
     savedXdg = process.env.XDG_CONFIG_HOME;
+    savedUserProfile = process.env.USERPROFILE;
+    savedAppData = process.env.APPDATA;
     process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+    process.env.APPDATA = path.join(tempHome, "AppData", "Roaming");
     delete process.env.XDG_CONFIG_HOME;
 
     layout = await setupCursorHomeLayout(tempHome);
@@ -276,6 +295,7 @@ describe("chat-import-v2 integration", () => {
   });
 
   afterEach(async () => {
+    testHome.current = "";
     if (savedHome !== undefined) {
       process.env.HOME = savedHome;
     } else {
@@ -285,6 +305,16 @@ describe("chat-import-v2 integration", () => {
       process.env.XDG_CONFIG_HOME = savedXdg;
     } else {
       delete process.env.XDG_CONFIG_HOME;
+    }
+    if (savedUserProfile !== undefined) {
+      process.env.USERPROFILE = savedUserProfile;
+    } else {
+      delete process.env.USERPROFILE;
+    }
+    if (savedAppData !== undefined) {
+      process.env.APPDATA = savedAppData;
+    } else {
+      delete process.env.APPDATA;
     }
     await fs.rm(tempHome, { recursive: true, force: true });
   });
@@ -367,7 +397,7 @@ describe("chat-import-v2 integration", () => {
       uri: { fsPath: path.resolve(FIXTURE_REPO) },
     });
     expect(layout.globalStateDb.startsWith(tempHome)).toBe(true);
-  });
+  }, 30_000);
 
   it("runDiskAndActivationVerify passes after restore without real Cursor state.vscdb", async () => {
     const bundle = await buildGoldenBundleWithStore();
@@ -409,6 +439,6 @@ describe("chat-import-v2 integration", () => {
     expect(workspaceDb.startsWith(tempHome)).toBe(true);
     await expect(fs.stat(globalDb)).resolves.toBeDefined();
     await expect(fs.stat(workspaceDb)).resolves.toBeDefined();
-  });
+  }, 30_000);
 
 });

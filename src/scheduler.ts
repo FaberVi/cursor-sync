@@ -1,57 +1,53 @@
 import * as vscode from "vscode";
-import * as fs from "node:fs/promises";
 import { executePush, isPushLocked } from "./push.js";
 import { executePull, isPullLocked } from "./pull.js";
-import { GistClient } from "./gist.js";
 import { requireToken } from "./auth.js";
-import { withRetry } from "./retry.js";
-import { loadSyncState, getLogger } from "./diagnostics.js";
-import { enumerateSyncFiles } from "./paths.js";
-import { computeChecksum } from "./packaging.js";
+import { getLogger, addSyncHistoryEntry } from "./diagnostics.js";
+import { notifySyncQuiet } from "./sync-notify.js";
 import { sendEvent } from "./analytics.js";
 import {
   buildSyncDebugFailure,
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
-import type { Manifest } from "./types.js";
+import { resolveScheduleInterval } from "./schedule-interval.js";
+import { isRepoDestinationConfigured } from "./remote/destination.js";
+import { loadSyncState } from "./diagnostics.js";
+import {
+  ensureSyncClone,
+  hasNestedSyncFiles,
+  relationToOrigin,
+} from "./sync-clone.js";
+import { computeCursorDiffers, recordLocalDiffers } from "./cursor-differs.js";
+import { decideSyncAction, type SyncAction } from "./sync-action.js";
+import { GitNotFoundError } from "./git-cli.js";
+import { enterSyncLock, leaveSyncLock } from "./sync-lock.js";
+import { beginSyncAbort, endSyncAbort } from "./sync-abort.js";
 
-const MIN_INTERVAL_MINUTES = 5;
 const MAX_JITTER_MS = 60_000;
 
 let timer: ReturnType<typeof setInterval> | undefined;
 let jitterTimeout: ReturnType<typeof setTimeout> | undefined;
 
-export type SyncAction =
-  | { action: "none" }
-  | { action: "pull" }
-  | { action: "push" }
-  | { action: "pull-push" }
-  | { action: "conflict"; keys: string[] }
-  | { action: "error"; reason: string };
+export type { SyncAction } from "./sync-action.js";
 
 export function startScheduler(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration("cursorSync");
-  const enabled = config.get<boolean>("schedule.enabled") ?? true;
+  const resolved = resolveScheduleInterval(config);
 
-  if (!enabled) {
+  if (!resolved.enabled) {
     return;
   }
 
-  const intervalMin = Math.max(
-    config.get<number>("schedule.intervalMin") ?? 30,
-    MIN_INTERVAL_MINUTES
-  );
-  const intervalMs = intervalMin * 60 * 1000;
   const jitter = Math.floor(Math.random() * MAX_JITTER_MS);
 
   const logger = getLogger();
   logger.appendLine(
-    `[${new Date().toISOString()}] Scheduler starting: interval=${intervalMin}min, jitter=${jitter}ms`
+    `[${new Date().toISOString()}] Scheduler starting: interval=${resolved.displayValue}${resolved.unit === "seconds" ? "s" : "min"} (${resolved.intervalSeconds}s), jitter=${jitter}ms`
   );
 
   jitterTimeout = setTimeout(() => {
     scheduledTick(context);
-    timer = setInterval(() => scheduledTick(context), intervalMs);
+    timer = setInterval(() => scheduledTick(context), resolved.intervalMs);
   }, jitter);
 }
 
@@ -70,9 +66,8 @@ export async function determineSyncAction(
   context: vscode.ExtensionContext
 ): Promise<SyncAction> {
   const syncState = await loadSyncState(context);
-
-  if (!syncState || !syncState.gistId) {
-    return { action: "push" };
+  if (!isRepoDestinationConfigured()) {
+    return { action: "error", reason: "not_configured" };
   }
 
   const token = await requireToken(context);
@@ -80,89 +75,36 @@ export async function determineSyncAction(
     return { action: "error", reason: "no_token" };
   }
 
-  const client = new GistClient(token);
-  const gistResult = await withRetry(() => client.getGist(syncState.gistId));
-  if (!gistResult.ok) {
-    return { action: "error", reason: gistResult.error.category };
-  }
-
-  const manifestFile = gistResult.data.files["manifest.json"];
-  if (!manifestFile) {
-    return { action: "push" };
-  }
-
-  let manifest: Manifest;
   try {
-    manifest = JSON.parse(manifestFile.content) as Manifest;
-  } catch {
-    return { action: "push" };
-  }
+    const clone = await ensureSyncClone(context, token);
+    const relation = clone.empty
+      ? "empty"
+      : await relationToOrigin(clone.clonePath, clone.identity.branch);
+    const cursorDiffers = await computeCursorDiffers(
+      context,
+      clone.clonePath,
+      clone.identity.basePath
+    );
+    recordLocalDiffers(cursorDiffers);
+    const { recordRemoteRelation } = await import("./remote-ahead.js");
+    recordRemoteRelation({ relation });
 
-  const remoteChecksums: Record<string, string> = {};
-  for (const [key, entry] of Object.entries(manifest.files)) {
-    remoteChecksums[key] = entry.checksum;
-  }
-
-  const localFiles = await enumerateSyncFiles();
-  const localChecksums: Record<string, string> = {};
-  for (const file of localFiles) {
-    try {
-      const buf = await fs.readFile(file.absolutePath);
-      localChecksums[file.relativeSyncKey] = computeChecksum(buf);
-    } catch {
-      continue;
+    const nested = await hasNestedSyncFiles(clone.clonePath, clone.identity.basePath);
+    return decideSyncAction({
+      relation,
+      cursorDiffers,
+      completedFileSync: syncState?.completedFileSync === true,
+      hasNestedRemoteFiles: nested,
+    });
+  } catch (err) {
+    if (err instanceof GitNotFoundError) {
+      return { action: "error", reason: err.message };
     }
+    return {
+      action: "error",
+      reason: err instanceof Error ? err.message : String(err),
+    };
   }
-
-  const allKeys = new Set([
-    ...Object.keys(localChecksums),
-    ...Object.keys(remoteChecksums),
-    ...Object.keys(syncState.localChecksums),
-    ...Object.keys(syncState.remoteChecksums),
-  ]);
-
-  let localHasChanges = false;
-  let remoteHasChanges = false;
-  const conflictKeys: string[] = [];
-
-  for (const key of allKeys) {
-    const baseLocal = syncState.localChecksums[key];
-    const baseRemote = syncState.remoteChecksums[key];
-    const currentLocal = localChecksums[key];
-    const currentRemote = remoteChecksums[key];
-
-    const localChanged = currentLocal !== baseLocal;
-    const remoteChanged = currentRemote !== baseRemote;
-
-    if (localChanged) {
-      localHasChanges = true;
-    }
-    if (remoteChanged) {
-      remoteHasChanges = true;
-    }
-
-    if (localChanged && remoteChanged && currentLocal !== currentRemote) {
-      conflictKeys.push(key);
-    }
-  }
-
-  if (conflictKeys.length > 0) {
-    return { action: "conflict", keys: conflictKeys };
-  }
-
-  if (remoteHasChanges && localHasChanges) {
-    return { action: "pull-push" };
-  }
-
-  if (remoteHasChanges) {
-    return { action: "pull" };
-  }
-
-  if (localHasChanges) {
-    return { action: "push" };
-  }
-
-  return { action: "none" };
 }
 
 export const scheduledSyncActionResolver = {
@@ -173,6 +115,17 @@ export async function scheduledTick(
   context: vscode.ExtensionContext
 ): Promise<void> {
   const logger = getLogger();
+  const config = vscode.workspace.getConfiguration("cursorSync");
+  const resolved = resolveScheduleInterval(config);
+
+  if (!resolved.enabled) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Scheduled sync skipped: schedule.enabled is false`
+    );
+    sendEvent(context, "scheduled_sync_skipped", { reason: "disabled" });
+    stopScheduler();
+    return;
+  }
 
   if (isPushLocked() || isPullLocked()) {
     logger.appendLine(
@@ -182,10 +135,27 @@ export async function scheduledTick(
     return;
   }
 
-  logger.appendLine(
-    `[${new Date().toISOString()}] Scheduled sync triggered`
-  );
+  const { getPendingConflictCount } = await import("./conflict-panel.js");
+  if (getPendingConflictCount() > 0) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Scheduled sync skipped: conflict panel pending`
+    );
+    sendEvent(context, "scheduled_sync_skipped", { reason: "conflicts_pending" });
+    return;
+  }
 
+  const lockHold = enterSyncLock();
+  if (lockHold === "busy") {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Scheduled sync skipped: operation in progress`
+    );
+    sendEvent(context, "scheduled_sync_skipped", { reason: "in_progress" });
+    return;
+  }
+
+  logger.appendLine(`[${new Date().toISOString()}] Scheduled sync triggered`);
+
+  beginSyncAbort();
   try {
     const result = await scheduledSyncActionResolver.determineSyncAction(context);
 
@@ -198,10 +168,19 @@ export async function scheduledTick(
         break;
 
       case "pull": {
-        logger.appendLine(
-          `[${new Date().toISOString()}] Scheduled sync: remote changes detected, pulling`
-        );
-        await executePull(context, { trigger: "scheduled" });
+        const message =
+          "Remote updates available. Use Sync Now to download them without deleting local-only files, or Pull to fully mirror the remote.";
+        logger.appendLine(`[${new Date().toISOString()}] Scheduled sync skipped: ${message}`);
+        sendEvent(context, "scheduled_sync_skipped", { reason: "pull_required" });
+        await addSyncHistoryEntry(context, {
+          timestamp: new Date().toISOString(),
+          direction: "pull",
+          trigger: "scheduled",
+          fileCount: 0,
+          success: false,
+          error: "pull required",
+        });
+        notifySyncQuiet(message);
         break;
       }
 
@@ -209,43 +188,18 @@ export async function scheduledTick(
         logger.appendLine(
           `[${new Date().toISOString()}] Scheduled sync: local changes detected, pushing`
         );
-        await executePush(context, { trigger: "scheduled" });
-        break;
-      }
-
-      case "pull-push": {
-        logger.appendLine(
-          `[${new Date().toISOString()}] Scheduled sync: local and remote changes detected, pulling then pushing`
-        );
-        const pullOk = await executePull(context, { trigger: "scheduled" });
-        if (!pullOk) {
-          break;
-        }
-        await executePush(context, { trigger: "scheduled" });
-        break;
-      }
-
-      case "conflict": {
-        const conflictMessage = `${result.keys.length} conflict(s) detected. Resolve them first.`;
-        logger.appendLine(
-          `[${new Date().toISOString()}] Scheduled sync skipped: conflicts on [${result.keys.join(", ")}]`
-        );
-        sendEvent(context, "scheduled_sync_skipped", {
-          reason: "conflict",
-          conflict_count: result.keys.length,
-        });
-        void showSyncFailureWithDebug(
-          context,
-          buildSyncDebugFailure("scheduler", "scheduled", conflictMessage, {
-            category: "CONFLICT",
-            conflictCount: result.keys.length,
-          }),
-          { level: "warning", title: conflictMessage }
-        );
+        await executePush(context, { trigger: "scheduled", skipLock: true });
         break;
       }
 
       case "error": {
+        if (result.reason === "not_configured") {
+          logger.appendLine(
+            `[${new Date().toISOString()}] Scheduled sync skipped: repository not configured`
+          );
+          sendEvent(context, "scheduled_sync_skipped", { reason: "not_configured" });
+          break;
+        }
         const errorMessage = `Scheduled sync failed: ${result.reason}`;
         logger.appendLine(
           `[${new Date().toISOString()}] Scheduled sync skipped: ${result.reason}`
@@ -273,5 +227,9 @@ export async function scheduledTick(
       buildSyncDebugFailure("scheduler", "scheduled", errMessage),
       { title: errorMessage }
     );
+  } finally {
+    endSyncAbort();
+    leaveSyncLock(lockHold);
+    void import("./remote-ahead.js").then((mod) => mod.onSyncLockReleased(context));
   }
 }

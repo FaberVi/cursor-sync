@@ -111,4 +111,37 @@ describe("packaging", () => {
       Buffer.byteLength(content)
     );
   });
+
+  it("skips empty and whitespace-only files (GitHub Gist 422)", async () => {
+    const { packageFiles, isGistRejectedContent } = await import(
+      "../src/packaging.js"
+    );
+    await fs.mkdir(tmpDir, { recursive: true });
+
+    expect(isGistRejectedContent("")).toBe(true);
+    expect(isGistRejectedContent("  \n\t")).toBe(true);
+    expect(isGistRejectedContent("x")).toBe(false);
+
+    const emptyPath = path.join(tmpDir, "__init__.py");
+    const wsPath = path.join(tmpDir, "blank.txt");
+    const okPath = path.join(tmpDir, "ok.txt");
+    await fs.writeFile(emptyPath, "");
+    await fs.writeFile(wsPath, " \n\t");
+    await fs.writeFile(okPath, "ok");
+
+    const files = [
+      { absolutePath: emptyPath, relativeSyncKey: "dot-cursor/skills/__init__.py" },
+      { absolutePath: wsPath, relativeSyncKey: "dot-cursor/skills/blank.txt" },
+      { absolutePath: okPath, relativeSyncKey: "dot-cursor/skills/ok.txt" },
+    ];
+    const { packaged, manifest, skipped } = await packageFiles(files, "default");
+
+    expect(packaged.size).toBe(1);
+    expect(packaged.has("dot-cursor/skills/ok.txt")).toBe(true);
+    expect(manifest.files["dot-cursor/skills/ok.txt"]).toBeDefined();
+    expect(skipped).toEqual([
+      { relativeSyncKey: "dot-cursor/skills/__init__.py", reason: "empty" },
+      { relativeSyncKey: "dot-cursor/skills/blank.txt", reason: "whitespace-only" },
+    ]);
+  });
 });

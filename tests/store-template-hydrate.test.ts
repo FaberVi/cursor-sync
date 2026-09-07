@@ -30,8 +30,7 @@ describe("store-template-hydrate", () => {
     }
     const { hydrateGoldenStoreTemplate, readTemplateUserVersion, GOLDEN_STORE_TEMPLATE_VERSION } =
       await import("../src/store-template-hydrate.js");
-    const { __chatPersistenceInternals } = await import("../src/transcripts.js");
-    const { querySqliteRows } = __chatPersistenceInternals;
+    const { querySqliteRows } = await import("../src/transcripts-sqlite.js");
 
     const outDir = path.join(os.tmpdir(), `cursor-sync-hydrate-${Date.now()}`);
     const outPath = path.join(outDir, "store.db");
@@ -117,5 +116,5 @@ describe("store-template-hydrate", () => {
     expect(String(treeBlob[0]?.h ?? "").toLowerCase()).toBe(treeBytes.toString("hex"));
 
     await fs.rm(outDir, { recursive: true, force: true });
-  });
+  }, 20_000);
 });

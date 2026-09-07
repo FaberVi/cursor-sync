@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { createHash } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveSyncRoots } from "./paths.js";
 
 export function stateDbPathForWorkspaceStorageId(workspaceStorageId: string): string {
@@ -40,28 +40,59 @@ export function md5FolderKey(folderFsPath: string): string {
   return createHash("md5").update(folderFsPath, "utf8").digest("hex");
 }
 
-/** Same encoding as transport-chat `folder_to_project_key` (~/.cursor/projects/<name>). */
+/** Same folder on disk; Windows compares case-insensitively. */
+export function pathsReferToSameFolder(
+  a: string,
+  b: string,
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  const ra = path.resolve(a);
+  const rb = path.resolve(b);
+  if (platform === "win32") {
+    return ra.toLowerCase() === rb.toLowerCase();
+  }
+  return ra === rb;
+}
+
+/**
+ * Same encoding as transport-chat `folder_to_project_key` (~/.cursor/projects/<name>).
+ * Windows drive prefixes become `c-Users-...` (no colon) so the name is a valid directory.
+ */
 export function folderToProjectKey(folderFsPath: string): string {
   const resolved = path.resolve(folderFsPath);
-  return resolved.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\//g, "-");
+  return resolved
+    .replace(/\\/g, "/")
+    .replace(/^([A-Za-z]):(?:\/|$)/, (_, letter: string) => `${letter.toLowerCase()}/`)
+    .replace(/:/g, "")
+    .replace(/^\/+/, "")
+    .replace(/\//g, "-");
 }
 
 export function folderPathFromWorkspaceUri(uri: string): string {
   if (uri.startsWith("file://")) {
-    const parsed = new URL(uri);
-    return decodeURIComponent(parsed.pathname);
+    try {
+      return fileURLToPath(uri);
+    } catch {
+      const parsed = new URL(uri);
+      let pathname = decodeURIComponent(parsed.pathname);
+      if (process.platform === "win32" && /^\/[A-Za-z]:/.test(pathname)) {
+        pathname = pathname.slice(1);
+      }
+      return pathname;
+    }
   }
   return uri;
 }
 
-function expandUserFolder(folder: string): string {
-  if (folder === "~") {
-    return os.homedir();
+export function expandUserFolder(folder: string, homeDir: string = os.homedir()): string {
+  const trimmed = folder.trim();
+  if (trimmed === "~") {
+    return homeDir;
   }
-  if (folder.startsWith("~/")) {
-    return path.join(os.homedir(), folder.slice(2));
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return path.join(homeDir, trimmed.slice(2));
   }
-  return folder;
+  return trimmed;
 }
 
 function workspaceStorageIdFromStateDb(stateDbPath: string): string | undefined {
@@ -106,8 +137,8 @@ export async function buildChatsKeyToFolderMap(
     if (!folder) {
       continue;
     }
-    const folderFsPath = path.resolve(folder);
-    map.set(md5FolderKey(folderFsPath), folderFsPath);
+    const cursorPath = path.resolve(folder);
+    map.set(md5FolderKey(cursorPath), cursorPath);
   }
   return map;
 }
@@ -145,11 +176,37 @@ async function scanWorkspaceStorageForId(
     if (folder === undefined) {
       continue;
     }
-    if (path.resolve(folder) === folderFsPath) {
+    const cursorPath = path.resolve(folder);
+    if (pathsReferToSameFolder(cursorPath, folderFsPath)) {
       return ent;
     }
   }
   return undefined;
+}
+
+async function findCanonicalWorkspaceFolderPath(
+  folderFsPath: string
+): Promise<string> {
+  const resolvedCaller = path.resolve(folderFsPath);
+  const { cursorUser } = resolveSyncRoots();
+  const wsRoot = path.join(cursorUser, "workspaceStorage");
+  let entries: string[];
+  try {
+    entries = await fs.readdir(wsRoot);
+  } catch {
+    return resolvedCaller;
+  }
+  for (const ent of entries) {
+    const folder = await folderFromWorkspaceJson(path.join(wsRoot, ent, "workspace.json"));
+    if (!folder) {
+      continue;
+    }
+    const cursorPath = path.resolve(folder);
+    if (pathsReferToSameFolder(cursorPath, resolvedCaller)) {
+      return cursorPath;
+    }
+  }
+  return resolvedCaller;
 }
 
 function buildWorkspaceIdentifier(
@@ -197,7 +254,7 @@ export async function resolveWorkspaceContext(
     return null;
   }
 
-  folderFsPath = path.resolve(folderFsPath);
+  folderFsPath = await findCanonicalWorkspaceFolderPath(folderFsPath);
   const chatsKey = md5FolderKey(folderFsPath);
 
   if (!workspaceStorageId) {

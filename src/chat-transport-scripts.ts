@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { runPythonProcess } from "./chat-python.js";
 
 export type TransportChatScriptName =
   | "cursor_chat_io.py"
@@ -129,27 +129,9 @@ export async function runPythonDiskImport(
     args.push("--no-pin-recent");
   }
 
-  const { exitCode, stdout, stderr } = await new Promise<{
-    exitCode: number;
-    stdout: string;
-    stderr: string;
-  }>((resolve, reject) => {
-    const proc = spawn("python3", args, {
-      cwd: options.workspaceFolder,
-      env: process.env,
-    });
-    let stdoutAcc = "";
-    let stderrAcc = "";
-    proc.stdout?.on("data", (chunk: Buffer | string) => {
-      stdoutAcc += String(chunk);
-    });
-    proc.stderr?.on("data", (chunk: Buffer | string) => {
-      stderrAcc += String(chunk);
-    });
-    proc.on("error", reject);
-    proc.on("close", (code) => {
-      resolve({ exitCode: code ?? 1, stdout: stdoutAcc, stderr: stderrAcc });
-    });
+  const { exitCode, stdout, stderr } = await runPythonProcess(args, {
+    cwd: options.workspaceFolder,
+    env: process.env,
   });
 
   for (const line of stderr.trim().split("\n")) {
@@ -197,25 +179,7 @@ export async function runPythonBundleInspect(
   }
 
   const args = [scriptPath, "inspect", options.bundlePath];
-  const { exitCode, stdout, stderr } = await new Promise<{
-    exitCode: number;
-    stdout: string;
-    stderr: string;
-  }>((resolve, reject) => {
-    const proc = spawn("python3", args, { env: process.env });
-    let stdoutAcc = "";
-    let stderrAcc = "";
-    proc.stdout?.on("data", (chunk: Buffer | string) => {
-      stdoutAcc += String(chunk);
-    });
-    proc.stderr?.on("data", (chunk: Buffer | string) => {
-      stderrAcc += String(chunk);
-    });
-    proc.on("error", reject);
-    proc.on("close", (code) => {
-      resolve({ exitCode: code ?? 1, stdout: stdoutAcc, stderr: stderrAcc });
-    });
-  });
+  const { exitCode, stdout, stderr } = await runPythonProcess(args, { env: process.env });
 
   for (const line of stderr.trim().split("\n")) {
     if (line.trim()) {
@@ -259,29 +223,10 @@ export async function runPythonExportDiskKvSnapshot(
     "snap = export_disk_kv_snapshot(db, cid)",
     "print(json.dumps(snap) if snap else 'null')",
   ].join(";");
-  const { exitCode, stdout } = await new Promise<{
-    exitCode: number;
-    stdout: string;
-    stderr: string;
-  }>((resolve, reject) => {
-    const proc = spawn(
-      "python3",
-      ["-c", py, options.globalDbPath, options.conversationId],
-      { cwd: scriptsDir }
-    );
-    let stdoutAcc = "";
-    let stderrAcc = "";
-    proc.stdout?.on("data", (chunk: Buffer | string) => {
-      stdoutAcc += String(chunk);
-    });
-    proc.stderr?.on("data", (chunk: Buffer | string) => {
-      stderrAcc += String(chunk);
-    });
-    proc.on("error", reject);
-    proc.on("close", (code) => {
-      resolve({ exitCode: code ?? 1, stdout: stdoutAcc, stderr: stderrAcc });
-    });
-  });
+  const { exitCode, stdout } = await runPythonProcess(
+    ["-c", py, options.globalDbPath, options.conversationId],
+    { cwd: scriptsDir }
+  );
   if (exitCode !== 0) {
     return null;
   }

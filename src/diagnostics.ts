@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import type { SyncState, SyncHistoryEntry } from "./types.js";
+import { remoteUrlForState, syncStateIdentity } from "./remote/destination.js";
 
 const MAX_HISTORY_ENTRIES = 50;
 
@@ -9,7 +11,7 @@ let outputChannel: vscode.OutputChannel | undefined;
 
 export function getLogger(): vscode.OutputChannel {
   if (!outputChannel) {
-    outputChannel = vscode.window.createOutputChannel("Cursor Sync");
+    outputChannel = vscode.window.createOutputChannel(EXTENSION_LABEL);
   }
   return outputChannel;
 }
@@ -22,7 +24,7 @@ export async function showStatus(
 
   if (!syncState) {
     items.push({ label: "Status", description: "No sync performed yet" });
-    vscode.window.showQuickPick(items, { title: "Cursor Sync Status" });
+    vscode.window.showQuickPick(items, { title: `${EXTENSION_LABEL} Status` });
     return;
   }
 
@@ -34,20 +36,24 @@ export async function showStatus(
     label: "Direction",
     description: syncState.lastSyncDirection,
   });
+  const identity = syncStateIdentity(syncState);
+  const url = remoteUrlForState(syncState);
   items.push({
-    label: "Gist ID",
-    description: syncState.gistId,
+    label: "Repository",
+    description: identity || "Not linked",
   });
-  items.push({
-    label: "Gist URL",
-    description: `https://gist.github.com/${syncState.gistId}`,
-  });
+  if (url) {
+    items.push({
+      label: "Remote URL",
+      description: url,
+    });
+  }
   items.push({
     label: "Files Synced",
     description: String(Object.keys(syncState.localChecksums).length),
   });
 
-  vscode.window.showQuickPick(items, { title: "Cursor Sync Status" });
+  vscode.window.showQuickPick(items, { title: `${EXTENSION_LABEL} Status` });
 }
 
 export function getSyncStatePath(context: vscode.ExtensionContext): string {
@@ -106,17 +112,68 @@ export async function loadSyncHistory(
   }
 }
 
-export async function addSyncHistoryEntry(
+let historyWriteChain: Promise<void> = Promise.resolve();
+
+async function writeSyncHistoryFile(
   context: vscode.ExtensionContext,
-  entry: SyncHistoryEntry
+  history: SyncHistoryEntry[]
 ): Promise<void> {
-  const history = await loadSyncHistory(context);
-  history.unshift(entry);
-  if (history.length > MAX_HISTORY_ENTRIES) {
-    history.length = MAX_HISTORY_ENTRIES;
-  }
   const filePath = getSyncHistoryPath(context);
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(filePath, JSON.stringify(history, null, 2), "utf-8");
+}
+
+export async function addSyncHistoryEntry(
+  context: vscode.ExtensionContext,
+  entry: SyncHistoryEntry
+): Promise<void> {
+  const run = historyWriteChain.then(async () => {
+    const history = await loadSyncHistory(context);
+    history.unshift(entry);
+    if (history.length > MAX_HISTORY_ENTRIES) {
+      history.length = MAX_HISTORY_ENTRIES;
+    }
+    await writeSyncHistoryFile(context, history);
+  });
+  historyWriteChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  await run;
+}
+
+export async function removeSyncHistoryEntry(
+  context: vscode.ExtensionContext,
+  timestamp: string
+): Promise<boolean> {
+  let removed = false;
+  const run = historyWriteChain.then(async () => {
+    const history = await loadSyncHistory(context);
+    const next = history.filter((e) => e.timestamp !== timestamp);
+    removed = next.length < history.length;
+    if (!removed) {
+      return;
+    }
+    await writeSyncHistoryFile(context, next);
+  });
+  historyWriteChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  await run;
+  return removed;
+}
+
+export async function clearSyncHistory(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  const run = historyWriteChain.then(async () => {
+    await writeSyncHistoryFile(context, []);
+  });
+  historyWriteChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  await run;
 }

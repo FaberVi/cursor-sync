@@ -1,6 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
+import * as path from "node:path";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
+
+vi.mock("../src/transcripts-sqlite.js", () => ({
+  querySqliteRows: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("../src/transcripts-cursor-paths.js", () => ({
+  resolveChatsRoot: () => path.join("/mock", ".cursor", "chats"),
+}));
+
 import type { ChatBundle } from "../src/chat-persistence.js";
 import type { WorkspaceContext } from "../src/chat-workspace-context.js";
 import {
@@ -40,6 +50,7 @@ const workspaceContext: WorkspaceContext = {
 function makeDeps(overrides: Partial<VerifyIoDeps>): VerifyIoDeps {
   const files = new Map<string, string>();
   const exists = new Set<string>();
+  const mockChatsRoot = path.join("/mock", ".cursor", "chats");
 
   const base: VerifyIoDeps = {
     fileExists: async (p) => exists.has(p),
@@ -51,8 +62,8 @@ function makeDeps(overrides: Partial<VerifyIoDeps>): VerifyIoDeps {
       return v;
     },
     querySqliteRows: async () => [],
-    globalStateDbPath: () => "/mock/global/state.vscdb",
-    chatsRoot: () => "/mock/.cursor/chats",
+    globalStateDbPath: () => path.join("/mock", "global", "state.vscdb"),
+    chatsRoot: () => mockChatsRoot,
   };
 
   const deps = { ...base, ...overrides };
@@ -115,7 +126,9 @@ describe("chat-import-verify", () => {
   });
 
   it("ACTIVATION_DIR points at ~/.cursor/import-activation", () => {
-    expect(ACTIVATION_DIR.endsWith("/.cursor/import-activation")).toBe(true);
+    expect(ACTIVATION_DIR.replace(/\\/g, "/").endsWith("/.cursor/import-activation")).toBe(
+      true
+    );
   });
 
   describe("verifyImportVisibility", () => {
@@ -133,7 +146,7 @@ describe("chat-import-verify", () => {
     });
 
     it("OK store.db when blobs > 0", async () => {
-      const storePath = `/mock/.cursor/chats/${CHATS_KEY}/${CID}/store.db`;
+      const storePath = path.join("/mock", ".cursor", "chats", CHATS_KEY, CID, "store.db");
       const deps = makeDeps({
         querySqliteRows: async (dbPath, sql) => {
           if (dbPath !== storePath) {
@@ -160,7 +173,7 @@ describe("chat-import-verify", () => {
     });
 
     it("FAIL store.db when file exists but 0 blobs", async () => {
-      const storePath = `/mock/.cursor/chats/${CHATS_KEY}/${CID}/store.db`;
+      const storePath = path.join("/mock", ".cursor", "chats", CHATS_KEY, CID, "store.db");
       const deps = makeDeps({
         querySqliteRows: async (dbPath, sql) => {
           if (dbPath !== storePath) {
@@ -207,7 +220,7 @@ describe("chat-import-verify", () => {
     });
 
     it("OK global headers and workspaceIdentifier when stamped", async () => {
-      const globalDb = "/mock/global/state.vscdb";
+      const globalDb = path.join("/mock", "global", "state.vscdb");
       const headerValue = JSON.stringify({
         allComposers: [
           {
@@ -247,7 +260,7 @@ describe("chat-import-verify", () => {
     });
 
     it("FAIL composerData key when expectRichComposerData and missing on disk", async () => {
-      const globalDb = "/mock/global/state.vscdb";
+      const globalDb = path.join("/mock", "global", "state.vscdb");
       const headerValue = JSON.stringify({
         allComposers: [{ composerId: CID, workspaceIdentifier: { id: WS_ID, uri: { fsPath: FOLDER } } }],
       });
@@ -272,6 +285,74 @@ describe("chat-import-verify", () => {
       ).toMatchObject({
         status: "FAIL",
         detail: "bundle sidebar had composerData but disk key missing",
+      });
+    });
+
+    it("OK layer4 tool bubbles when cursorDiskKV rows exist", async () => {
+      const globalDb = path.join("/mock", "global", "state.vscdb");
+      const deps = makeDeps({
+        querySqliteRows: async (dbPath, sql) => {
+          if (dbPath !== globalDb) {
+            return [];
+          }
+          if (sql.includes("composerData:")) {
+            return [{ key: `composerData:${CID}`, value: "{}" }];
+          }
+          if (sql.includes("bubbleId:")) {
+            return [
+              {
+                key: `bubbleId:${CID}:b1`,
+                value: JSON.stringify({ toolFormerData: { name: "read" } }),
+              },
+            ];
+          }
+          return [];
+        },
+      });
+      (deps as VerifyIoDeps & { _markExists: (p: string) => void })._markExists(
+        globalDb
+      );
+
+      const checks = await verifyImportVisibility(CID, workspaceContext, {
+        expectLayer4: true,
+        deps,
+      });
+      expect(checkNamed(checks, "layer4.composerData")).toMatchObject({
+        status: "OK",
+      });
+      expect(checkNamed(checks, "layer4.toolBubbles")).toMatchObject({
+        status: "OK",
+        detail: "1 with toolFormerData",
+      });
+    });
+
+    it("FAIL layer4 tool bubbles under strictLayer4 when missing", async () => {
+      const globalDb = path.join("/mock", "global", "state.vscdb");
+      const deps = makeDeps({
+        querySqliteRows: async (dbPath, sql) => {
+          if (dbPath !== globalDb) {
+            return [];
+          }
+          if (sql.includes("composerData:")) {
+            return [{ key: `composerData:${CID}`, value: "{}" }];
+          }
+          if (sql.includes("bubbleId:")) {
+            return [{ key: `bubbleId:${CID}:b1`, value: JSON.stringify({ text: "hi" }) }];
+          }
+          return [];
+        },
+      });
+      (deps as VerifyIoDeps & { _markExists: (p: string) => void })._markExists(
+        globalDb
+      );
+
+      const checks = await verifyImportVisibility(CID, workspaceContext, {
+        expectLayer4: true,
+        strictLayer4: true,
+        deps,
+      });
+      expect(checkNamed(checks, "layer4.toolBubbles")).toMatchObject({
+        status: "FAIL",
       });
     });
   });

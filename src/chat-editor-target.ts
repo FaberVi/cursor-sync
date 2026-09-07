@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { md5FolderKey } from "./chat-workspace-context.js";
+import { isComposerConversationId, isSafePathSegment, assertPathUnderRoot } from "./composer-id.js";
 import { resolveSyncRoots } from "./paths.js";
 import { findWorkspaceKeysForConversation } from "./transcripts-cursor-paths.js";
 
@@ -83,6 +84,9 @@ function currentWorkspaceKey(): string | undefined {
 }
 
 async function conversationHasTranscriptDir(conversationId: string): Promise<boolean> {
+  if (!isComposerConversationId(conversationId)) {
+    return false;
+  }
   const { dotCursor } = resolveSyncRoots();
   const projectsRoot = path.join(dotCursor, "projects");
   let projectDirs: import("node:fs").Dirent[];
@@ -93,10 +97,19 @@ async function conversationHasTranscriptDir(conversationId: string): Promise<boo
   }
   for (const dir of projectDirs) {
     if (!dir.isDirectory()) continue;
+    if (!isSafePathSegment(dir.name)) {
+      continue;
+    }
     try {
-      await fs.stat(
-        path.join(projectsRoot, dir.name, "agent-transcripts", conversationId)
+      const agentRoot = path.join(projectsRoot, dir.name, "agent-transcripts");
+      const candidate = assertPathUnderRoot(
+        path.join(agentRoot, conversationId),
+        agentRoot
       );
+      if (!candidate) {
+        continue;
+      }
+      await fs.stat(candidate);
       return true;
     } catch {
       continue;

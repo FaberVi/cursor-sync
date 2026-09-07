@@ -11,8 +11,8 @@ export interface ChatBundleFidelitySummary {
 const TEXT_ONLY_LAYER4_WARNING =
   "Text-only Layer 4 (cursorDiskKV): bundle has no diskKvSnapshot. Tool/MCP UI cards will not match the source.";
 
-export function bundleHasNativeDiskKv(bundle: ChatBundle): boolean {
-  const snap = bundle.diskKvSnapshot;
+export function bundleHasNativeDiskKv(bundle: ChatBundle | Record<string, unknown>): boolean {
+  const snap = (bundle as ChatBundle).diskKvSnapshot;
   return Boolean(snap && Array.isArray(snap.rows) && snap.rows.length > 0);
 }
 

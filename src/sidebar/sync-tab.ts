@@ -1,62 +1,155 @@
 import type { SyncHistoryEntry } from "../types.js";
+import { formatRelativeTime, t } from "./i18n.js";
+
+/** Visible sync-history rows per page in the sidebar. */
+export const HISTORY_PAGE_SIZE = 5;
 
 export interface SyncTabState {
-  status: "synced" | "not-synced" | "syncing" | "error";
+  status: "synced" | "not-synced" | "syncing" | "error" | "loading" | "behind" | "diverged";
   lastSyncTime: string | undefined;
   lastSyncDirection: "push" | "pull" | undefined;
   fileCount: number;
-  gistId: string | undefined;
+  /** Human-readable remote destination (owner/repo@branch). */
+  remoteLabel: string | undefined;
+  remoteUrl: string | undefined;
+  /** Active remote kind for the status badge. */
+  destinationKind: "repo" | undefined;
+  /** Extension package version (e.g. 0.10.0). */
+  extensionVersion: string;
   history: SyncHistoryEntry[];
+  /** True while sync history is still being loaded (startup shell). */
+  historyLoading?: boolean;
+  chatsSyncEnabled: boolean;
+  localChatCount: number;
+  remoteChatCount: number | undefined;
+  /** True while local/remote chat counts are still being computed. */
+  chatCountsLoading?: boolean;
+  behindCount?: number;
+  conflictCount?: number;
 }
 
 export function relativeTime(isoString: string): string {
-  const now = Date.now();
-  const then = new Date(isoString).getTime();
-  const diffMs = now - then;
-
-  if (diffMs < 0) {
-    return "just now";
-  }
-
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) {
-    return "just now";
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours}h ago`;
-  }
-
-  const days = Math.floor(hours / 24);
-  if (days < 30) {
-    return `${days}d ago`;
-  }
-
-  return new Date(isoString).toLocaleDateString();
+  return formatRelativeTime(isoString);
 }
 
 export function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+export function renderLinkedStatusWarning(
+  template: string,
+  links: Record<string, { label: string; kind: string }>
+): string {
+  const re = /\{(\w+)\}/g;
+  let result = "";
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(template)) !== null) {
+    result += escapeHtml(template.slice(last, match.index));
+    const token = match[1] ?? "";
+    const link = links[token];
+    if (link) {
+      result += `<a href="#" class="status-warning-link" data-command="status:preview" data-preview-kind="${escapeHtml(link.kind)}">${escapeHtml(link.label)}</a>`;
+    } else {
+      result += escapeHtml(match[0]);
+    }
+    last = match.index + match[0].length;
+  }
+  result += escapeHtml(template.slice(last));
+  return result;
+}
+
+export function statusWarningMarkup(
+  status: SyncTabState["status"]
+): string {
+  if (status === "behind") {
+    return renderLinkedStatusWarning(t("remoteAheadBanner"), {
+      updates: { label: t("remoteAheadUpdatesLink"), kind: "incoming" },
+      localOnly: { label: t("remoteAheadLocalOnlyLink"), kind: "localOnly" },
+    });
+  }
+  if (status === "diverged") {
+    return renderLinkedStatusWarning(t("remoteDivergedBanner"), {
+      link: { label: t("remoteDivergedLink"), kind: "diverged" },
+    });
+  }
+  if (status === "not-synced") {
+    return renderLinkedStatusWarning(t("localUnsyncedWarning"), {
+      link: { label: t("localUnsyncedLink"), kind: "local" },
+    });
+  }
+  return "";
+}
+
+const HISTORY_DELETE_ICON = `<svg class="history-delete-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M5.5 2h5v1.25h3.5V5H2V3.25h3.5V2zm1.25 0v1.25h2.5V2h-2.5zM4.15 6h7.7l-.5 7.15A1.2 1.2 0 0 1 10.16 14.4H5.84a1.2 1.2 0 0 1-1.19-1.25L4.15 6zm2.35 1.5v4h1.15v-4H6.5zm3 0v4h1.15v-4H9.5z"/></svg>`;
+
+export function historyPageCount(
+  totalEntries: number,
+  pageSize: number = HISTORY_PAGE_SIZE
+): number {
+  return Math.max(1, Math.ceil(Math.max(0, totalEntries) / pageSize));
+}
+
+export function clampHistoryPage(
+  page: number,
+  totalEntries: number,
+  pageSize: number = HISTORY_PAGE_SIZE
+): number {
+  const totalPages = historyPageCount(totalEntries, pageSize);
+  if (!Number.isFinite(page) || page < 0) {
+    return 0;
+  }
+  if (page >= totalPages) {
+    return totalPages - 1;
+  }
+  return page;
+}
+
+export function sliceHistoryPage(
+  history: SyncHistoryEntry[],
+  page: number,
+  pageSize: number = HISTORY_PAGE_SIZE
+): SyncHistoryEntry[] {
+  const safePage = clampHistoryPage(page, history.length, pageSize);
+  const start = safePage * pageSize;
+  return history.slice(start, start + pageSize);
+}
+
+export function formatHistoryFileDetail(entry: {
+  fileCount: number;
+  totalFileCount?: number;
+  success: boolean;
+  error?: string;
+}): string {
+  if (!entry.success) {
+    return escapeHtml(entry.error ?? t("syncFailed"));
+  }
+  if (
+    typeof entry.totalFileCount === "number" &&
+    entry.totalFileCount > 0
+  ) {
+    return escapeHtml(
+      t("historyFilesRatio", {
+        changed: entry.fileCount,
+        total: entry.totalFileCount,
+      })
+    );
+  }
+  return escapeHtml(t("historyFiles", { n: entry.fileCount }));
+}
+
 export function renderHistoryEntry(entry: SyncHistoryEntry): string {
   const icon = entry.direction === "push" ? "arrow-up" : "arrow-down";
-  const dirLabel = entry.direction === "push" ? "Push" : "Pull";
-  const triggerBadge = entry.trigger === "scheduled" ? `<span class="badge badge-auto">auto</span>` : "";
+  const dirLabel = entry.direction === "push" ? t("push") : t("pull");
+  const triggerBadge = entry.trigger === "scheduled" ? `<span class="badge badge-auto">${escapeHtml(t("auto"))}</span>` : "";
   const statusClass = entry.success ? "success" : "failure";
   const statusDot = `<span class="status-dot ${statusClass}"></span>`;
   const time = relativeTime(entry.timestamp);
-  const detail = entry.success
-    ? `${entry.fileCount} file${entry.fileCount !== 1 ? "s" : ""}`
-    : escapeHtml(entry.error ?? "Failed");
+  const detail = formatHistoryFileDetail(entry);
+  const hasFiles = Array.isArray(entry.files) && entry.files.length > 0;
+  const title = hasFiles ? t("historyShowFiles") : t("historyNoFiles");
 
-  return `<div class="history-entry">
+  return `<div class="history-entry" role="button" tabindex="0" data-command="history:details" data-timestamp="${escapeHtml(entry.timestamp)}" title="${escapeHtml(title)}">
     <div class="history-entry-left">
       ${statusDot}
       <span class="codicon codicon-${icon}"></span>
@@ -66,30 +159,93 @@ export function renderHistoryEntry(entry: SyncHistoryEntry): string {
     <div class="history-entry-right">
       <span class="history-detail">${detail}</span>
       <span class="history-time">${time}</span>
+      <button type="button" class="history-delete-btn" data-command="history:delete" data-timestamp="${escapeHtml(entry.timestamp)}" title="${escapeHtml(t("historyDeleteHint"))}" aria-label="${escapeHtml(t("historyDeleteHint"))}">
+        ${HISTORY_DELETE_ICON}
+      </button>
+      <span class="codicon codicon-chevron-right history-chevron" aria-hidden="true"></span>
     </div>
   </div>`;
 }
 
-export function renderSyncPane(state: SyncTabState): string {
+export function renderHistoryPager(
+  totalEntries: number,
+  page: number,
+  pageSize: number = HISTORY_PAGE_SIZE
+): string {
+  if (totalEntries <= pageSize) {
+    return "";
+  }
+  const totalPages = historyPageCount(totalEntries, pageSize);
+  const safePage = clampHistoryPage(page, totalEntries, pageSize);
+  return `<div class="history-pager" data-history-page="${safePage}" data-history-total="${totalEntries}" data-history-page-size="${pageSize}">
+    <div class="chats-pager">
+      <button type="button" class="pager-btn" data-command="history:prev" title="${escapeHtml(t("prevHint"))}"${
+        safePage <= 0 ? " disabled" : ""
+      }>${escapeHtml(t("prev"))}</button>
+      <span class="pager-label">${safePage + 1} / ${totalPages}</span>
+      <button type="button" class="pager-btn" data-command="history:next" title="${escapeHtml(t("nextHint"))}"${
+        safePage >= totalPages - 1 ? " disabled" : ""
+      }>${escapeHtml(t("next"))}</button>
+    </div>
+  </div>`;
+}
+
+export function renderHistorySection(
+  history: SyncHistoryEntry[],
+  page: number = 0,
+  options: { loading?: boolean } = {}
+): string {
+  if (options.loading) {
+    return `<div class="history-list" data-history-page="0" data-history-page-size="${HISTORY_PAGE_SIZE}">
+      <div class="empty-state">${escapeHtml(t("loading"))}</div>
+    </div>`;
+  }
+  if (history.length === 0) {
+    return `<div class="history-list" data-history-page="0" data-history-page-size="${HISTORY_PAGE_SIZE}">
+      <div class="empty-state">${escapeHtml(t("noHistory"))}</div>
+    </div>`;
+  }
+
+  const safePage = clampHistoryPage(page, history.length);
+  const pageEntries = sliceHistoryPage(history, safePage);
+
+  return `<div class="history-list" data-history-page="${safePage}" data-history-page-size="${HISTORY_PAGE_SIZE}">
+      ${pageEntries.map(renderHistoryEntry).join("")}
+    </div>
+    ${renderHistoryPager(history.length, safePage)}`;
+}
+
+export function renderSyncPane(state: SyncTabState, historyPage: number = 0): string {
+  const isLoading = state.status === "loading";
   const statusIconMap = {
     synced: "check",
     "not-synced": "warning",
     syncing: "sync~spin",
+    loading: "sync~spin",
     error: "error",
+    behind: "cloud-download",
+    diverged: "warning",
   };
   const statusLabelMap = {
-    synced: "Synced",
-    "not-synced": "Not Synced",
-    syncing: "Syncing...",
-    error: "Sync Error",
+    synced: t("synced"),
+    "not-synced": t("notSynced"),
+    syncing: t("syncing"),
+    loading: t("loading"),
+    error: t("syncError"),
+    behind: t("behind"),
+    diverged: t("diverged"),
   };
 
   const statusIcon = statusIconMap[state.status];
   const statusLabel = statusLabelMap[state.status];
-  const lastSyncText = state.lastSyncTime ? relativeTime(state.lastSyncTime) : "Never";
+  const lastSyncText = state.lastSyncTime ? relativeTime(state.lastSyncTime) : t("never");
   const directionIcon = state.lastSyncDirection === "push" ? "arrow-up" : state.lastSyncDirection === "pull" ? "arrow-down" : "";
-  const directionLabel = state.lastSyncDirection === "push" ? "Push" : state.lastSyncDirection === "pull" ? "Pull" : "";
-
+  const directionLabel =
+    state.lastSyncDirection === "push"
+      ? t("push")
+      : state.lastSyncDirection === "pull"
+        ? t("pull")
+        : "";
   const cursorLogoSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 746.78 746.78">
     <rect fill="transparent" width="746.78" height="746.78"/>
     <g>
@@ -101,51 +257,124 @@ export function renderSyncPane(state: SyncTabState): string {
     </g>
   </svg>`;
 
-  const historyHtml = state.history.length > 0
-    ? state.history.map(renderHistoryEntry).join("")
-    : `<div class="empty-state">No sync history yet</div>`;
+  const historyHtml = renderHistorySection(state.history, historyPage, {
+    loading: state.historyLoading === true,
+  });
 
-  return `<div id="sync-pane" class="tab-pane">
+  const chatStatusLine = state.chatCountsLoading
+    ? `<span class="chat-sync-loading">${escapeHtml(t("loading"))}</span>`
+    : state.chatsSyncEnabled
+    ? state.remoteChatCount !== undefined
+      ? escapeHtml(
+          t("chatsInBackup", {
+            remote: state.remoteChatCount,
+            local: state.localChatCount,
+          })
+        )
+      : escapeHtml(t("chatsLocalNotInBackup", { local: state.localChatCount }))
+    : `<span class="chat-sync-disabled">${escapeHtml(t("chatsNotIncluded"))}</span>`;
+
+  const remoteAhead =
+    state.status === "behind" || state.status === "diverged" ? state.status : "";
+  const conflictCount = state.conflictCount ?? 0;
+  const badgeText =
+    conflictCount > 0
+      ? String(conflictCount)
+      : remoteAhead
+        ? state.behindCount && state.behindCount > 0
+          ? String(state.behindCount)
+          : t("syncTabBadge")
+        : "";
+  const warningMarkup = statusWarningMarkup(state.status);
+  const warningHtml = warningMarkup
+    ? `<p class="status-warning" role="status">${warningMarkup}</p>`
+    : "";
+  const conflictRow =
+    conflictCount > 0
+      ? `<button type="button" class="conflicts-reopen" data-command="conflicts:reveal">${escapeHtml(
+          t("conflictsPendingReopen", { n: conflictCount })
+        )}</button>`
+      : "";
+
+  return `<div id="sync-pane" class="tab-pane" data-remote-ahead="${escapeHtml(remoteAhead)}" data-conflict-count="${conflictCount}" data-sync-badge="${escapeHtml(badgeText)}">
+  ${conflictRow}
   <div class="status-card ${state.status}">
     <div class="status-icon-wrapper">
       ${state.status === "synced" ? cursorLogoSvg : `<span class="codicon codicon-${statusIcon}"></span>`}
     </div>
     <div class="status-info">
-      <span class="status-label">${statusLabel}</span>
-      <div class="status-meta">
-        <span>${lastSyncText}</span>
-        ${directionLabel ? `<span class="codicon codicon-${directionIcon}"></span><span>${directionLabel}</span>` : ""}
+      <div class="status-header">
+        <span class="status-label">${escapeHtml(statusLabel)}</span>
+        <span class="status-version" title="${escapeHtml(t("extensionVersionTitle"))}">v${escapeHtml(state.extensionVersion)}</span>
       </div>
-      ${state.fileCount > 0 ? `<div class="file-count">${state.fileCount} file${state.fileCount !== 1 ? "s" : ""} tracked</div>` : ""}
+      <div class="status-meta">
+        ${
+          isLoading
+            ? `<span class="status-loading">${escapeHtml(t("loading"))}</span>`
+            : `<span>${escapeHtml(lastSyncText)}</span>
+        ${directionLabel ? `<span class="codicon codicon-${directionIcon}"></span><span>${escapeHtml(directionLabel)}</span>` : ""}`
+        }
+      </div>
+      ${!isLoading && state.fileCount > 0 ? `<div class="file-count">${state.fileCount} ${state.fileCount !== 1 ? t("filesTracked") : t("fileTracked")}</div>` : ""}
+      ${
+        !isLoading && (state.remoteLabel || state.destinationKind)
+          ? `<div class="remote-row">
+        ${
+          state.remoteLabel
+            ? `<div class="file-count remote-dest">${
+                state.remoteUrl
+                  ? `<a href="${escapeHtml(state.remoteUrl)}">${escapeHtml(state.remoteLabel)}</a>`
+                  : escapeHtml(state.remoteLabel)
+              }</div>`
+            : `<div class="file-count remote-dest">${escapeHtml(t("notLinked"))}</div>`
+        }
+        ${
+          state.destinationKind
+            ? `<span class="dest-badge dest-badge-repo">${escapeHtml(t("destBadgeRepo"))}</span>`
+            : ""
+        }
+      </div>`
+          : ""
+      }
+      ${warningHtml}
     </div>
   </div>
 
-  <button class="sync-now-btn" data-command="syncNow">
-    <span class="codicon codicon-sync"></span>
-    Sync Now
+  <div class="file-count chat-sync-status">${chatStatusLine}</div>
+
+  ${""}
+
+  <button class="sync-now-btn" data-command="syncNow" title="${escapeHtml(t("syncNowHint"))}">
+    <span class="codicon codicon-sync" aria-hidden="true"></span>
+    <span class="sync-now-label">${escapeHtml(t("syncNow"))}</span>
   </button>
 
   <div class="section">
-    <div class="section-header">Actions</div>
+    <div class="section-header">${escapeHtml(t("actions"))}</div>
     <div class="action-grid">
-      <button class="action-btn" data-command="push"><span class="codicon codicon-cloud-upload"></span> Push</button>
-      <button class="action-btn" data-command="pull"><span class="codicon codicon-cloud-download"></span> Pull</button>
-      <button class="action-btn" data-command="export"><span class="codicon codicon-export"></span> Export</button>
-      <button class="action-btn" data-command="import"><span class="codicon codicon-desktop-download"></span> Import</button>
+      <button class="action-btn" data-command="push" title="${escapeHtml(t("pushHint"))}"><span class="codicon codicon-cloud-upload"></span> ${escapeHtml(t("push"))}</button>
+      <button class="action-btn" data-command="pull" title="${escapeHtml(t("pullHint"))}"><span class="codicon codicon-cloud-download"></span> ${escapeHtml(t("pull"))}</button>
+      <button class="action-btn action-btn-secondary" data-command="resetToRemote" title="${escapeHtml(t("resetToRemoteHint"))}"><span class="codicon codicon-discard"></span> ${escapeHtml(t("resetToRemote"))}</button>
+      <button class="action-btn action-btn-secondary" data-command="openSyncClone" title="${escapeHtml(t("openSyncCloneHint"))}"><span class="codicon codicon-repo"></span> ${escapeHtml(t("openSyncClone"))}</button>
+      <button class="action-btn action-btn-secondary" data-command="openCursorFolder" title="${escapeHtml(t("openCursorFolderHint"))}"><span class="codicon codicon-folder-opened"></span> ${escapeHtml(t("openCursorFolder"))}</button>
     </div>
   </div>
 
   <div class="section">
-    <div class="section-header">History</div>
-    <div class="history-list">
-      ${historyHtml}
+    <div class="section-header history-section-header">
+      <span>${escapeHtml(t("history"))}</span>
+      ${
+        state.history.length > 0
+          ? `<button type="button" class="clear-btn" data-command="history:clearAll" title="${escapeHtml(t("historyClearHint"))}">${escapeHtml(t("clear"))}</button>`
+          : ""
+      }
     </div>
-  </div>
-
-  <div class="section">
-    <button class="configure-btn" data-command="configure">
-      <span class="codicon codicon-github-alt"></span> Configure GitHub
-    </button>
+    <div id="history-section-body">
+    ${historyHtml}
+    </div>
+    <div id="sync-active-section" class="sync-active-section" style="display:none" aria-live="polite">
+      <div id="sync-active"></div>
+    </div>
   </div>
 </div>`;
 }

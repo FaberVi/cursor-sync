@@ -41,7 +41,8 @@ describe("formatDisplayPath", () => {
   it("returns absolute path when outside home", async () => {
     const { formatDisplayPath } = await import("../src/chat-workspace-label.js");
     const abs = "/var/lib/cursor/proj";
-    expect(formatDisplayPath(abs, "/home/user")).toBe(abs);
+    const result = formatDisplayPath(abs, "/home/user");
+    expect(result.replace(/\\/g, "/").replace(/^[A-Za-z]:/, "")).toBe(abs);
   });
 });
 
@@ -88,5 +89,22 @@ describe("projectQuickPickLabel", () => {
     expect(projectQuickPickLabel(name, new Map(), os.homedir())).toBe(
       humanWorkspaceLabel(name)
     );
+  });
+});
+
+describe("decodeCursorProjectFolderName", () => {
+  it("decodes c-Users-* project folders to repo title", async () => {
+    const { decodeCursorProjectFolderName } = await import("../src/chat-workspace-label.js");
+    expect(
+      decodeCursorProjectFolderName("c-Users-Utente-Documents-GitHub-Web-cursor-sync")
+    ).toBe("cursor-sync");
+    expect(
+      decodeCursorProjectFolderName("c-Users-Utente-Documents-GitHub-Web-formamente-webservice")
+    ).toBe("formamente-webservice");
+  });
+
+  it("labels numeric workspace folders", async () => {
+    const { decodeCursorProjectFolderName } = await import("../src/chat-workspace-label.js");
+    expect(decodeCursorProjectFolderName("1779313625545")).toBe("Workspace 1779313625545");
   });
 });

@@ -100,18 +100,15 @@ describe("chat-import-ux", () => {
     expect(showQuickPickMock).toHaveBeenCalledTimes(1);
   });
 
-  it("promptChatImportOptions applies activateDefault then user override", async () => {
+  it("promptChatImportOptions applies activateDefault from configuration", async () => {
     workspaceFolders = [{ uri: { fsPath: "/repo/a" }, name: "a", index: 0 }];
     configurationValues["chatImport.activateDefault"] = true;
-    showQuickPickMock.mockResolvedValueOnce({
-      label: "Disk restore only",
-      activate: false,
-    });
     const { promptChatImportOptions } = await import("../src/chat-import-ux.js");
     const result = await promptChatImportOptions();
     expect(result?.workspaceFolder).toBe("/repo/a");
-    expect(result?.restoreOptions.activate).toBe(false);
+    expect(result?.restoreOptions.activate).toBe(true);
     expect(result?.restoreOptions.workspaceFolder).toBe("/repo/a");
+    expect(showQuickPickMock).not.toHaveBeenCalled();
   });
 
   it("promptChatImportOptions forceActivate skips activate prompt", async () => {
