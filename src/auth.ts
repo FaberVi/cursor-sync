@@ -105,7 +105,8 @@ export async function configureGithub(
 
   const syncState = await loadSyncState(context);
   const lastSync = syncState ? new Date(syncState.lastSyncTimestamp) : undefined;
-  updateStatusBar("ok", lastSync);
+  const { syncStatusBarWithRemoteAheadCache } = await import("./remote-ahead.js");
+  syncStatusBarWithRemoteAheadCache(lastSync, { includeUnconfigured: true });
 
   vscode.window.showInformationMessage("GitHub token configured successfully.");
   logger.appendLine(`[${new Date().toISOString()}] GitHub token configured`);

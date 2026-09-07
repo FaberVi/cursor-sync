@@ -37,7 +37,8 @@ describe("renderHistoryEntry", () => {
     expect(html).toContain('data-command="history:details"');
     expect(html).toContain('data-timestamp="2026-07-19T10:00:00.000Z"');
     expect(html).toContain('data-command="history:delete"');
-    expect(html).toContain('class="history-delete-icon"');
+    expect(html).toContain("history-delete-icon");
+    expect(html).toContain("<svg");
     expect(html).toContain("Show files involved in this sync");
     expect(html).toContain("2 files");
   });
@@ -196,7 +197,7 @@ describe("renderSyncPane loading shell", () => {
 });
 
 describe("renderSyncPane remote ahead", () => {
-  it("shows a behind banner and data-remote-ahead", () => {
+  it("shows a behind warning inside the status card and a single Sync Now", () => {
     const state: SyncTabState = {
       ...minimalSyncState(),
       status: "behind",
@@ -204,14 +205,34 @@ describe("renderSyncPane remote ahead", () => {
     };
     const html = renderSyncPane(state, 0);
     expect(html).toContain('data-remote-ahead="behind"');
-    expect(html).toContain("remote-ahead-banner");
+    expect(html).toContain('data-preview-kind="incoming"');
+    expect(html).toContain('data-preview-kind="localOnly"');
+    expect(html).toContain("status-warning-link");
+    expect(html).toContain("updates");
+    expect(html).not.toContain("remote-ahead-banner");
+    expect(html.match(/data-command="syncNow"/g)?.length).toBe(1);
     expect(html).toContain("Sync Now");
   });
 
-  it("shows a diverged banner with reset", () => {
+  it("shows a diverged warning inside the status card without a second reset", () => {
     const html = renderSyncPane({ ...minimalSyncState(), status: "diverged" }, 0);
     expect(html).toContain('data-remote-ahead="diverged"');
-    expect(html).toContain("resetToRemote");
+    expect(html).toContain('data-preview-kind="diverged"');
+    expect(html).toContain("status-warning-link");
+    expect(html).not.toContain("remote-ahead-banner");
+    expect(html.match(/data-command="resetToRemote"/g)?.length).toBe(1);
+  });
+
+  it("shows local unsynced copy inside the status card", () => {
+    const html = renderSyncPane({ ...minimalSyncState(), status: "not-synced" }, 0);
+    expect(html).toContain("status-card not-synced");
+    expect(html).toContain('data-preview-kind="local"');
+    expect(html).toContain("local changes");
+    expect(html).toContain("status-warning-link");
+    expect(html).toContain("not yet in the repository.");
+    expect(html).toContain("status-warning");
+    expect(html).not.toContain("remote-ahead-banner");
+    expect(html.match(/data-command="syncNow"/g)?.length).toBe(1);
   });
 });
 
@@ -454,5 +475,18 @@ describe("dispatchSidebarMessage - history:details", () => {
     expect(showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining("File list was not recorded")
     );
+  });
+});
+
+describe("dispatchSidebarMessage - status:preview", () => {
+  it("ignores unknown preview kinds", async () => {
+    const showQuickPick = vi.spyOn(vscode.window, "showQuickPick").mockResolvedValue(undefined);
+    await dispatchSidebarMessage(
+      { globalStorageUri: { fsPath: "/tmp" } } as any,
+      mockWebview(),
+      { command: "status:preview", previewKind: "nope" }
+    );
+    expect(showQuickPick).not.toHaveBeenCalled();
+    showQuickPick.mockRestore();
   });
 });

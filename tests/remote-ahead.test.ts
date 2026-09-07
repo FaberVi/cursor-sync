@@ -60,13 +60,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import * as vscode from "vscode";
+import * as statusbar from "../src/statusbar.js";
 import {
   __resetRemoteAheadForTests,
   getRemoteAheadCache,
   maybeToastRemoteAhead,
   probeRemoteAhead,
   recordRemoteRelation,
+  syncStatusBarWithRemoteAheadCache,
 } from "../src/remote-ahead.js";
+import {
+  __resetLocalDiffersForTests,
+  recordLocalDiffers,
+} from "../src/cursor-differs.js";
 
 function context(): vscode.ExtensionContext {
   return {
@@ -78,6 +84,7 @@ function context(): vscode.ExtensionContext {
 describe("remote-ahead", () => {
   afterEach(() => {
     __resetRemoteAheadForTests();
+    __resetLocalDiffersForTests();
     vi.clearAllMocks();
   });
 
@@ -139,5 +146,55 @@ describe("remote-ahead", () => {
     await maybeToastRemoteAhead();
     expect(spy).toHaveBeenCalledTimes(2);
     expect(spy.mock.calls[1]?.[1]).toBe("Reset to remote");
+  });
+});
+
+describe("syncStatusBarWithRemoteAheadCache", () => {
+  afterEach(() => {
+    __resetRemoteAheadForTests();
+    __resetLocalDiffersForTests();
+    vi.restoreAllMocks();
+  });
+
+  it("does not set OK when the clone is ahead of origin", () => {
+    vi.spyOn(statusbar, "getStatusBarState").mockReturnValue("ok");
+    const spy = vi.spyOn(statusbar, "updateStatusBar");
+    recordLocalDiffers(false);
+    recordRemoteRelation({ relation: "ahead" });
+    expect(spy).toHaveBeenCalledWith("not-synced", undefined);
+  });
+
+  it("does not set OK when local files differ", () => {
+    vi.spyOn(statusbar, "getStatusBarState").mockReturnValue("ok");
+    const spy = vi.spyOn(statusbar, "updateStatusBar");
+    recordLocalDiffers(true);
+    recordRemoteRelation({ relation: "equal" });
+    expect(spy).toHaveBeenCalledWith("not-synced", undefined);
+  });
+
+  it("sets OK when equal and local hashes match", () => {
+    vi.spyOn(statusbar, "getStatusBarState").mockReturnValue("ok");
+    const spy = vi.spyOn(statusbar, "updateStatusBar");
+    recordLocalDiffers(false);
+    recordRemoteRelation({ relation: "equal" });
+    expect(spy).toHaveBeenCalledWith("ok", undefined);
+  });
+
+  it("keeps behind presentation when origin is ahead", () => {
+    vi.spyOn(statusbar, "getStatusBarState").mockReturnValue("ok");
+    const spy = vi.spyOn(statusbar, "updateStatusBar");
+    recordLocalDiffers(true);
+    recordRemoteRelation({ relation: "behind", behindCount: 1 });
+    expect(spy.mock.calls.at(-1)?.[0]).toBe("behind");
+  });
+
+  it("skips updates while syncing unless includeSyncing is set", () => {
+    vi.spyOn(statusbar, "getStatusBarState").mockReturnValue("syncing");
+    const spy = vi.spyOn(statusbar, "updateStatusBar");
+    recordLocalDiffers(false);
+    recordRemoteRelation({ relation: "equal" });
+    expect(spy).not.toHaveBeenCalled();
+    syncStatusBarWithRemoteAheadCache(undefined, { includeSyncing: true });
+    expect(spy).toHaveBeenCalledWith("ok", undefined);
   });
 });

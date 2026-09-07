@@ -52,6 +52,7 @@
     var cmdBtn = el && el.closest ? el.closest("[data-command]") : null;
     if (!cmdBtn) return;
     if (cmdBtn.disabled) return;
+    ev.preventDefault();
     var cmd = cmdBtn.getAttribute("data-command");
     if (!cmd) return;
     if (CSW.SYNC_ACTION_COMMANDS[cmd]) {
@@ -68,6 +69,8 @@
     if (relativeSyncKey) extra.relativeSyncKey = relativeSyncKey;
     var resolution = cmdBtn.getAttribute("data-resolution");
     if (resolution) extra.resolution = resolution;
+    var previewKind = cmdBtn.getAttribute("data-preview-kind");
+    if (previewKind) extra.previewKind = previewKind;
     var bundlePath = cmdBtn.getAttribute("data-bundle-path");
     if (bundlePath) extra.bundlePath = bundlePath;
     var timestamp = cmdBtn.getAttribute("data-timestamp");

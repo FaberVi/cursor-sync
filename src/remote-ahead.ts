@@ -16,8 +16,9 @@ import {
 import { isSyncLocked } from "./sync-lock.js";
 import { notifySyncActionRequired } from "./sync-notify.js";
 import { getStatusBarState, updateStatusBar } from "./statusbar.js";
-import { t } from "./sidebar/i18n.js";
+import { statusWarningPlain, t } from "./sidebar/i18n.js";
 import { getPendingConflictCount } from "./conflict-panel.js";
+import { getLocalDiffersCache } from "./cursor-differs.js";
 
 export const REMOTE_AHEAD_INTERVAL_MS = 300_000;
 
@@ -145,7 +146,7 @@ export async function maybeToastRemoteAhead(): Promise<void> {
   toastedEpisode = rel;
   const later = t("later");
   if (rel === "diverged") {
-    const message = t("remoteDivergedBanner");
+    const message = statusWarningPlain("diverged");
     const reset = t("resetToRemote");
     const choice = await notifySyncActionRequired(message, reset, later);
     if (choice === reset) {
@@ -155,7 +156,7 @@ export async function maybeToastRemoteAhead(): Promise<void> {
     }
     return;
   }
-  const message = t("remoteAheadBanner");
+  const message = statusWarningPlain("behind");
   const syncNow = t("syncNow");
   const choice = await notifySyncActionRequired(message, syncNow, later);
   if (choice === syncNow) {
@@ -165,9 +166,18 @@ export async function maybeToastRemoteAhead(): Promise<void> {
   }
 }
 
-export function syncStatusBarWithRemoteAheadCache(lastSync?: Date): void {
+export function syncStatusBarWithRemoteAheadCache(
+  lastSync?: Date,
+  options?: { includeUnconfigured?: boolean; includeSyncing?: boolean }
+): void {
   const bar = getStatusBarState();
-  if (bar === "syncing" || bar === "error" || bar === "unconfigured") {
+  if (bar === "error") {
+    return;
+  }
+  if (bar === "syncing" && !options?.includeSyncing) {
+    return;
+  }
+  if (bar === "unconfigured" && !options?.includeUnconfigured) {
     return;
   }
   const rel = cache?.relation;
@@ -175,11 +185,15 @@ export function syncStatusBarWithRemoteAheadCache(lastSync?: Date): void {
     updateStatusBar(
       "behind",
       lastSync,
-      rel === "diverged" ? t("remoteDivergedBanner") : t("remoteAheadBanner")
+      rel === "diverged" ? statusWarningPlain("diverged") : statusWarningPlain("behind")
     );
     return;
   }
-  if (rel === "equal" || rel === "ahead" || rel === "empty") {
+  if (rel === "ahead" || rel === "empty" || getLocalDiffersCache() !== false) {
+    updateStatusBar("not-synced", lastSync);
+    return;
+  }
+  if (rel === "equal") {
     updateStatusBar("ok", lastSync);
   }
 }

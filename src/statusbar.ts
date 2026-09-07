@@ -1,10 +1,16 @@
 import * as vscode from "vscode";
 import { EXTENSION_LABEL } from "./extension-branding.js";
-import { t } from "./sidebar/i18n.js";
+import { statusWarningPlain, t } from "./sidebar/i18n.js";
 
 let statusBarItem: vscode.StatusBarItem;
 
-export type SyncState = "ok" | "syncing" | "error" | "unconfigured" | "behind";
+export type SyncState =
+  | "ok"
+  | "syncing"
+  | "error"
+  | "unconfigured"
+  | "behind"
+  | "not-synced";
 
 let lastIdleState: SyncState = "unconfigured";
 let currentState: SyncState = "unconfigured";
@@ -68,7 +74,12 @@ export function updateStatusBar(
     case "behind":
       icon = "$(cloud-download)";
       text = `Sync: ${t("behind")}`;
-      tooltip = tooltipOverride ?? t("remoteAheadBanner");
+      tooltip = tooltipOverride ?? statusWarningPlain("behind");
+      break;
+    case "not-synced":
+      icon = "$(warning)";
+      text = `Sync: ${t("notSynced")}`;
+      tooltip = tooltipOverride ?? statusWarningPlain("not-synced");
       break;
   }
 
@@ -76,7 +87,7 @@ export function updateStatusBar(
     statusBarItem.command = "cursorSync.cancelSync";
   } else if (state === "unconfigured") {
     statusBarItem.command = "cursorSync.configureGithub";
-  } else if (state === "behind") {
+  } else if (state === "behind" || state === "not-synced") {
     statusBarItem.command = "cursorSync.revealSidebar";
   } else {
     statusBarItem.command = "cursorSync.showStatus";

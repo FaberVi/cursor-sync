@@ -66,7 +66,13 @@ import {
   listLocalOnlyKeys,
   readIncomingCommitSummary,
 } from "./pull-confirm.js";
-import { recordRemoteRelation, onSyncLockReleased } from "./remote-ahead.js";
+import {
+  recordRemoteRelation,
+  onSyncLockReleased,
+  getRemoteAheadCache,
+  syncStatusBarWithRemoteAheadCache,
+} from "./remote-ahead.js";
+import { recordLocalDiffers } from "./cursor-differs.js";
 import { enumerateSyncFiles, resolveSyncRoots } from "./paths.js";
 
 export type PullTrigger = SyncOpTrigger;
@@ -114,16 +120,16 @@ export async function executePull(
     if (success) {
       commitSyncFileJournal();
       progress.complete(true);
-      updateStatusBar("ok", new Date());
+      recordLocalDiffers(false);
+      syncStatusBarWithRemoteAheadCache(new Date(), { includeSyncing: true });
     } else {
       await rollbackSyncFileJournal(context);
       await clearPendingCloneReset(context);
       progress.complete(false);
-      const ahead = (await import("./remote-ahead.js")).getRemoteAheadCache()?.relation;
+      const ahead = getRemoteAheadCache()?.relation;
       if (isSyncAborted()) {
         restoreStatusBarAfterCancel();
       } else if (ahead === "behind" || ahead === "diverged") {
-        const { syncStatusBarWithRemoteAheadCache } = await import("./remote-ahead.js");
         syncStatusBarWithRemoteAheadCache();
       } else {
         updateStatusBar("error", new Date());

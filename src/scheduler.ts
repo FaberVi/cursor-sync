@@ -9,13 +9,6 @@ import {
   buildSyncDebugFailure,
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
-import {
-  computeChatSyncLocalFingerprint,
-  isChatSyncEnabled,
-  readStoredChatSyncFingerprint,
-  CURSOR_CHAT_SYNC_KEY,
-} from "./chat-sync.js";
-import { computeChecksum } from "./packaging.js";
 import { resolveScheduleInterval } from "./schedule-interval.js";
 import { isRepoDestinationConfigured } from "./remote/destination.js";
 import { loadSyncState } from "./diagnostics.js";
@@ -24,12 +17,7 @@ import {
   hasNestedSyncFiles,
   relationToOrigin,
 } from "./sync-clone.js";
-import {
-  hashCloneSyncFiles,
-  hashCursorSyncFiles,
-  readCloneChatRaw,
-  syncKeysDiffer,
-} from "./sync-copy.js";
+import { computeCursorDiffers, recordLocalDiffers } from "./cursor-differs.js";
 import { decideSyncAction, type SyncAction } from "./sync-action.js";
 import { GitNotFoundError } from "./git-cli.js";
 import { enterSyncLock, leaveSyncLock } from "./sync-lock.js";
@@ -92,25 +80,14 @@ export async function determineSyncAction(
     const relation = clone.empty
       ? "empty"
       : await relationToOrigin(clone.clonePath, clone.identity.branch);
+    const cursorDiffers = await computeCursorDiffers(
+      context,
+      clone.clonePath,
+      clone.identity.basePath
+    );
+    recordLocalDiffers(cursorDiffers);
     const { recordRemoteRelation } = await import("./remote-ahead.js");
     recordRemoteRelation({ relation });
-
-    const localHashes = await hashCursorSyncFiles();
-    const cloneHashes = await hashCloneSyncFiles(clone.clonePath, clone.identity.basePath);
-    let cursorDiffers = syncKeysDiffer(localHashes, cloneHashes);
-
-    if (isChatSyncEnabled()) {
-      const fingerprint = await computeChatSyncLocalFingerprint();
-      const stored = await readStoredChatSyncFingerprint(context);
-      const cloneChat = await readCloneChatRaw(clone.clonePath, clone.identity.basePath);
-      const cloneChatChecksum = cloneChat
-        ? computeChecksum(Buffer.from(cloneChat, "utf8"))
-        : undefined;
-      const lastChat = syncState?.localChecksums[CURSOR_CHAT_SYNC_KEY];
-      if (stored !== fingerprint || lastChat !== cloneChatChecksum) {
-        cursorDiffers = true;
-      }
-    }
 
     const nested = await hasNestedSyncFiles(clone.clonePath, clone.identity.basePath);
     return decideSyncAction({

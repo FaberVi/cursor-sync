@@ -131,27 +131,23 @@ body {
   box-shadow: 0 0 20px rgba(251, 191, 36, 0.1);
 }
 
-.remote-ahead-banner {
-  margin-bottom: 14px;
-  padding: 14px;
-  border-radius: 12px;
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  background: rgba(251, 191, 36, 0.1);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.remote-ahead-banner p {
+.status-card .status-warning {
+  margin: 10px 0 0;
   font-size: 13px;
   font-weight: 600;
   line-height: 1.45;
   color: #fde68a;
 }
-.remote-ahead-banner.diverged {
-  border-color: rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.1);
+.status-card .status-warning-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
-.remote-ahead-banner.diverged p {
+.status-card .status-warning-link:hover {
+  opacity: 0.9;
+}
+.status-card.diverged .status-warning {
   color: #fecaca;
 }
 .conflicts-reopen {

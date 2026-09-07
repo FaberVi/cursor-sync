@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { getLogger, addSyncHistoryEntry, saveSyncState, loadSyncState } from "./diagnostics.js";
 import { notifySyncQuiet } from "./sync-notify.js";
 import { updateStatusBar, restoreStatusBarAfterCancel } from "./statusbar.js";
+import { recordLocalDiffers } from "./cursor-differs.js";
+import { syncStatusBarWithRemoteAheadCache } from "./remote-ahead.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
 import {
@@ -101,7 +103,12 @@ export async function executePush(
     getLogger().appendLine(
       `[${new Date().toISOString()}] Push finished in ${formatElapsedPrecise(Date.now() - startedAt)} (${success ? "ok" : "failed"}).`
     );
-    updateStatusBar(success ? "ok" : "error", new Date());
+    if (success) {
+      recordLocalDiffers(false);
+      syncStatusBarWithRemoteAheadCache(new Date(), { includeSyncing: true });
+    } else {
+      updateStatusBar("error", new Date());
+    }
     refreshSidebar();
     return success;
   } catch (err) {

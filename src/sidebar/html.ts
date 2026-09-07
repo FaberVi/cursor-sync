@@ -20,8 +20,17 @@ import { t, webviewI18nPayload } from "./i18n.js";
 import { escapeHtml } from "./sync-tab.js";
 import { readCloneChatRaw } from "../sync-copy.js";
 import { getSyncClonePath, readRepoIdentity } from "../sync-clone.js";
-import { getRemoteAheadCache } from "../remote-ahead.js";
+import {
+  getRemoteAheadCache,
+  syncStatusBarWithRemoteAheadCache,
+} from "../remote-ahead.js";
 import { getPendingConflictCount } from "../conflict-panel.js";
+import {
+  computeCursorDiffers,
+  getLocalDiffersCache,
+  recordLocalDiffers,
+  resolveSyncCardStatus,
+} from "../cursor-differs.js";
 import { CURSOR_CHAT_GIST_FILE_NAME } from "../chat-bundle-format.js";
 
 export interface BuildSyncTabStateOptions {
@@ -94,54 +103,73 @@ export async function buildSyncTabState(
     }
   }
 
-  const ahead = applyRemoteAheadToTabState({
-    status: "not-synced",
-    lastSyncTime: undefined,
-    lastSyncDirection: undefined,
-    fileCount: 0,
-    remoteLabel: undefined,
-    remoteUrl: undefined,
-    destinationKind,
-    extensionVersion,
-    history,
-    chatsSyncEnabled,
-    localChatCount,
-    remoteChatCount,
-    chatCountsLoading,
-  });
-  if (!syncState) {
-    return ahead;
+  const cursorDiffers = await resolveCursorDiffersForTab(context, deferHeavyMetrics);
+  if (!deferHeavyMetrics) {
+    const lastSync = syncState
+      ? new Date(syncState.lastSyncTimestamp)
+      : undefined;
+    syncStatusBarWithRemoteAheadCache(lastSync);
   }
 
-  return applyRemoteAheadToTabState({
-    status: "synced",
-    lastSyncTime: syncState.lastSyncTimestamp,
-    lastSyncDirection: syncState.lastSyncDirection,
-    fileCount: Object.keys(syncState.localChecksums).length,
-    remoteLabel: syncStateIdentity(syncState) || undefined,
-    remoteUrl: remoteUrlForState(syncState),
-    destinationKind,
-    extensionVersion,
-    history,
-    chatsSyncEnabled,
-    localChatCount,
-    remoteChatCount,
-    chatCountsLoading,
-  });
+  return applyRemoteAheadToTabState(
+    {
+      status: "not-synced",
+      lastSyncTime: syncState?.lastSyncTimestamp,
+      lastSyncDirection: syncState?.lastSyncDirection,
+      fileCount: syncState ? Object.keys(syncState.localChecksums).length : 0,
+      remoteLabel: syncState ? syncStateIdentity(syncState) || undefined : undefined,
+      remoteUrl: syncState ? remoteUrlForState(syncState) : undefined,
+      destinationKind,
+      extensionVersion,
+      history,
+      chatsSyncEnabled,
+      localChatCount,
+      remoteChatCount,
+      chatCountsLoading,
+    },
+    { hasSyncState: Boolean(syncState), cursorDiffers }
+  );
 }
 
-function applyRemoteAheadToTabState(state: SyncTabState): SyncTabState {
+async function resolveCursorDiffersForTab(
+  context: vscode.ExtensionContext,
+  deferHeavyMetrics: boolean
+): Promise<boolean | undefined> {
+  if (deferHeavyMetrics) {
+    return getLocalDiffersCache();
+  }
+  const identity = readRepoIdentity();
+  if (!identity) {
+    recordLocalDiffers(true);
+    return true;
+  }
+  try {
+    const differs = await computeCursorDiffers(
+      context,
+      getSyncClonePath(context),
+      identity.basePath
+    );
+    recordLocalDiffers(differs);
+    return differs;
+  } catch {
+    recordLocalDiffers(true);
+    return true;
+  }
+}
+
+function applyRemoteAheadToTabState(
+  state: SyncTabState,
+  options: { hasSyncState: boolean; cursorDiffers: boolean | undefined }
+): SyncTabState {
   const cache = getRemoteAheadCache();
   const conflictCount = getPendingConflictCount();
   const next = { ...state, conflictCount, behindCount: cache?.behindCount };
-  if (state.status === "loading" || state.status === "syncing" || state.status === "error") {
-    return next;
-  }
-  if (cache?.relation === "behind") {
-    next.status = "behind";
-  } else if (cache?.relation === "diverged") {
-    next.status = "diverged";
-  }
+  next.status = resolveSyncCardStatus({
+    status: state.status,
+    relation: cache?.relation,
+    hasSyncState: options.hasSyncState,
+    cursorDiffers: options.cursorDiffers,
+  });
   return next;
 }
 

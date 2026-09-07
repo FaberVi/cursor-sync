@@ -9,6 +9,7 @@ import {
   formatNameList,
   listLocalOnlyKeys,
   PULL_CONFIRM_NAME_CAP,
+  syncKeysFromDiffNameOnly,
 } from "../src/pull-confirm.js";
 
 describe("cloneDiffPathToSyncKey", () => {
@@ -19,6 +20,17 @@ describe("cloneDiffPathToSyncKey", () => {
     expect(
       cloneDiffPathToSyncKey("cursor-sync/manifest.json", "cursor-sync")
     ).toBeUndefined();
+  });
+});
+
+describe("syncKeysFromDiffNameOnly", () => {
+  it("maps clone paths and skips manifest", () => {
+    expect(
+      syncKeysFromDiffNameOnly(
+        "cursor-sync/dot-cursor/skills/foo/SKILL.md\ncursor-sync/manifest.json\n",
+        "cursor-sync"
+      )
+    ).toEqual(["dot-cursor/skills/foo/SKILL.md"]);
   });
 });
 

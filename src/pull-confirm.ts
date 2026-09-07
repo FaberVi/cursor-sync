@@ -29,6 +29,21 @@ export function formatNameList(names: readonly string[], cap = PULL_CONFIRM_NAME
   return `${shown.join(", ")}, ${t("andNMore", { n: extra })}`;
 }
 
+export function syncKeysFromDiffNameOnly(stdout: string, basePath: string): string[] {
+  const keys = new Set<string>();
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const syncKey = cloneDiffPathToSyncKey(trimmed, basePath);
+    if (syncKey) {
+      keys.add(syncKey);
+    }
+  }
+  return [...keys].sort();
+}
+
 export function cloneDiffPathToSyncKey(
   repoRelativePath: string,
   basePath: string
@@ -118,18 +133,7 @@ export async function readIncomingCommitSummary(options: {
       args: ["diff", "--name-only", options.preSha, "HEAD"],
       cwd: options.clonePath,
     });
-    const keys = new Set<string>();
-    for (const line of diff.stdout.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-      const syncKey = cloneDiffPathToSyncKey(trimmed, options.basePath);
-      if (syncKey) {
-        keys.add(syncKey);
-      }
-    }
-    incomingSyncKeys = [...keys].sort();
+    incomingSyncKeys = syncKeysFromDiffNameOnly(diff.stdout, options.basePath);
   } catch {
     incomingSyncKeys = [];
   }

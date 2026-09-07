@@ -1,5 +1,4 @@
 import * as vscode from "vscode";
-import * as fs from "node:fs/promises";
 import { clearImports } from "./import-history.js";
 import { emitSyncActionsIdle } from "../sync-progress-events.js";
 import {
@@ -7,8 +6,6 @@ import {
   isSafePathSegment,
 } from "../composer-id.js";
 import { t } from "./i18n.js";
-import { resolveSyncRoots } from "../paths.js";
-import { syncKeyToAbsolutePath } from "../sync-local-deletes.js";
 
 export type SidebarMessage =
   | {
@@ -48,6 +45,7 @@ export type SidebarMessage =
   | { command: "chats:revealTranscripts"; conversationId: string; workspaceKey?: string; projectKey?: string }
   | { command: "chats:clearHistory" }
   | { command: "history:details"; timestamp: string }
+  | { command: "status:preview"; previewKind?: string }
   | { command: "history:delete"; timestamp: string; page?: number }
   | { command: "history:clearAll" }
   | { command: "history:page"; page: number }
@@ -76,6 +74,7 @@ const KNOWN_COMMANDS = new Set<string>([
   "chats:revealTranscripts",
   "chats:clearHistory",
   "history:details",
+  "status:preview",
   "history:delete",
   "history:clearAll",
   "history:page",
@@ -286,6 +285,16 @@ export async function dispatchSidebarMessage(
       await clearImports(context);
       await webview.postMessage({ type: "chats:history-cleared" });
       break;
+    case "status:preview": {
+      const { isStatusPreviewKind, showStatusPreview } = await import(
+        "../status-preview.js"
+      );
+      if (!isStatusPreviewKind(msg.previewKind)) {
+        break;
+      }
+      await showStatusPreview(context, msg.previewKind);
+      break;
+    }
     case "history:details": {
       const { loadSyncHistory } = await import("../diagnostics.js");
       const history = await loadSyncHistory(context);
@@ -307,43 +316,13 @@ export async function dispatchSidebarMessage(
               total: entry.totalFileCount,
             })
           : t("historyFiles", { n: files.length });
-      const roots = resolveSyncRoots();
-      const picked = await vscode.window.showQuickPick(
-        files.map((syncKey) => {
-          const absolutePath = syncKeyToAbsolutePath(syncKey, roots);
-          return {
-            label: syncKey,
-            description: absolutePath ?? syncKey,
-            syncKey,
-            absolutePath,
-          };
-        }),
-        {
-          title: `${dirLabel} · ${countLabel}`,
-          placeHolder: t("historyFilesPlaceholder"),
-          matchOnDescription: true,
-        }
-      );
-      if (!picked) {
-        break;
-      }
-      if (!picked.absolutePath) {
-        void vscode.window.showWarningMessage(
-          t("historyFileNotFound", { path: picked.syncKey })
-        );
-        break;
-      }
-      try {
-        await fs.access(picked.absolutePath);
-        await vscode.commands.executeCommand(
-          "vscode.open",
-          vscode.Uri.file(picked.absolutePath)
-        );
-      } catch {
-        void vscode.window.showWarningMessage(
-          t("historyFileNotFound", { path: picked.syncKey })
-        );
-      }
+      const { showSyncKeyQuickPick } = await import("../sync-key-picker.js");
+      await showSyncKeyQuickPick({
+        entries: files.map((syncKey) => ({ syncKey })),
+        title: `${dirLabel} · ${countLabel}`,
+        placeHolder: t("historyFilesPlaceholder"),
+        emptyMessage: t("historyNoFileListRecorded"),
+      });
       break;
     }
     case "history:delete": {

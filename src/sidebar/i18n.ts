@@ -179,6 +179,30 @@ export type MessageKey =
   | "proceed"
   | "remoteAheadBanner"
   | "remoteDivergedBanner"
+  | "localUnsyncedWarning"
+  | "localUnsyncedLink"
+  | "remoteAheadUpdatesLink"
+  | "remoteAheadLocalOnlyLink"
+  | "remoteDivergedLink"
+  | "statusPreviewLocalTitle"
+  | "statusPreviewIncomingTitle"
+  | "statusPreviewLocalOnlyTitle"
+  | "statusPreviewDivergedTitle"
+  | "statusPreviewPlaceholder"
+  | "statusPreviewEmpty"
+  | "statusPreviewFailed"
+  | "statusPreviewLoading"
+  | "statusPreviewRefresh"
+  | "statusPreviewRefreshHint"
+  | "statusPreviewCountsLabel"
+  | "statusPreviewCountModified"
+  | "statusPreviewCountAdded"
+  | "statusPreviewCountRemoved"
+  | "statusPreviewCountIncoming"
+  | "fileChangeAdded"
+  | "fileChangeModified"
+  | "fileChangeRemoved"
+  | "fileChangeIncoming"
   | "syncTabBadge"
   | "conflictsPendingReopen"
   | "conflictPanelTitle"
@@ -258,6 +282,34 @@ export function t(
     }
   }
   return text;
+}
+
+export function statusWarningPlain(
+  kind: "not-synced" | "behind" | "diverged",
+  lang: UiLanguage = readUiLanguage()
+): string {
+  if (kind === "behind") {
+    return t(
+      "remoteAheadBanner",
+      {
+        updates: t("remoteAheadUpdatesLink", undefined, lang),
+        localOnly: t("remoteAheadLocalOnlyLink", undefined, lang),
+      },
+      lang
+    );
+  }
+  if (kind === "diverged") {
+    return t(
+      "remoteDivergedBanner",
+      { link: t("remoteDivergedLink", undefined, lang) },
+      lang
+    );
+  }
+  return t(
+    "localUnsyncedWarning",
+    { link: t("localUnsyncedLink", undefined, lang) },
+    lang
+  );
 }
 
 export function formatRelativeTime(

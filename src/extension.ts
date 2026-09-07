@@ -39,7 +39,11 @@ import { flushPendingSidebarWriteback } from "./chat-import-sidebar-writeback.js
 import { executeSyncNow } from "./sync-now.js";
 import { isLegacyGistConfigured } from "./remote/destination.js";
 import { restorePendingCloneResetIfAny } from "./sync-clone.js";
-import { startRemoteAheadWatch, stopRemoteAheadWatch } from "./remote-ahead.js";
+import {
+  startRemoteAheadWatch,
+  stopRemoteAheadWatch,
+  syncStatusBarWithRemoteAheadCache,
+} from "./remote-ahead.js";
 
 export { executeSyncNow } from "./sync-now.js";
 
@@ -275,7 +279,7 @@ async function updateConfiguredContext(
   if (isConfigured) {
     const syncState = await loadSyncState(context);
     const lastSync = syncState ? new Date(syncState.lastSyncTimestamp) : undefined;
-    updateStatusBar("ok", lastSync);
+    syncStatusBarWithRemoteAheadCache(lastSync, { includeUnconfigured: true });
   } else {
     updateStatusBar("unconfigured");
   }

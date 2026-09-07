@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## v2.1.0
+
+### Added
+- Status-card warning phrases (**local changes**, remote updates, local-only files, diverged histories) are links: each opens a file-list editor panel with an immediate loading state, a Refresh button, and counts for changed, local-only, and missing-locally files so you can inspect before Sync Now, Pull, or Reset
+- Sync tab **Not synced** state when local Cursor files (or an unpushed clone) are not in the repository
+
+### Changed
+- Remote-ahead, diverged, and local-drift warnings sit inside the existing status card and reuse the single Sync Now button (no extra banner or second button)
+- Status bar no longer shows OK when the clone is ahead of origin or local files differ from the clone
+- Extra clicks on the same status warning only reveal the open file-list panel
+
+### Fixed
+- Sidebar no longer claims **Synced** solely because a previous push/pull recorded sync state
+- History delete icon is a filled trash SVG, spaced farther from the timestamp (`codicon-trash` has no glyph in the Cursor webview font)
 
 ## v2.0.1
 

@@ -36,7 +36,52 @@ export function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-const HISTORY_DELETE_ICON = `<svg class="history-delete-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" d="M10 2h1a1 1 0 0 1 1 1v1h2.5a.5.5 0 0 1 0 1H12.2l-.72 9.67A1.5 1.5 0 0 1 9.99 15H6.01a1.5 1.5 0 0 1-1.49-1.33L3.8 5H2.5a.5.5 0 0 1 0-1H5V3a1 1 0 0 1 1-1h1V1.5A1.5 1.5 0 0 1 8.5 0h-1A1.5 1.5 0 0 0 6 1.5V2zm-1 0V1.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5V2H9zM4.37 14l.7-8.5h6.86l.7 8.5H4.37zM6 6.75a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 6 6.75zm4 0a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 6.75z"/></svg>`;
+export function renderLinkedStatusWarning(
+  template: string,
+  links: Record<string, { label: string; kind: string }>
+): string {
+  const re = /\{(\w+)\}/g;
+  let result = "";
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(template)) !== null) {
+    result += escapeHtml(template.slice(last, match.index));
+    const token = match[1] ?? "";
+    const link = links[token];
+    if (link) {
+      result += `<a href="#" class="status-warning-link" data-command="status:preview" data-preview-kind="${escapeHtml(link.kind)}">${escapeHtml(link.label)}</a>`;
+    } else {
+      result += escapeHtml(match[0]);
+    }
+    last = match.index + match[0].length;
+  }
+  result += escapeHtml(template.slice(last));
+  return result;
+}
+
+export function statusWarningMarkup(
+  status: SyncTabState["status"]
+): string {
+  if (status === "behind") {
+    return renderLinkedStatusWarning(t("remoteAheadBanner"), {
+      updates: { label: t("remoteAheadUpdatesLink"), kind: "incoming" },
+      localOnly: { label: t("remoteAheadLocalOnlyLink"), kind: "localOnly" },
+    });
+  }
+  if (status === "diverged") {
+    return renderLinkedStatusWarning(t("remoteDivergedBanner"), {
+      link: { label: t("remoteDivergedLink"), kind: "diverged" },
+    });
+  }
+  if (status === "not-synced") {
+    return renderLinkedStatusWarning(t("localUnsyncedWarning"), {
+      link: { label: t("localUnsyncedLink"), kind: "local" },
+    });
+  }
+  return "";
+}
+
+const HISTORY_DELETE_ICON = `<svg class="history-delete-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M5.5 2h5v1.25h3.5V5H2V3.25h3.5V2zm1.25 0v1.25h2.5V2h-2.5zM4.15 6h7.7l-.5 7.15A1.2 1.2 0 0 1 10.16 14.4H5.84a1.2 1.2 0 0 1-1.19-1.25L4.15 6zm2.35 1.5v4h1.15v-4H6.5zm3 0v4h1.15v-4H9.5z"/></svg>`;
 
 export function historyPageCount(
   totalEntries: number,
@@ -240,18 +285,10 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
           ? String(state.behindCount)
           : t("syncTabBadge")
         : "";
-  const banner =
-    state.status === "behind"
-      ? `<div class="remote-ahead-banner" role="status">
-    <p>${escapeHtml(t("remoteAheadBanner"))}</p>
-    <button type="button" class="sync-now-btn" data-command="syncNow">${escapeHtml(t("syncNow"))}</button>
-  </div>`
-      : state.status === "diverged"
-        ? `<div class="remote-ahead-banner diverged" role="status">
-    <p>${escapeHtml(t("remoteDivergedBanner"))}</p>
-    <button type="button" class="action-btn" data-command="resetToRemote">${escapeHtml(t("resetToRemote"))}</button>
-  </div>`
-        : "";
+  const warningMarkup = statusWarningMarkup(state.status);
+  const warningHtml = warningMarkup
+    ? `<p class="status-warning" role="status">${warningMarkup}</p>`
+    : "";
   const conflictRow =
     conflictCount > 0
       ? `<button type="button" class="conflicts-reopen" data-command="conflicts:reveal">${escapeHtml(
@@ -260,7 +297,6 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
       : "";
 
   return `<div id="sync-pane" class="tab-pane" data-remote-ahead="${escapeHtml(remoteAhead)}" data-conflict-count="${conflictCount}" data-sync-badge="${escapeHtml(badgeText)}">
-  ${banner}
   ${conflictRow}
   <div class="status-card ${state.status}">
     <div class="status-icon-wrapper">
@@ -300,6 +336,7 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
       </div>`
           : ""
       }
+      ${warningHtml}
     </div>
   </div>
 

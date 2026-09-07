@@ -11,6 +11,8 @@
 !resources/sidebar/webview-settings.css
 !resources/conflicts/webview.css
 !resources/conflicts/webview.js
+!resources/status-preview/webview.css
+!resources/status-preview/webview.js
 !resources/transport-chat/scripts/cursor_chat_io.py
 !resources/transport-chat/scripts/cursor_chat_io_common.py
 !resources/transport-chat/scripts/cursor_chat_io_bundle.py
