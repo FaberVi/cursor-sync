@@ -86,11 +86,14 @@ export interface GistResponse {
   updated_at: string;
 }
 
+export type ConflictKind = "bothModified" | "deletedRemote" | "deletedLocal";
+
 export interface ConflictEntry {
   relativeSyncKey: string;
   localChecksum: string;
   remoteChecksum: string;
   baseChecksum: string;
+  kind: ConflictKind;
 }
 
 export type ConflictResolution = "keepLocal" | "keepRemote" | "skip";

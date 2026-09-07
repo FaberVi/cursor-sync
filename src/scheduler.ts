@@ -92,6 +92,8 @@ export async function determineSyncAction(
     const relation = clone.empty
       ? "empty"
       : await relationToOrigin(clone.clonePath, clone.identity.branch);
+    const { recordRemoteRelation } = await import("./remote-ahead.js");
+    recordRemoteRelation({ relation });
 
     const localHashes = await hashCursorSyncFiles();
     const cloneHashes = await hashCloneSyncFiles(clone.clonePath, clone.identity.basePath);
@@ -156,6 +158,15 @@ export async function scheduledTick(
     return;
   }
 
+  const { getPendingConflictCount } = await import("./conflict-panel.js");
+  if (getPendingConflictCount() > 0) {
+    logger.appendLine(
+      `[${new Date().toISOString()}] Scheduled sync skipped: conflict panel pending`
+    );
+    sendEvent(context, "scheduled_sync_skipped", { reason: "conflicts_pending" });
+    return;
+  }
+
   const lockHold = enterSyncLock();
   if (lockHold === "busy") {
     logger.appendLine(
@@ -180,7 +191,8 @@ export async function scheduledTick(
         break;
 
       case "pull": {
-        const message = "Pull required (will overwrite local Cursor files). Run Pull Now to confirm.";
+        const message =
+          "Remote updates available. Use Sync Now to download them without deleting local-only files, or Pull to fully mirror the remote.";
         logger.appendLine(`[${new Date().toISOString()}] Scheduled sync skipped: ${message}`);
         sendEvent(context, "scheduled_sync_skipped", { reason: "pull_required" });
         await addSyncHistoryEntry(context, {
@@ -241,5 +253,6 @@ export async function scheduledTick(
   } finally {
     endSyncAbort();
     leaveSyncLock(lockHold);
+    void import("./remote-ahead.js").then((mod) => mod.onSyncLockReleased(context));
   }
 }

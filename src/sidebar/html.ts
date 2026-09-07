@@ -20,6 +20,8 @@ import { t, webviewI18nPayload } from "./i18n.js";
 import { escapeHtml } from "./sync-tab.js";
 import { readCloneChatRaw } from "../sync-copy.js";
 import { getSyncClonePath, readRepoIdentity } from "../sync-clone.js";
+import { getRemoteAheadCache } from "../remote-ahead.js";
+import { getPendingConflictCount } from "../conflict-panel.js";
 import { CURSOR_CHAT_GIST_FILE_NAME } from "../chat-bundle-format.js";
 
 export interface BuildSyncTabStateOptions {
@@ -47,6 +49,8 @@ function buildSyncTabStateShell(context: vscode.ExtensionContext): SyncTabState 
     localChatCount: 0,
     remoteChatCount: undefined,
     chatCountsLoading: true,
+    behindCount: undefined,
+    conflictCount: 0,
   };
 }
 
@@ -90,25 +94,26 @@ export async function buildSyncTabState(
     }
   }
 
+  const ahead = applyRemoteAheadToTabState({
+    status: "not-synced",
+    lastSyncTime: undefined,
+    lastSyncDirection: undefined,
+    fileCount: 0,
+    remoteLabel: undefined,
+    remoteUrl: undefined,
+    destinationKind,
+    extensionVersion,
+    history,
+    chatsSyncEnabled,
+    localChatCount,
+    remoteChatCount,
+    chatCountsLoading,
+  });
   if (!syncState) {
-    return {
-      status: "not-synced",
-      lastSyncTime: undefined,
-      lastSyncDirection: undefined,
-      fileCount: 0,
-      remoteLabel: undefined,
-      remoteUrl: undefined,
-      destinationKind,
-      extensionVersion,
-      history,
-      chatsSyncEnabled,
-      localChatCount,
-      remoteChatCount,
-      chatCountsLoading,
-    };
+    return ahead;
   }
 
-  return {
+  return applyRemoteAheadToTabState({
     status: "synced",
     lastSyncTime: syncState.lastSyncTimestamp,
     lastSyncDirection: syncState.lastSyncDirection,
@@ -122,7 +127,22 @@ export async function buildSyncTabState(
     localChatCount,
     remoteChatCount,
     chatCountsLoading,
-  };
+  });
+}
+
+function applyRemoteAheadToTabState(state: SyncTabState): SyncTabState {
+  const cache = getRemoteAheadCache();
+  const conflictCount = getPendingConflictCount();
+  const next = { ...state, conflictCount, behindCount: cache?.behindCount };
+  if (state.status === "loading" || state.status === "syncing" || state.status === "error") {
+    return next;
+  }
+  if (cache?.relation === "behind") {
+    next.status = "behind";
+  } else if (cache?.relation === "diverged") {
+    next.status = "diverged";
+  }
+  return next;
 }
 
 function assembleSidebarDocument(params: {

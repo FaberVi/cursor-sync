@@ -53,7 +53,8 @@ export type SidebarMessage =
   | { command: "history:page"; page: number }
   | { command: "settings:get" }
   | { command: "settings:set"; key: string; value: unknown }
-  | { command: "sync:cancel" };
+  | { command: "sync:cancel" }
+  | { command: "conflicts:reveal" };
 
 const KNOWN_COMMANDS = new Set<string>([
   "syncNow",
@@ -81,6 +82,7 @@ const KNOWN_COMMANDS = new Set<string>([
   "settings:get",
   "settings:set",
   "sync:cancel",
+  "conflicts:reveal",
 ]);
 
 function assertSafeChatIds(msg: {
@@ -137,6 +139,11 @@ export async function dispatchSidebarMessage(
     case "sync:cancel":
       await vscode.commands.executeCommand("cursorSync.cancelSync");
       break;
+    case "conflicts:reveal": {
+      const { revealConflictPanel } = await import("../conflict-panel.js");
+      revealConflictPanel();
+      break;
+    }
     case "openSyncClone":
       await vscode.commands.executeCommand("cursorSync.openSyncClone");
       break;

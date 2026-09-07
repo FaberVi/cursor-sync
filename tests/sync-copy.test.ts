@@ -193,4 +193,91 @@ describe("sync-copy", () => {
     expect(plan.filesToWrite.some((f) => f.syncKey === "dot-cursor/mcp.json")).toBe(false);
     expect(plan.chatRaw).toBeUndefined();
   });
+
+  it("preserveLocalOnly does not wipe a local-only skill", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-copy-"));
+    const cursorUser = path.join(tmp, "user");
+    const dotCursor = path.join(tmp, "dot");
+    const clone = path.join(tmp, "clone");
+    await fs.mkdir(path.join(dotCursor, "skills", "bar"), { recursive: true });
+    const localSkill = path.join(dotCursor, "skills", "bar", "SKILL.md");
+    await fs.writeFile(localSkill, "local-only");
+    await fs.mkdir(path.join(cursorUser), { recursive: true });
+    const settings = path.join(cursorUser, "settings.json");
+    await fs.writeFile(settings, "{}");
+    const remoteSettings = path.join(clone, "cursor-sync", "cursor-user", "settings.json");
+    await fs.mkdir(path.dirname(remoteSettings), { recursive: true });
+    await fs.writeFile(remoteSettings, "{}");
+
+    vi.spyOn(paths, "resolveSyncRoots").mockReturnValue({ cursorUser, dotCursor });
+    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
+      { absolutePath: settings, relativeSyncKey: "cursor-user/settings.json" },
+      { absolutePath: localSkill, relativeSyncKey: "dot-cursor/skills/bar/SKILL.md" },
+    ]);
+
+    const mirrored = await planCloneToCursor(clone, "cursor-sync");
+    expect(mirrored.skillDeleteLocalOnly.some((prefix) => prefix.includes("skills/bar"))).toBe(
+      true
+    );
+
+    const preserved = await planCloneToCursor(clone, "cursor-sync", {
+      preserveLocalOnly: true,
+      previousRemoteChecksums: {},
+    });
+    expect(preserved.skillDeleteLocalOnly).toEqual([]);
+    expect(preserved.skillReplace).toEqual([]);
+    expect(preserved.keysToDelete).not.toContain("dot-cursor/skills/bar/SKILL.md");
+  });
+
+  it("preserveLocalOnly keeps an extra file in a tracked skill and deletes remote-removed files", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-copy-"));
+    const cursorUser = path.join(tmp, "user");
+    const dotCursor = path.join(tmp, "dot");
+    const clone = path.join(tmp, "clone");
+    await fs.mkdir(path.join(dotCursor, "skills", "foo"), { recursive: true });
+    await fs.mkdir(path.join(dotCursor, "rules"), { recursive: true });
+    await fs.mkdir(path.join(cursorUser), { recursive: true });
+    const settings = path.join(cursorUser, "settings.json");
+    const skill = path.join(dotCursor, "skills", "foo", "SKILL.md");
+    const extra = path.join(dotCursor, "skills", "foo", "notes.md");
+    const gone = path.join(dotCursor, "rules", "old.mdc");
+    await fs.writeFile(settings, "{}");
+    await fs.writeFile(skill, "skill");
+    await fs.writeFile(extra, "extra");
+    await fs.writeFile(gone, "old");
+    const remoteSettings = path.join(clone, "cursor-sync", "cursor-user", "settings.json");
+    const remoteSkill = path.join(clone, "cursor-sync", "dot-cursor", "skills", "foo", "SKILL.md");
+    await fs.mkdir(path.dirname(remoteSettings), { recursive: true });
+    await fs.mkdir(path.dirname(remoteSkill), { recursive: true });
+    await fs.writeFile(remoteSettings, "{}");
+    await fs.writeFile(remoteSkill, "skill");
+
+    vi.spyOn(paths, "resolveSyncRoots").mockReturnValue({ cursorUser, dotCursor });
+    vi.spyOn(paths, "enumerateSyncFiles").mockResolvedValue([
+      { absolutePath: settings, relativeSyncKey: "cursor-user/settings.json" },
+      { absolutePath: skill, relativeSyncKey: "dot-cursor/skills/foo/SKILL.md" },
+      { absolutePath: extra, relativeSyncKey: "dot-cursor/skills/foo/notes.md" },
+      { absolutePath: gone, relativeSyncKey: "dot-cursor/rules/old.mdc" },
+    ]);
+
+    const previousRemoteChecksums = {
+      "cursor-user/settings.json": "x",
+      "dot-cursor/skills/foo/SKILL.md": "x",
+      "dot-cursor/rules/old.mdc": "x",
+    };
+
+    const preserved = await planCloneToCursor(clone, "cursor-sync", {
+      preserveLocalOnly: true,
+      previousRemoteChecksums,
+    });
+    expect(preserved.skillReplace).toEqual([]);
+    expect(preserved.keysToDelete).not.toContain("dot-cursor/skills/foo/notes.md");
+    expect(preserved.keysToDelete).toContain("dot-cursor/rules/old.mdc");
+
+    const mirrored = await planCloneToCursor(clone, "cursor-sync");
+    expect(mirrored.skillReplace.some((prefix) => prefix.includes("skills/foo"))).toBe(
+      true
+    );
+    expect(mirrored.keysToDelete).toContain("dot-cursor/rules/old.mdc");
+  });
 });

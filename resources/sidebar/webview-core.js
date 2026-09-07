@@ -121,4 +121,15 @@
     if (b < 1024 * 1024) return Math.round(b / 1024) + " KB";
     return (b / (1024 * 1024)).toFixed(1) + " MB";
   };
+
+  CSW.applySyncTabBadge = function () {
+    var syncTab = document.querySelector('.tab-btn[data-tab="sync-pane"]');
+    var pane = document.getElementById("sync-pane");
+    if (!syncTab) return;
+    var badge = pane && pane.getAttribute("data-sync-badge");
+    var label = CSW.tr("tabSync", "Sync");
+    syncTab.innerHTML = badge
+      ? label + '<span class="tab-badge">' + CSW.escHtml(badge) + "</span>"
+      : label;
+  };
 })(globalThis.CursorSyncSidebar = globalThis.CursorSyncSidebar || {});

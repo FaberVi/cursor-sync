@@ -213,6 +213,12 @@ export const env = {
   },
 };
 
+export enum ViewColumn {
+  Active = -1,
+  Beside = -2,
+  One = 1,
+}
+
 export const window = {
   createOutputChannel: (_name: string) => ({
     appendLine: (_msg: string) => {},
@@ -234,6 +240,23 @@ export const window = {
     _options: unknown,
     task: (progress: { report: (_value: unknown) => void }) => PromiseLike<T> | T
   ) => task({ report: () => {} }),
+  createWebviewPanel: (
+    _viewType: string,
+    _title: string,
+    _showOptions: unknown,
+    _options?: unknown
+  ) => ({
+    webview: {
+      html: "",
+      cspSource: "https://mock",
+      asWebviewUri: (uri: { fsPath: string }) => uri,
+      onDidReceiveMessage: () => ({ dispose: () => {} }),
+      postMessage: async () => true,
+    },
+    reveal: () => {},
+    dispose: () => {},
+    onDidDispose: () => ({ dispose: () => {} }),
+  }),
   tabGroups: {
     activeTabGroup: {
       get activeTab() {

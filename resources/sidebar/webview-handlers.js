@@ -172,10 +172,7 @@
           var newSync = document.getElementById("sync-pane");
           if (newSync) newSync.style.display = "none";
         }
-        var syncTab = document.querySelector('.tab-btn[data-tab="sync-pane"]');
-        if (syncTab) {
-          syncTab.innerHTML = CSW.tr("tabSync", "Sync");
-        }
+        CSW.applySyncTabBadge();
         CSW.setSyncActionsLocked(CSW.syncActionsLocked);
       }
       return;

@@ -351,9 +351,15 @@ export type PullReplacePlan = {
   chatRaw?: string;
 };
 
+export type PullCloneToCursorOptions = {
+  preserveLocalOnly?: boolean;
+  previousRemoteChecksums?: Record<string, string>;
+};
+
 export async function planCloneToCursor(
   clonePath: string,
-  basePath: string
+  basePath: string,
+  options: PullCloneToCursorOptions = {}
 ): Promise<PullReplacePlan> {
   const roots = resolveSyncRoots();
   const localEntries = await enumerateSyncFiles(roots);
@@ -361,13 +367,17 @@ export async function planCloneToCursor(
   const index = await indexCloneSyncFiles(clonePath, basePath);
   const manifest = await readCloneManifest(clonePath, basePath);
   const remoteChecksums = await hashCloneSyncFiles(clonePath, basePath);
+  const preserveLocalOnly = options.preserveLocalOnly === true;
+  const previousRemoteChecksums = options.previousRemoteChecksums ?? {};
 
   const remoteKeys = [...new Set([...index.nested.keys(), ...index.dashed.keys()])];
-  const folderPlan = planSkillFolderWipes({
-    remoteKeys,
-    localKeys: localSyncKeys,
-    keepLocalKeys: new Set(),
-  });
+  const folderPlan = preserveLocalOnly
+    ? { replace: [] as string[], deleteLocalOnly: [] as string[] }
+    : planSkillFolderWipes({
+        remoteKeys,
+        localKeys: localSyncKeys,
+        keepLocalKeys: new Set(),
+      });
   const wipePrefixes = [...folderPlan.replace, ...folderPlan.deleteLocalOnly];
 
   const localHashes = await hashCursorSyncFiles(roots);
@@ -395,10 +405,10 @@ export async function planCloneToCursor(
   }
 
   const rawKeysToDelete = planLocalDeletes({
-    mode: "mirror",
+    mode: preserveLocalOnly ? "remoteRemoved" : "mirror",
     localSyncKeys,
     remoteChecksums,
-    previousRemoteChecksums: {},
+    previousRemoteChecksums: preserveLocalOnly ? previousRemoteChecksums : {},
     keepLocalKeys: new Set(),
   });
   const coveredDeletes = new Set(keysCoveredBySkillFolders(rawKeysToDelete, wipePrefixes));

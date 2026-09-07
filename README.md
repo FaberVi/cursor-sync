@@ -4,7 +4,7 @@ Community fork of [**Cursor Sync**](https://github.com/Marcelo-Barella/cursor-sy
 
 Sync user-level Cursor settings and selected `~/.cursor` assets to a **private GitHub repository** via a local `git` clone, with manual push/pull, optional scheduled sync, extension list sync, and a **Chats** sidebar for discovering, exporting, importing, and syncing Composer conversations across machines.
 
-Current version: **2.0.0**. Development happens on the **`dev`** branch; **`main`** tracks stable releases. Requires **VS Code / Cursor 1.128+** (`engines.vscode`), **Git on PATH** (Git for Windows on Windows), and a GitHub PAT with **`repo`** scope (or fine-grained Contents access to the target repository).
+Current version: **2.0.1**. Development happens on the **`dev`** branch; **`main`** tracks stable releases. Requires **VS Code / Cursor 1.128+** (`engines.vscode`), **Git on PATH** (Git for Windows on Windows), and a GitHub PAT with **`repo`** scope (or fine-grained Contents access to the target repository).
 
 ## Upstream
 
@@ -46,7 +46,7 @@ This runs the production build (`esbuild`) and packages with `@vscode/vsce`. Out
 cursor-sync-<version>.vsix
 ```
 
-For example: `cursor-sync-2.0.0.vsix` in the repository root.
+For example: `cursor-sync-2.0.1.vsix` in the repository root.
 
 On macOS or Linux you can also run `./package-vsix.sh`.
 
@@ -55,21 +55,21 @@ On macOS or Linux you can also run `./package-vsix.sh`.
 **Cursor** (recommended):
 
 ```bash
-cursor --install-extension ./cursor-sync-2.0.0.vsix --force
+cursor --install-extension ./cursor-sync-2.0.1.vsix --force
 ```
 
 **VS Code**:
 
 ```bash
-code --install-extension ./cursor-sync-2.0.0.vsix --force
+code --install-extension ./cursor-sync-2.0.1.vsix --force
 ```
 
-Replace `1.0.0` with the version from `package.json`. Use `--force` to upgrade an existing install.
+Replace `2.0.1` with the version from `package.json`. Use `--force` to upgrade an existing install.
 
 **Windows (PowerShell)**:
 
 ```powershell
-cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-2.0.0.vsix" --force
+cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-2.0.1.vsix" --force
 ```
 
 ### 4. Reload the window
@@ -133,14 +133,15 @@ The local clone lives under the extension global storage folder (`sync-repo`), s
 ### 3. Push and pull
 
 - **Push Now** copies Cursor User + `~/.cursor` into the clone and `git push` (no force; Git refuses non-fast-forward). If origin is ahead, Push refuses until you Pull. If histories have diverged, Push refuses until **Reset to remote** or you fix the clone in a file manager.
-- **Pull Now** fast-forwards the clone, then **replaces** synced Cursor folders from it (including deleting local-only synced files and replacing skill folders). A modal lists how many files will update/delete and how many skill folders will be replaced.
-- **Reset to remote** discards local clone commits, matches origin, then copies into Cursor (same replace confirmation).
+- **Pull Now** fast-forwards the clone, then **mirrors** synced Cursor folders from it (deletes local-only synced files and replaces skill folders). A modal names incoming commits and the local-only files that will be deleted.
+- **Reset to remote** discards local clone commits, matches origin, then copies into Cursor (same mirror confirmation).
 - **Open clone** reveals the clone directory in the OS file manager.
-- **Sync Now** uses the same decision table as the scheduler: pull if origin is ahead or a never-synced machine already has nested clone files; otherwise push. Fast-forward only — no merge, no Keep Local/Remote.
-- Scheduled sync **never** shows the pull replace modal: if a pull would be required it skips and records history `"pull required"`.
+- **Sync Now** uses the same decision table as the scheduler: pull if origin is ahead or a never-synced machine already has nested clone files; otherwise push. A Sync Now pull is git-like: it updates tracked files and **keeps local-only** synced files (skills, rules, MCP, settings, extras in a tracked skill). If both sides changed the same file, an **editor tab** (`Cursor Sync: Conflicts`) lets you keep local or remote per file. Fast-forward only — no content merge.
+- When origin is ahead, the Sync tab shows a banner, the status bar shows remote updates, and a toast appears once until you pull or histories match again.
+- Scheduled sync **never** shows the pull replace modal or the conflict tab: if a pull would be required it skips and records history `"pull required"`.
 - **Stop Sync** aborts the in-flight run, restores local Cursor files that run changed, and can `git reset --hard` the clone to the SHA captured before copy.
 
-Gist destination, one-shot Gist export/import, Mirror, and conflict Keep Local/Remote were removed in 2.0. Leftover `destination.type = gist` settings show a warning to connect a repository; there is no automatic Gist content migration.
+Gist destination, one-shot Gist export/import, and the old Gist Mirror destination were removed in 2.0. Leftover `destination.type = gist` settings show a warning to connect a repository; there is no automatic Gist content migration.
 
 Configure destination in the sidebar **Settings** tab or via `cursorSync.destination.repo` / `branch` / `path`.
 
@@ -148,7 +149,7 @@ Configure destination in the sidebar **Settings** tab or via `cursorSync.destina
 
 | Command | Description |
 |---------|-------------|
-| `Cursor Sync: Sync Now` | Fast-forward the clone, then push when origin is not ahead |
+| `Cursor Sync: Sync Now` | Fast-forward like git (keep local-only files; conflict tab if needed), then push when origin is not ahead |
 | `Cursor Sync: Stop Sync` | Abort in-flight push/pull/sync and undo local files from this run |
 | `Cursor Sync: Configure GitHub` | Set or update PAT and repository |
 | `Cursor Sync: Push Now` / `Pull Now` | Copy Cursor → clone → origin, or origin → clone → Cursor |

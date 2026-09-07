@@ -158,6 +158,21 @@ describe("scheduled sync debug wiring", () => {
     expect(options).toMatchObject({ title: "Scheduled sync failed: no_token" });
   });
 
+  it("skips scheduledTick when the conflict panel is pending", async () => {
+    const conflictPanel = await import("../src/conflict-panel.js");
+    vi.spyOn(conflictPanel, "getPendingConflictCount").mockReturnValue(2);
+    const scheduler = await import("../src/scheduler.js");
+    const determineSpy = vi
+      .spyOn(scheduler.scheduledSyncActionResolver, "determineSyncAction")
+      .mockResolvedValue({ action: "push" });
+
+    await scheduler.scheduledTick(mockContext());
+
+    expect(determineSpy).not.toHaveBeenCalled();
+    expect(executePushMock).not.toHaveBeenCalled();
+    expect(executePullMock).not.toHaveBeenCalled();
+  });
+
   it("skips scheduled pull without a modal or debug toast", async () => {
     const scheduler = await import("../src/scheduler.js");
     const addHistory = vi.spyOn(

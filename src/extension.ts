@@ -20,7 +20,7 @@ import { executeReset } from "./reset.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { getLogger, loadSyncState } from "./diagnostics.js";
 import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
-import { initializeSidebar } from "./sidebar/index.js";
+import { initializeSidebar, revealSidebar } from "./sidebar/index.js";
 import { initializeStatusBar, updateStatusBar } from "./statusbar.js";
 import { getOrCreateClientId } from "./analytics.js";
 import {
@@ -38,6 +38,8 @@ import {
 import { flushPendingSidebarWriteback } from "./chat-import-sidebar-writeback.js";
 import { executeSyncNow } from "./sync-now.js";
 import { isLegacyGistConfigured } from "./remote/destination.js";
+import { restorePendingCloneResetIfAny } from "./sync-clone.js";
+import { startRemoteAheadWatch, stopRemoteAheadWatch } from "./remote-ahead.js";
 
 export { executeSyncNow } from "./sync-now.js";
 
@@ -199,7 +201,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  updateConfiguredContext(context);
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.revealSidebar", () => {
+      revealSidebar();
+    })
+  );
+
+  await updateConfiguredContext(context);
+  await restorePendingCloneResetIfAny(context);
+  startRemoteAheadWatch(context);
   getOrCreateClientId(context);
   startScheduler(context);
 
@@ -254,6 +264,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 export function deactivate(): void {
   disposeActivationWatcher();
   stopScheduler();
+  stopRemoteAheadWatch();
 }
 
 async function updateConfiguredContext(

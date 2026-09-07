@@ -172,7 +172,45 @@ export type MessageKey =
   | "backupDetailNoStore"
   | "backupDetailSubagentJsonl"
   | "backupDetailDiskKvRows"
-  | "backupDetailToolBubbles";
+  | "backupDetailToolBubbles"
+  | "behind"
+  | "diverged"
+  | "later"
+  | "proceed"
+  | "remoteAheadBanner"
+  | "remoteDivergedBanner"
+  | "syncTabBadge"
+  | "conflictsPendingReopen"
+  | "conflictPanelTitle"
+  | "keepAllLocal"
+  | "keepAllRemote"
+  | "keepLocal"
+  | "keepRemote"
+  | "applyConflicts"
+  | "cancelSync"
+  | "thisMachine"
+  | "repository"
+  | "fileMissing"
+  | "binaryOrTooLarge"
+  | "conflictBothModified"
+  | "conflictDeletedRemote"
+  | "conflictDeletedLocal"
+  | "conflictsResolveToast"
+  | "openConflictTab"
+  | "closeConflictsConfirm"
+  | "originAheadCommits"
+  | "incomingChanges"
+  | "incomingNoSkillFolders"
+  | "localOnlyKept"
+  | "conflictsWillOpenTab"
+  | "syncNowCounts"
+  | "pullMirrorLead"
+  | "resetMirrorLead"
+  | "localOnlyDeleted"
+  | "pullMirrorCounts"
+  | "andNMore"
+  | "resolvedCount"
+  | "selectConflictFile";
 
 const CATALOG: Record<UiLanguage, Record<MessageKey, string>> = {
   en: EN,
@@ -311,6 +349,7 @@ export function webviewI18nPayload(lang: UiLanguage = readUiLanguage()): Record<
     "timeMinutesAgo",
     "timeHoursAgo",
     "timeDaysAgo",
+    "tabSync",
   ];
   const out: Record<string, string> = {};
   for (const key of keys) {

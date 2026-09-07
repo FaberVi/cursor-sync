@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { getLogger, addSyncHistoryEntry, saveSyncState, loadSyncState } from "./diagnostics.js";
-import { notifySyncQuiet } from "./sync-notify.js";
+import { notifySyncQuiet, notifySyncActionRequired } from "./sync-notify.js";
 import { updateStatusBar, restoreStatusBarAfterCancel } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
@@ -40,6 +40,7 @@ import { syncExtensionsFromRemoteFiles } from "./extensions.js";
 import {
   applyCloneToCursor,
   cloneAbsForSyncKey,
+  hashCursorSyncFiles,
   planCloneToCursor,
   pullConfirmCounts,
   withChatCollectionChecksum,
@@ -48,6 +49,8 @@ import {
 import {
   currentHeadSha,
   ffMergeFromOrigin,
+  persistPendingCloneReset,
+  clearPendingCloneReset,
   resetCloneWorktree,
   resetHardToOrigin,
 } from "./sync-clone.js";
@@ -55,6 +58,16 @@ import { buildRepoSyncState } from "./remote/destination.js";
 import { blockOnRelation, failSync, prepareRepoSync, type SyncOpTrigger } from "./sync-prepare.js";
 import { enterSyncLock, isSyncLocked, leaveSyncLock } from "./sync-lock.js";
 import * as fs from "node:fs/promises";
+import { classifyPullConflicts, overlayPlanWithResolutions, applyKeepLocalChecksums, keepLocalKeysFromResolutions } from "./sync-conflicts.js";
+import { openConflictPanel } from "./conflict-panel.js";
+import {
+  buildPullMirrorConfirmMessage,
+  buildSyncNowConfirmMessage,
+  listLocalOnlyKeys,
+  readIncomingCommitSummary,
+} from "./pull-confirm.js";
+import { recordRemoteRelation, onSyncLockReleased } from "./remote-ahead.js";
+import { enumerateSyncFiles, resolveSyncRoots } from "./paths.js";
 
 export type PullTrigger = SyncOpTrigger;
 
@@ -100,14 +113,25 @@ export async function executePull(
     }
     if (success) {
       commitSyncFileJournal();
+      progress.complete(true);
+      updateStatusBar("ok", new Date());
     } else {
       await rollbackSyncFileJournal(context);
+      await clearPendingCloneReset(context);
+      progress.complete(false);
+      const ahead = (await import("./remote-ahead.js")).getRemoteAheadCache()?.relation;
+      if (isSyncAborted()) {
+        restoreStatusBarAfterCancel();
+      } else if (ahead === "behind" || ahead === "diverged") {
+        const { syncStatusBarWithRemoteAheadCache } = await import("./remote-ahead.js");
+        syncStatusBarWithRemoteAheadCache();
+      } else {
+        updateStatusBar("error", new Date());
+      }
     }
-    progress.complete(success);
     getLogger().appendLine(
       `[${new Date().toISOString()}] Pull finished in ${formatElapsedPrecise(Date.now() - startedAt)} (${success ? "ok" : "failed"}).`
     );
-    updateStatusBar(success ? "ok" : "error", new Date());
     refreshSidebar();
     return success;
   } catch (err) {
@@ -122,6 +146,7 @@ export async function executePull(
       return false;
     }
     await rollbackSyncFileJournal(context);
+    await clearPendingCloneReset(context);
     updateStatusBar("error", new Date());
     refreshSidebar();
     const errMessage = err instanceof Error ? err.message : String(err);
@@ -136,6 +161,7 @@ export async function executePull(
   } finally {
     leaveSyncLock(lockHold);
     endSyncAbort();
+    void onSyncLockReleased(context);
   }
 }
 
@@ -196,18 +222,66 @@ async function doPull(
     await ffMergeFromOrigin(clone.clonePath, clone.identity.branch);
   }
 
+  await persistPendingCloneReset(context, {
+    clonePath: clone.clonePath,
+    sha: preSha,
+  });
+
   progress.report({ message: "Comparing clone to Cursor folders…" });
-  const plan = await planCloneToCursor(clone.clonePath, clone.identity.basePath);
+  const previousState = await loadSyncState(context);
+  const previousChecksums = previousState?.localChecksums ?? {};
+  const preserveLocalOnly = trigger === "syncNow" && !resetToRemote;
+  let plan = await planCloneToCursor(clone.clonePath, clone.identity.basePath, {
+    preserveLocalOnly,
+    previousRemoteChecksums: previousChecksums,
+  });
+  const localHashes = await hashCursorSyncFiles();
+  const classified = preserveLocalOnly
+    ? classifyPullConflicts({
+        localChecksums: localHashes,
+        remoteChecksums: plan.remoteChecksums,
+        baseChecksums: previousChecksums,
+      })
+    : { conflicts: [], autoKeepRemote: [], autoKeepLocal: [] };
+  let keepLocalKeys = [...classified.autoKeepLocal];
+  if (keepLocalKeys.length > 0) {
+    plan = overlayPlanWithResolutions(
+      plan,
+      keepLocalKeys.map((relativeSyncKey) => ({
+        relativeSyncKey,
+        resolution: "keepLocal" as const,
+      }))
+    );
+  }
   const counts = pullConfirmCounts(plan);
   const importChat = await chatImportNeeded(context, plan);
+  const incoming = await readIncomingCommitSummary({
+    clonePath: clone.clonePath,
+    basePath: clone.identity.basePath,
+    preSha,
+  });
+  const localEntries = await enumerateSyncFiles(resolveSyncRoots());
+  const localOnlyKeys = listLocalOnlyKeys({
+    localKeys: localEntries.map((e) => e.relativeSyncKey),
+    remoteChecksums: plan.remoteChecksums,
+    previousRemoteChecksums: previousChecksums,
+  });
 
-  if (counts.n === 0 && counts.m === 0 && counts.k === 0 && !importChat) {
+  if (
+    counts.n === 0 &&
+    counts.m === 0 &&
+    counts.k === 0 &&
+    !importChat &&
+    classified.conflicts.length === 0
+  ) {
     await saveCompletedState(
       context,
       clone.identity,
       withChatCollectionChecksum(plan.remoteChecksums, plan.chatRaw),
       "pull"
     );
+    await clearPendingCloneReset(context);
+    recordRemoteRelation({ relation: "equal" });
     if (trigger === "manual" || trigger === "syncNow") {
       notifySyncQuiet("Pull complete: already in sync.");
     }
@@ -226,24 +300,66 @@ async function doPull(
     const confirmMessage =
       counts.n === 0 && counts.m === 0 && counts.k === 0 && importChat
         ? t("pullReplaceConfirmChatsOnly")
-        : counts.k > 0
-          ? t("pullReplaceConfirm", {
+        : preserveLocalOnly
+          ? buildSyncNowConfirmMessage({
+              incoming,
+              localOnlyKeys,
+              conflictCount: classified.conflicts.length,
+              n: counts.n,
+              m: counts.m,
+            })
+          : buildPullMirrorConfirmMessage({
+              incoming,
+              localOnlyKeys,
               n: counts.n,
               m: counts.m,
               k: counts.k,
-            })
-          : t("pullReplaceConfirmFilesOnly", { n: counts.n, m: counts.m });
+              reset: resetToRemote,
+            });
     const choice = await vscode.window.showWarningMessage(
       confirmMessage,
       { modal: true },
-      "Proceed",
-      "Cancel"
+      t("proceed"),
+      t("cancel")
     );
-    if (choice !== "Proceed") {
+    if (choice !== t("proceed")) {
       logger.appendLine(`[${new Date().toISOString()}] Pull cancelled by user`);
       sendEvent(context, "sync_failed", { direction: "pull", reason: "cancelled", trigger });
+      await clearPendingCloneReset(context);
       return false;
     }
+  }
+
+  if (preserveLocalOnly && classified.conflicts.length > 0) {
+    const panelPromise = openConflictPanel({
+      context,
+      conflicts: classified.conflicts,
+      clonePath: clone.clonePath,
+      basePath: clone.identity.basePath,
+    });
+    void (async () => {
+      const openTab = t("openConflictTab");
+      const choice = await notifySyncActionRequired(
+        t("conflictsResolveToast"),
+        openTab
+      );
+      if (choice === openTab) {
+        const { revealConflictPanel } = await import("./conflict-panel.js");
+        revealConflictPanel();
+      }
+    })();
+    const resolved = await panelPromise;
+    if (!resolved) {
+      logger.appendLine(`[${new Date().toISOString()}] Pull cancelled during conflicts`);
+      sendEvent(context, "sync_failed", { direction: "pull", reason: "cancelled", trigger });
+      await clearPendingCloneReset(context);
+      return false;
+    }
+    plan = overlayPlanWithResolutions(plan, resolved);
+    keepLocalKeys = [
+      ...keepLocalKeys,
+      ...keepLocalKeysFromResolutions(resolved),
+    ];
   }
 
   throwIfAborted();
@@ -277,13 +393,20 @@ async function doPull(
     await storeChatSyncFingerprint(context, await computeChatSyncLocalFingerprint());
   }
 
+  const checksums = applyKeepLocalChecksums(
+    withChatCollectionChecksum(applied.checksums, plan.chatRaw),
+    previousChecksums,
+    keepLocalKeys
+  );
   const next = await saveCompletedState(
     context,
     clone.identity,
-    withChatCollectionChecksum(applied.checksums, plan.chatRaw),
+    checksums,
     "pull"
   );
   markJournalStateWritten();
+  await clearPendingCloneReset(context);
+  recordRemoteRelation({ relation: "equal" });
 
   const files = [...applied.writtenKeys, ...applied.deletedKeys].sort();
   await addSyncHistoryEntry(context, {

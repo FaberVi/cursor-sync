@@ -130,6 +130,7 @@ export async function executePush(
   } finally {
     leaveSyncLock(lockHold);
     endSyncAbort();
+    void import("./remote-ahead.js").then((mod) => mod.onSyncLockReleased(context));
   }
 }
 
@@ -244,6 +245,8 @@ async function doPush(
       committed ? `Pushed ${fileCount} file(s).` : "Push complete: already in sync."
     );
   }
+  const { recordRemoteRelation } = await import("./remote-ahead.js");
+  recordRemoteRelation({ relation: "equal" });
   return true;
 }
 

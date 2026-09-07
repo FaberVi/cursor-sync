@@ -24,9 +24,10 @@ export const IT: Record<MessageKey, string> = {
   pullReplaceConfirmChatsOnly:
     "Il pull importerà la collezione chat dal repository su questa macchina. Continuare?",
   syncNowHint:
-    "Fa pull se origin è avanti (con conferma), altrimenti push delle modifiche Cursor. Solo fast-forward.",
+    "Se origin è avanti, fa fast-forward come git e tiene i file solo-locali; altrimenti push. I conflitti si aprono in una scheda editor.",
   pushHint: "Copia impostazioni Cursor e asset ~/.cursor nel clone locale e fa git push",
-  pullHint: "Fa fast-forward del clone e sostituisce le cartelle Cursor syncate da lì",
+  pullHint:
+    "Fa fast-forward del clone e allinea (mirror) le cartelle Cursor syncate da lì (cancella i file solo-locali)",
   openCursorFolder: "Cartella Cursor",
   openCursorFolderHint:
     "Apre ~/.cursor nel file manager (skill, regole, MCP, chat). Per settings.json usa la palette comandi (Cartella dati Cursor).",
@@ -193,4 +194,50 @@ export const IT: Record<MessageKey, string> = {
   backupDetailSubagentJsonl: "{n} jsonl subagent",
   backupDetailDiskKvRows: "diskKv {n} righe",
   backupDetailToolBubbles: "{n} bolle tool",
+  behind: "Aggiornamenti remoti",
+  diverged: "Cronologie divergenti",
+  later: "Più tardi",
+  proceed: "Procedi",
+  remoteAheadBanner:
+    "Il repository remoto ha aggiornamenti. Sincronizza ora li scarica senza cancellare i file solo-locali. Pull allinea tutto al remoto (mirror) e può cancellarli.",
+  remoteDivergedBanner:
+    "Questo clone e origin sono divergenti. Usa Reset dal remoto per allineare (mirror: i file solo-locali syncati vengono cancellati), oppure apri il clone e sistema git a mano.",
+  syncTabBadge: "!",
+  conflictsPendingReopen: "{n} conflitti in attesa — riapri scheda",
+  conflictPanelTitle: "Cursor Sync: Conflitti",
+  keepAllLocal: "Tieni tutto locale",
+  keepAllRemote: "Tieni tutto remoto",
+  keepLocal: "Locale",
+  keepRemote: "Remoto",
+  applyConflicts: "Applica",
+  cancelSync: "Annulla sync",
+  thisMachine: "Questa macchina",
+  repository: "Repository",
+  fileMissing: "File assente",
+  binaryOrTooLarge: "File binario o troppo grande: scegli la versione intera.",
+  conflictBothModified: "Entrambi modificati",
+  conflictDeletedRemote: "Eliminato sul remoto",
+  conflictDeletedLocal: "Eliminato in locale",
+  conflictsResolveToast: "Risolvi i conflitti nella scheda editor Cursor Sync.",
+  openConflictTab: "Apri scheda",
+  closeConflictsConfirm: "Chiudere questa scheda e annullare la sync in corso?",
+  originAheadCommits: "Origin è avanti di {n} commit: {commits}.",
+  incomingChanges: "Le modifiche in arrivo aggiornano: {files}.",
+  incomingNoSkillFolders: "I commit in arrivo non modificano cartelle skill.",
+  localOnlyKept:
+    "File solo-locali non in quei commit: {files} — verranno conservati.",
+  conflictsWillOpenTab:
+    "{n} conflitti si apriranno in una scheda editor per scegliere locale o remoto per file.",
+  syncNowCounts:
+    "Aggiornerà {n} file ed eliminerà {m} file che origin ha rimosso.",
+  pullMirrorLead:
+    "Questo Pull è un mirror: cancella i file syncati presenti solo su questa macchina e riscrive il set dal git.",
+  resetMirrorLead:
+    "Reset dal remoto è un mirror: cancella i file syncati presenti solo su questa macchina e riscrive il set dal git.",
+  localOnlyDeleted: "File/skill solo-locali che verranno eliminati: {files}.",
+  pullMirrorCounts:
+    "Aggiorna {n} file, elimina {m} file, sostituisce {k} cartelle skill.",
+  andNMore: "e altri {n}",
+  resolvedCount: "{k}/{n} risolti",
+  selectConflictFile: "Seleziona un file per confrontare locale e remoto.",
 };

@@ -1,11 +1,17 @@
 import * as vscode from "vscode";
 import { EXTENSION_LABEL } from "./extension-branding.js";
+import { t } from "./sidebar/i18n.js";
 
 let statusBarItem: vscode.StatusBarItem;
 
-export type SyncState = "ok" | "syncing" | "error" | "unconfigured";
+export type SyncState = "ok" | "syncing" | "error" | "unconfigured" | "behind";
 
 let lastIdleState: SyncState = "unconfigured";
+let currentState: SyncState = "unconfigured";
+
+export function getStatusBarState(): SyncState {
+  return currentState;
+}
 
 export function initializeStatusBar(context: vscode.ExtensionContext): void {
   statusBarItem = vscode.window.createStatusBarItem(
@@ -19,11 +25,16 @@ export function initializeStatusBar(context: vscode.ExtensionContext): void {
   statusBarItem.show();
 }
 
-export function updateStatusBar(state: SyncState, lastSync?: Date): void {
+export function updateStatusBar(
+  state: SyncState,
+  lastSync?: Date,
+  tooltipOverride?: string
+): void {
   if (!statusBarItem) {
     return;
   }
 
+  currentState = state;
   if (state !== "syncing") {
     lastIdleState = state;
   }
@@ -54,11 +65,20 @@ export function updateStatusBar(state: SyncState, lastSync?: Date): void {
       tooltip = `${EXTENSION_LABEL} is not configured. Click to set up.`;
       statusBarItem.command = "cursorSync.configureGithub";
       break;
+    case "behind":
+      icon = "$(cloud-download)";
+      text = `Sync: ${t("behind")}`;
+      tooltip = tooltipOverride ?? t("remoteAheadBanner");
+      break;
   }
 
   if (state === "syncing") {
     statusBarItem.command = "cursorSync.cancelSync";
-  } else if (state !== "unconfigured") {
+  } else if (state === "unconfigured") {
+    statusBarItem.command = "cursorSync.configureGithub";
+  } else if (state === "behind") {
+    statusBarItem.command = "cursorSync.revealSidebar";
+  } else {
     statusBarItem.command = "cursorSync.showStatus";
   }
 

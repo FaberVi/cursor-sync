@@ -195,6 +195,26 @@ describe("renderSyncPane loading shell", () => {
   });
 });
 
+describe("renderSyncPane remote ahead", () => {
+  it("shows a behind banner and data-remote-ahead", () => {
+    const state: SyncTabState = {
+      ...minimalSyncState(),
+      status: "behind",
+      behindCount: 2,
+    };
+    const html = renderSyncPane(state, 0);
+    expect(html).toContain('data-remote-ahead="behind"');
+    expect(html).toContain("remote-ahead-banner");
+    expect(html).toContain("Sync Now");
+  });
+
+  it("shows a diverged banner with reset", () => {
+    const html = renderSyncPane({ ...minimalSyncState(), status: "diverged" }, 0);
+    expect(html).toContain('data-remote-ahead="diverged"');
+    expect(html).toContain("resetToRemote");
+  });
+});
+
 describe("renderSyncPane history header", () => {
   it("shows clear-all control when history has entries", () => {
     const state = minimalSyncState();

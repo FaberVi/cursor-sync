@@ -5,7 +5,7 @@ import { formatRelativeTime, t } from "./i18n.js";
 export const HISTORY_PAGE_SIZE = 5;
 
 export interface SyncTabState {
-  status: "synced" | "not-synced" | "syncing" | "error" | "loading";
+  status: "synced" | "not-synced" | "syncing" | "error" | "loading" | "behind" | "diverged";
   lastSyncTime: string | undefined;
   lastSyncDirection: "push" | "pull" | undefined;
   fileCount: number;
@@ -24,6 +24,8 @@ export interface SyncTabState {
   remoteChatCount: number | undefined;
   /** True while local/remote chat counts are still being computed. */
   chatCountsLoading?: boolean;
+  behindCount?: number;
+  conflictCount?: number;
 }
 
 export function relativeTime(isoString: string): string {
@@ -176,6 +178,8 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
     syncing: "sync~spin",
     loading: "sync~spin",
     error: "error",
+    behind: "cloud-download",
+    diverged: "warning",
   };
   const statusLabelMap = {
     synced: t("synced"),
@@ -183,6 +187,8 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
     syncing: t("syncing"),
     loading: t("loading"),
     error: t("syncError"),
+    behind: t("behind"),
+    diverged: t("diverged"),
   };
 
   const statusIcon = statusIconMap[state.status];
@@ -223,7 +229,39 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
       : escapeHtml(t("chatsLocalNotInBackup", { local: state.localChatCount }))
     : `<span class="chat-sync-disabled">${escapeHtml(t("chatsNotIncluded"))}</span>`;
 
-  return `<div id="sync-pane" class="tab-pane">
+  const remoteAhead =
+    state.status === "behind" || state.status === "diverged" ? state.status : "";
+  const conflictCount = state.conflictCount ?? 0;
+  const badgeText =
+    conflictCount > 0
+      ? String(conflictCount)
+      : remoteAhead
+        ? state.behindCount && state.behindCount > 0
+          ? String(state.behindCount)
+          : t("syncTabBadge")
+        : "";
+  const banner =
+    state.status === "behind"
+      ? `<div class="remote-ahead-banner" role="status">
+    <p>${escapeHtml(t("remoteAheadBanner"))}</p>
+    <button type="button" class="sync-now-btn" data-command="syncNow">${escapeHtml(t("syncNow"))}</button>
+  </div>`
+      : state.status === "diverged"
+        ? `<div class="remote-ahead-banner diverged" role="status">
+    <p>${escapeHtml(t("remoteDivergedBanner"))}</p>
+    <button type="button" class="action-btn" data-command="resetToRemote">${escapeHtml(t("resetToRemote"))}</button>
+  </div>`
+        : "";
+  const conflictRow =
+    conflictCount > 0
+      ? `<button type="button" class="conflicts-reopen" data-command="conflicts:reveal">${escapeHtml(
+          t("conflictsPendingReopen", { n: conflictCount })
+        )}</button>`
+      : "";
+
+  return `<div id="sync-pane" class="tab-pane" data-remote-ahead="${escapeHtml(remoteAhead)}" data-conflict-count="${conflictCount}" data-sync-badge="${escapeHtml(badgeText)}">
+  ${banner}
+  ${conflictRow}
   <div class="status-card ${state.status}">
     <div class="status-icon-wrapper">
       ${state.status === "synced" ? cursorLogoSvg : `<span class="codicon codicon-${statusIcon}"></span>`}

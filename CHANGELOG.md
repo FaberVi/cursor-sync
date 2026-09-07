@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v2.0.1
+
+### Added
+- Persistent Sync-tab banner, status bar, and one toast per episode when origin is ahead or histories have diverged, with a 5-minute check independent of auto-sync
+- Sync Now fast-forwards like git and keeps files that exist only on this machine; Pull and Reset to remote stay a full mirror, with a confirmation that names incoming commits and local-only files
+- Sync Now opens an editor tab to choose Keep Local or Keep Remote for each conflicting file
+
 ### Fixed
 - Push no longer passes `git push --ff-only` (that flag is only for merge/pull). Default `git push` already refuses non-fast-forward updates
 - Push, pull, Sync Now, and the scheduler share one lock so they cannot run on the same clone at once

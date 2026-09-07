@@ -481,5 +481,46 @@ export function divergedMessage(): string {
 }
 
 export function originAheadMessage(): string {
-  return "Origin is ahead of this machine. Pull first (this will overwrite local Cursor files that are in the sync set).";
+  return "Origin is ahead of this machine. Use Sync Now to download remote updates without deleting local-only synced files, or Pull to fully mirror the remote.";
+}
+
+export const PENDING_CLONE_RESET_KEY = "cursorSync.pendingCloneReset";
+
+export type PendingCloneReset = {
+  clonePath: string;
+  sha: string;
+};
+
+export async function persistPendingCloneReset(
+  context: vscode.ExtensionContext,
+  marker: PendingCloneReset
+): Promise<void> {
+  await context.globalState.update(PENDING_CLONE_RESET_KEY, marker);
+}
+
+export async function clearPendingCloneReset(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  await context.globalState.update(PENDING_CLONE_RESET_KEY, undefined);
+}
+
+export async function restorePendingCloneResetIfAny(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  const marker = context.globalState.get<PendingCloneReset>(PENDING_CLONE_RESET_KEY);
+  if (!marker?.clonePath || !marker.sha) {
+    return;
+  }
+  try {
+    await gitResetHard(marker.clonePath, marker.sha);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Restored clone to pending SHA ${marker.sha}`
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Pending clone reset failed: ${msg}`
+    );
+  }
+  await clearPendingCloneReset(context);
 }

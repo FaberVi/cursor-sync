@@ -24,9 +24,10 @@ export const EN: Record<MessageKey, string> = {
   pullReplaceConfirmChatsOnly:
     "Pull will import the chat collection from the repository into this machine. Continue?",
   syncNowHint:
-    "Pull if origin is ahead (with confirmation), otherwise push local Cursor changes. Fast-forward only.",
+    "If origin is ahead, fast-forward like git and keep local-only files; otherwise push. Conflicts open in an editor tab.",
   pushHint: "Copy Cursor settings and ~/.cursor assets into the local clone and git push",
-  pullHint: "Fast-forward the clone and replace synced Cursor folders from it",
+  pullHint:
+    "Fast-forward the clone and mirror synced Cursor folders from it (deletes local-only synced files)",
   openCursorFolder: "Cursor folder",
   openCursorFolderHint:
     "Open ~/.cursor in the file manager (skills, rules, MCP, chats). Use the command palette for settings.json (Cursor User).",
@@ -193,4 +194,50 @@ export const EN: Record<MessageKey, string> = {
   backupDetailSubagentJsonl: "{n} subagent jsonl",
   backupDetailDiskKvRows: "diskKv {n} rows",
   backupDetailToolBubbles: "{n} tool bubbles",
+  behind: "Remote updates",
+  diverged: "Histories diverged",
+  later: "Later",
+  proceed: "Proceed",
+  remoteAheadBanner:
+    "The remote repository has updates. Sync Now downloads them without deleting files that exist only on this machine. Pull mirrors the remote and can delete those files.",
+  remoteDivergedBanner:
+    "This clone and origin have diverged. Use Reset to remote to match origin (mirror: local-only synced files are deleted), or open the clone and fix git by hand.",
+  syncTabBadge: "!",
+  conflictsPendingReopen: "{n} conflict(s) waiting — reopen tab",
+  conflictPanelTitle: "Cursor Sync: Conflicts",
+  keepAllLocal: "Keep all local",
+  keepAllRemote: "Keep all remote",
+  keepLocal: "Local",
+  keepRemote: "Remote",
+  applyConflicts: "Apply",
+  cancelSync: "Cancel sync",
+  thisMachine: "This machine",
+  repository: "Repository",
+  fileMissing: "File missing",
+  binaryOrTooLarge: "Binary or too large — choose the whole version.",
+  conflictBothModified: "Both modified",
+  conflictDeletedRemote: "Deleted on remote",
+  conflictDeletedLocal: "Deleted locally",
+  conflictsResolveToast: "Resolve conflicts in the Cursor Sync editor tab.",
+  openConflictTab: "Open tab",
+  closeConflictsConfirm: "Close this tab and cancel the in-progress sync?",
+  originAheadCommits: "Origin is {n} commit(s) ahead: {commits}.",
+  incomingChanges: "Incoming changes update: {files}.",
+  incomingNoSkillFolders: "Incoming commits do not change any skill folders.",
+  localOnlyKept:
+    "Local-only files not in those commits: {files} — they will be kept.",
+  conflictsWillOpenTab:
+    "{n} conflict(s) will open in an editor tab so you can keep local or remote per file.",
+  syncNowCounts:
+    "This will update {n} file(s) and delete {m} file(s) that origin removed.",
+  pullMirrorLead:
+    "This Pull is a mirror: it deletes synced files that exist only on this machine and rewrites the sync set from git.",
+  resetMirrorLead:
+    "Reset to remote is a mirror: it deletes synced files that exist only on this machine and rewrites the sync set from git.",
+  localOnlyDeleted: "Local-only files/skills that will be deleted: {files}.",
+  pullMirrorCounts:
+    "Update {n} file(s), delete {m} file(s), replace {k} skill folder(s).",
+  andNMore: "and {n} more",
+  resolvedCount: "{k}/{n} resolved",
+  selectConflictFile: "Select a file to compare local and remote.",
 };
