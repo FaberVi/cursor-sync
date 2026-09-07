@@ -3,12 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
 import {
-  buildPullMirrorConfirmMessage,
-  buildSyncNowConfirmMessage,
+  buildSyncConfirmModel,
   cloneDiffPathToSyncKey,
-  formatNameList,
   listLocalOnlyKeys,
-  PULL_CONFIRM_NAME_CAP,
   syncKeysFromDiffNameOnly,
 } from "../src/pull-confirm.js";
 
@@ -46,59 +43,52 @@ describe("listLocalOnlyKeys", () => {
   });
 });
 
-describe("formatNameList", () => {
-  it("caps at 8 names", () => {
-    const names = Array.from({ length: PULL_CONFIRM_NAME_CAP + 2 }, (_, i) => `f${i}`);
-    const text = formatNameList(names);
-    expect(text).toContain("and 2 more");
-    expect(text.split(", ").length).toBe(PULL_CONFIRM_NAME_CAP + 1);
-  });
-});
-
-describe("confirm builders", () => {
+describe("buildSyncConfirmModel", () => {
   const incoming = {
     subjects: ["add skill foo"],
     incomingSyncKeys: ["dot-cursor/skills/foo/SKILL.md"],
     incomingDisplayNames: ["foo"],
   };
 
-  it("says Sync Now will keep local-only files", () => {
-    const text = buildSyncNowConfirmMessage({
+  it("keeps Sync Now local-only keys and conflict keys", () => {
+    const model = buildSyncConfirmModel({
+      mode: "syncNow",
       incoming,
       localOnlyKeys: ["dot-cursor/skills/bar/SKILL.md"],
-      conflictCount: 1,
+      conflictKeys: ["cursor-user/settings.json"],
       n: 2,
       m: 0,
     });
-    expect(text).toContain("add skill foo");
-    expect(text).toContain("bar");
-    expect(text).toContain("kept");
-    expect(text).toContain("editor tab");
+    expect(model.mode).toBe("syncNow");
+    expect(model.localOnlyKeys).toEqual(["dot-cursor/skills/bar/SKILL.md"]);
+    expect(model.conflictKeys).toEqual(["cursor-user/settings.json"]);
+    expect(model.n).toBe(2);
+    expect(model.k).toBe(0);
   });
 
-  it("says Pull is a mirror that deletes local-only files", () => {
-    const text = buildPullMirrorConfirmMessage({
+  it("marks Pull as a mirror that will delete local-only files", () => {
+    const model = buildSyncConfirmModel({
+      mode: "pullMirror",
       incoming,
       localOnlyKeys: ["dot-cursor/skills/bar/SKILL.md"],
       n: 2,
       m: 1,
       k: 3,
-      reset: false,
     });
-    expect(text.toLowerCase()).toContain("mirror");
-    expect(text).toContain("deleted");
-    expect(text).toContain("bar");
+    expect(model.mode).toBe("pullMirror");
+    expect(model.localOnlyKeys).toEqual(["dot-cursor/skills/bar/SKILL.md"]);
+    expect(model.k).toBe(3);
   });
 
-  it("uses Reset wording for resetToRemote", () => {
-    const text = buildPullMirrorConfirmMessage({
+  it("uses resetMirror mode for Reset to remote", () => {
+    const model = buildSyncConfirmModel({
+      mode: "resetMirror",
       incoming,
-      localOnlyKeys: [],
       n: 1,
       m: 0,
-      k: 0,
-      reset: true,
     });
-    expect(text).toContain("Reset to remote");
+    expect(model.mode).toBe("resetMirror");
+    expect(model.localOnlyKeys).toEqual([]);
+    expect(model.conflictKeys).toEqual([]);
   });
 });

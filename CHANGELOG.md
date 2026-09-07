@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.1.1
+
+### Added
+- Sync Now / Pull / Reset open an editor tab that lists incoming commits and files, local-only paths, and conflicts, with Proceed and Cancel instead of a single warning paragraph
+
+### Changed
+- Sync Now continues with a nested push after a successful pull when this machine still differs from the clone
+- Closing or cancelling the review or conflict tab stops the in-flight sync the same way Stop Sync does (journal rollback)
+
+### Fixed
+- Sync Now, Push, Pull, and Reset stay disabled while the review or conflict tab is open, and re-enable when the tab is applied or closed
+
 ## v2.1.0
 
 ### Added

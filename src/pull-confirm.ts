@@ -1,13 +1,10 @@
 import { runGit } from "./git-cli.js";
-import { t } from "./sidebar/i18n.js";
 import {
   skillFolderDisplayName,
   skillFolderPrefix,
 } from "./sync-skill-folders.js";
 import { CURSOR_CHAT_SYNC_KEY } from "./chat-sync-collection.js";
 import { CURSOR_CHAT_GIST_FILE_NAME } from "./chat-bundle-format.js";
-
-export const PULL_CONFIRM_NAME_CAP = 8;
 
 const MANIFEST_NAME = "manifest.json";
 
@@ -16,18 +13,6 @@ export type IncomingCommitSummary = {
   incomingSyncKeys: string[];
   incomingDisplayNames: string[];
 };
-
-export function formatNameList(names: readonly string[], cap = PULL_CONFIRM_NAME_CAP): string {
-  if (names.length === 0) {
-    return "";
-  }
-  if (names.length <= cap) {
-    return names.join(", ");
-  }
-  const shown = names.slice(0, cap);
-  const extra = names.length - cap;
-  return `${shown.join(", ")}, ${t("andNMore", { n: extra })}`;
-}
 
 export function syncKeysFromDiffNameOnly(stdout: string, basePath: string): string[] {
   const keys = new Set<string>();
@@ -145,74 +130,38 @@ export async function readIncomingCommitSummary(options: {
   };
 }
 
-export function buildSyncNowConfirmMessage(options: {
-  incoming: IncomingCommitSummary;
-  localOnlyKeys: readonly string[];
-  conflictCount: number;
-  n: number;
-  m: number;
-}): string {
-  const parts: string[] = [];
-  if (options.incoming.subjects.length > 0) {
-    parts.push(
-      t("originAheadCommits", {
-        n: options.incoming.subjects.length,
-        commits: formatNameList(options.incoming.subjects, 5),
-      })
-    );
-  }
-  if (options.incoming.incomingDisplayNames.length > 0) {
-    parts.push(
-      t("incomingChanges", {
-        files: formatNameList(options.incoming.incomingDisplayNames),
-      })
-    );
-  } else {
-    parts.push(t("incomingNoSkillFolders"));
-  }
-  const kept = displayNamesForSyncKeys(options.localOnlyKeys);
-  if (kept.length > 0) {
-    parts.push(t("localOnlyKept", { files: formatNameList(kept) }));
-  }
-  if (options.conflictCount > 0) {
-    parts.push(t("conflictsWillOpenTab", { n: options.conflictCount }));
-  }
-  parts.push(t("syncNowCounts", { n: options.n, m: options.m }));
-  return parts.join(" ");
-}
+export type SyncConfirmMode =
+  | "syncNow"
+  | "pullMirror"
+  | "resetMirror"
+  | "chatsOnly";
 
-export function buildPullMirrorConfirmMessage(options: {
+export type SyncConfirmModel = {
+  mode: SyncConfirmMode;
   incoming: IncomingCommitSummary;
   localOnlyKeys: readonly string[];
+  conflictKeys: readonly string[];
   n: number;
   m: number;
   k: number;
-  reset: boolean;
-}): string {
-  const parts: string[] = [
-    options.reset ? t("resetMirrorLead") : t("pullMirrorLead"),
-  ];
-  if (options.incoming.subjects.length > 0) {
-    parts.push(
-      t("originAheadCommits", {
-        n: options.incoming.subjects.length,
-        commits: formatNameList(options.incoming.subjects, 5),
-      })
-    );
-  }
-  if (options.incoming.incomingDisplayNames.length > 0) {
-    parts.push(
-      t("incomingChanges", {
-        files: formatNameList(options.incoming.incomingDisplayNames),
-      })
-    );
-  }
-  const deleted = displayNamesForSyncKeys(options.localOnlyKeys);
-  if (deleted.length > 0) {
-    parts.push(t("localOnlyDeleted", { files: formatNameList(deleted) }));
-  }
-  parts.push(
-    t("pullMirrorCounts", { n: options.n, m: options.m, k: options.k })
-  );
-  return parts.join(" ");
+};
+
+export function buildSyncConfirmModel(input: {
+  mode: SyncConfirmMode;
+  incoming: IncomingCommitSummary;
+  localOnlyKeys?: readonly string[];
+  conflictKeys?: readonly string[];
+  n: number;
+  m: number;
+  k?: number;
+}): SyncConfirmModel {
+  return {
+    mode: input.mode,
+    incoming: input.incoming,
+    localOnlyKeys: input.localOnlyKeys ?? [],
+    conflictKeys: input.conflictKeys ?? [],
+    n: input.n,
+    m: input.m,
+    k: input.k ?? 0,
+  };
 }

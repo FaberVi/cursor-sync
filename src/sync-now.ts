@@ -48,10 +48,39 @@ export async function executeSyncNow(
         notifySyncQuiet("Already in sync, nothing to do.");
         progress.complete(true);
         break;
-      case "pull":
+      case "pull": {
         progress.report({ message: "Pulling…" });
-        progress.complete(await executePull(context, { trigger: "syncNow", skipLock: true }));
+        const pulled = await executePull(context, {
+          trigger: "syncNow",
+          skipLock: true,
+        });
+        if (!pulled) {
+          progress.complete(false);
+          break;
+        }
+        const followUp = await determineSyncAction(context);
+        if (followUp.action === "push") {
+          progress.report({ message: "Pushing…" });
+          progress.complete(
+            await executePush(context, { skipLock: true, trigger: "syncNow" })
+          );
+          break;
+        }
+        if (followUp.action === "error") {
+          const errorMessage = `Sync failed: ${followUp.reason}`;
+          void showSyncFailureWithDebug(
+            context,
+            buildSyncDebugFailure("syncNow", "manual", followUp.reason, {
+              category: followUp.reason,
+            }),
+            { title: errorMessage }
+          );
+          progress.complete(false);
+          break;
+        }
+        progress.complete(true);
         break;
+      }
       case "push":
         progress.report({ message: "Pushing…" });
         progress.complete(await executePush(context, { skipLock: true, trigger: "syncNow" }));

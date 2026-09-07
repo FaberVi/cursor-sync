@@ -9,7 +9,14 @@ import {
   allConflictsResolved,
   conflictDisplayPath,
 } from "./sync-conflicts.js";
-import { getSyncAbortSignal } from "./sync-abort.js";
+import {
+  getSyncAbortSignal,
+  requestSyncCancel,
+} from "./sync-abort.js";
+import {
+  beginSyncChoiceUi,
+  endSyncChoiceUi,
+} from "./sync-progress-events.js";
 import type {
   ConflictEntry,
   ConflictKind,
@@ -313,6 +320,10 @@ export async function openConflictPanel(options: {
   );
 
   return new Promise((resolve) => {
+    beginSyncChoiceUi(t("syncConfirmWaitingConflicts"));
+    const signal = getSyncAbortSignal();
+    let onAbort = (): void => undefined;
+
     const current: PanelSession = {
       panel,
       conflicts: options.conflicts,
@@ -326,12 +337,16 @@ export async function openConflictPanel(options: {
           return;
         }
         current.settled = true;
+        signal?.removeEventListener("abort", onAbort);
         session = undefined;
+        endSyncChoiceUi();
         resolve(result);
         panel.dispose();
       },
     };
     session = current;
+    onAbort = () => current.finish(undefined);
+    signal?.addEventListener("abort", onAbort);
 
     const render = async () => {
       const selected = current.conflicts.find(
@@ -419,6 +434,7 @@ export async function openConflictPanel(options: {
         return;
       }
       if (msg.type === "cancel") {
+        requestSyncCancel();
         current.finish(undefined);
       }
     });
@@ -427,29 +443,13 @@ export async function openConflictPanel(options: {
       if (current.settled) {
         return;
       }
-      void (async () => {
-        if (getSyncAbortSignal()?.aborted) {
-          current.finish(undefined);
-          return;
-        }
-        const choice = await vscode.window.showWarningMessage(
-          t("closeConflictsConfirm"),
-          { modal: true },
-          t("proceed"),
-          t("cancel")
-        );
-        if (choice === t("proceed")) {
-          current.finish(undefined);
-          return;
-        }
-        if (!current.settled) {
-          session = current;
-          // User cancelled close: cannot un-dispose. Treat as cancel sync.
-          current.finish(undefined);
-        }
-      })();
+      requestSyncCancel();
+      current.finish(undefined);
     });
 
     void render();
+    if (signal?.aborted) {
+      current.finish(undefined);
+    }
   });
 }

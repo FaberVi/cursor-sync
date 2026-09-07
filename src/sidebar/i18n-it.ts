@@ -244,24 +244,30 @@ export const IT: Record<MessageKey, string> = {
   conflictDeletedLocal: "Eliminato in locale",
   conflictsResolveToast: "Risolvi i conflitti nella scheda editor Cursor Sync.",
   openConflictTab: "Apri scheda",
-  closeConflictsConfirm: "Chiudere questa scheda e annullare la sync in corso?",
-  originAheadCommits: "Origin è avanti di {n} commit: {commits}.",
-  incomingChanges: "Le modifiche in arrivo aggiornano: {files}.",
-  incomingNoSkillFolders: "I commit in arrivo non modificano cartelle skill.",
-  localOnlyKept:
-    "File solo-locali non in quei commit: {files} — verranno conservati.",
-  conflictsWillOpenTab:
-    "{n} conflitti si apriranno in una scheda editor per scegliere locale o remoto per file.",
-  syncNowCounts:
-    "Aggiornerà {n} file ed eliminerà {m} file che origin ha rimosso.",
-  pullMirrorLead:
-    "Questo Pull è un mirror: cancella i file syncati presenti solo su questa macchina e riscrive il set dal git.",
-  resetMirrorLead:
-    "Reset dal remoto è un mirror: cancella i file syncati presenti solo su questa macchina e riscrive il set dal git.",
-  localOnlyDeleted: "File/skill solo-locali che verranno eliminati: {files}.",
-  pullMirrorCounts:
-    "Aggiorna {n} file, elimina {m} file, sostituisce {k} cartelle skill.",
-  andNMore: "e altri {n}",
+  syncConfirmTitleSyncNow: "Cursor Sync: Riepilogo Sincronizza ora",
+  syncConfirmTitlePull: "Cursor Sync: Riepilogo Pull",
+  syncConfirmTitleReset: "Cursor Sync: Riepilogo Reset",
+  syncConfirmTitleChatsOnly: "Cursor Sync: Riepilogo import chat",
+  syncConfirmSubtitleSyncNow:
+    "Origin è avanti. I file solo-locali restano su questa macchina. Le modifiche locali residue possono essere inviate nello stesso run.",
+  syncConfirmSubtitlePull:
+    "Questo Pull è un mirror: i file sincronizzati presenti solo su questa macchina verranno eliminati.",
+  syncConfirmSubtitleReset:
+    "Reset dal remoto è un mirror: i file sincronizzati presenti solo su questa macchina verranno eliminati.",
+  syncConfirmSubtitleChatsOnly:
+    "Importa la raccolta chat dal repository su questa macchina.",
+  syncConfirmChipUpdate: "{n} da aggiornare",
+  syncConfirmChipDelete: "{n} da eliminare",
+  syncConfirmChipConflict: "{n} conflitti",
+  syncConfirmChipLocalOnly: "{n} solo-locali",
+  syncConfirmSectionCommits: "Commit in arrivo",
+  syncConfirmSectionIncoming: "File in arrivo",
+  syncConfirmSectionLocalOnlyKept: "Solo-locali (verranno conservati)",
+  syncConfirmSectionLocalOnlyDeleted: "Solo-locali (verranno eliminati)",
+  syncConfirmSectionConflicts:
+    "Conflitti (dopo Procedi scegli locale o remoto)",
+  syncConfirmWaitingReview: "Rivedi la sync nella scheda editor…",
+  syncConfirmWaitingConflicts: "Risolvi i conflitti nella scheda editor…",
   resolvedCount: "{k}/{n} risolti",
   selectConflictFile: "Seleziona un file per confrontare locale e remoto.",
 };

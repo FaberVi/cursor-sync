@@ -20,6 +20,7 @@ export interface SyncProgressEvent {
 
 let emitterInstance: vscode.EventEmitter<SyncProgressEvent> | undefined;
 let busyDepth = 0;
+let choiceUiDepth = 0;
 const tickTimers = new Set<ReturnType<typeof setInterval>>();
 /** Innermost reporter is last; only that one emits elapsed ticks. */
 const liveReporters: object[] = [];
@@ -50,11 +51,43 @@ export function disposeSyncProgress(): void {
   emitterInstance?.dispose();
   emitterInstance = undefined;
   busyDepth = 0;
+  choiceUiDepth = 0;
+}
+
+function syncUiHeld(): boolean {
+  return busyDepth > 0 || choiceUiDepth > 0;
+}
+
+export function beginSyncChoiceUi(
+  message: string,
+  operation: SyncProgressOperation = "pull"
+): void {
+  choiceUiDepth += 1;
+  emitSyncProgress({
+    operation,
+    message,
+    busy: true,
+    done: false,
+  });
+}
+
+export function endSyncChoiceUi(): void {
+  choiceUiDepth = Math.max(0, choiceUiDepth - 1);
+  if (syncUiHeld()) {
+    return;
+  }
+  emitSyncProgress({
+    operation: "push",
+    message: "",
+    percent: 100,
+    done: true,
+    busy: false,
+  });
 }
 
 /** Re-enable sidebar sync buttons when no nested sync progress is active. */
 export function emitSyncActionsIdle(): void {
-  if (busyDepth > 0) {
+  if (syncUiHeld()) {
     return;
   }
   emitSyncProgress({
@@ -173,7 +206,7 @@ export function createSidebarSyncProgress(
       ensureHeld();
       stopTick();
       releaseHeld();
-      const stillBusy = busyDepth > 0;
+      const stillBusy = syncUiHeld();
       if (stillBusy && ok) {
         // Nested success: keep the inner phase text (e.g. Fetching n/m)
         // instead of flashing Done / the parent's Pulling… tick.

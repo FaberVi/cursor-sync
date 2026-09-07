@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync (Community)",
   "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub repository",
-	"version": "2.1.0",
+	"version": "2.1.1",
   "icon": "assets/icon.png",
   "publisher": "FaberVi",
   "author": {

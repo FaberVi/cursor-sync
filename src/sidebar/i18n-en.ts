@@ -244,24 +244,30 @@ export const EN: Record<MessageKey, string> = {
   conflictDeletedLocal: "Deleted locally",
   conflictsResolveToast: "Resolve conflicts in the Cursor Sync editor tab.",
   openConflictTab: "Open tab",
-  closeConflictsConfirm: "Close this tab and cancel the in-progress sync?",
-  originAheadCommits: "Origin is {n} commit(s) ahead: {commits}.",
-  incomingChanges: "Incoming changes update: {files}.",
-  incomingNoSkillFolders: "Incoming commits do not change any skill folders.",
-  localOnlyKept:
-    "Local-only files not in those commits: {files} — they will be kept.",
-  conflictsWillOpenTab:
-    "{n} conflict(s) will open in an editor tab so you can keep local or remote per file.",
-  syncNowCounts:
-    "This will update {n} file(s) and delete {m} file(s) that origin removed.",
-  pullMirrorLead:
-    "This Pull is a mirror: it deletes synced files that exist only on this machine and rewrites the sync set from git.",
-  resetMirrorLead:
-    "Reset to remote is a mirror: it deletes synced files that exist only on this machine and rewrites the sync set from git.",
-  localOnlyDeleted: "Local-only files/skills that will be deleted: {files}.",
-  pullMirrorCounts:
-    "Update {n} file(s), delete {m} file(s), replace {k} skill folder(s).",
-  andNMore: "and {n} more",
+  syncConfirmTitleSyncNow: "Cursor Sync: Review Sync Now",
+  syncConfirmTitlePull: "Cursor Sync: Review Pull",
+  syncConfirmTitleReset: "Cursor Sync: Review Reset",
+  syncConfirmTitleChatsOnly: "Cursor Sync: Review chat import",
+  syncConfirmSubtitleSyncNow:
+    "Origin is ahead. Local-only files stay on this machine. Leftover local changes can be pushed in this same run.",
+  syncConfirmSubtitlePull:
+    "This Pull is a mirror: synced files that exist only on this machine will be deleted.",
+  syncConfirmSubtitleReset:
+    "Reset to remote is a mirror: synced files that exist only on this machine will be deleted.",
+  syncConfirmSubtitleChatsOnly:
+    "Import the chat collection from the repository into this machine.",
+  syncConfirmChipUpdate: "{n} to update",
+  syncConfirmChipDelete: "{n} to delete",
+  syncConfirmChipConflict: "{n} conflict(s)",
+  syncConfirmChipLocalOnly: "{n} local-only",
+  syncConfirmSectionCommits: "Incoming commits",
+  syncConfirmSectionIncoming: "Incoming files",
+  syncConfirmSectionLocalOnlyKept: "Local-only (will be kept)",
+  syncConfirmSectionLocalOnlyDeleted: "Local-only (will be deleted)",
+  syncConfirmSectionConflicts:
+    "Conflicts (choose local or remote after Proceed)",
+  syncConfirmWaitingReview: "Review sync in the editor tab…",
+  syncConfirmWaitingConflicts: "Resolve conflicts in the editor tab…",
   resolvedCount: "{k}/{n} resolved",
   selectConflictFile: "Select a file to compare local and remote.",
 };

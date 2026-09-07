@@ -61,18 +61,17 @@ import * as fs from "node:fs/promises";
 import { classifyPullConflicts, overlayPlanWithResolutions, applyKeepLocalChecksums, keepLocalKeysFromResolutions } from "./sync-conflicts.js";
 import { openConflictPanel } from "./conflict-panel.js";
 import {
-  buildPullMirrorConfirmMessage,
-  buildSyncNowConfirmMessage,
+  buildSyncConfirmModel,
   listLocalOnlyKeys,
   readIncomingCommitSummary,
 } from "./pull-confirm.js";
+import { openSyncConfirmPanel } from "./sync-confirm-panel.js";
 import {
   recordRemoteRelation,
   onSyncLockReleased,
   getRemoteAheadCache,
   syncStatusBarWithRemoteAheadCache,
 } from "./remote-ahead.js";
-import { recordLocalDiffers } from "./cursor-differs.js";
 import { enumerateSyncFiles, resolveSyncRoots } from "./paths.js";
 
 export type PullTrigger = SyncOpTrigger;
@@ -112,6 +111,7 @@ export async function executePull(
     const success = await doPull(context, trigger, progress, resetToRemote);
     if (!success && isSyncAborted()) {
       await finishCancelledOperation(context, "pull", trigger);
+      await clearPendingCloneReset(context);
       progress.complete(false);
       restoreStatusBarAfterCancel();
       refreshSidebar();
@@ -120,7 +120,6 @@ export async function executePull(
     if (success) {
       commitSyncFileJournal();
       progress.complete(true);
-      recordLocalDiffers(false);
       syncStatusBarWithRemoteAheadCache(new Date(), { includeSyncing: true });
     } else {
       await rollbackSyncFileJournal(context);
@@ -147,6 +146,7 @@ export async function executePull(
     );
     if (isAbortError(err) || isSyncAborted()) {
       await finishCancelledOperation(context, "pull", trigger);
+      await clearPendingCloneReset(context);
       restoreStatusBarAfterCancel();
       refreshSidebar();
       return false;
@@ -303,32 +303,29 @@ async function doPull(
   }
 
   if (trigger === "manual" || trigger === "syncNow") {
-    const confirmMessage =
+    const model =
       counts.n === 0 && counts.m === 0 && counts.k === 0 && importChat
-        ? t("pullReplaceConfirmChatsOnly")
-        : preserveLocalOnly
-          ? buildSyncNowConfirmMessage({
-              incoming,
-              localOnlyKeys,
-              conflictCount: classified.conflicts.length,
-              n: counts.n,
-              m: counts.m,
-            })
-          : buildPullMirrorConfirmMessage({
-              incoming,
-              localOnlyKeys,
-              n: counts.n,
-              m: counts.m,
-              k: counts.k,
-              reset: resetToRemote,
-            });
-    const choice = await vscode.window.showWarningMessage(
-      confirmMessage,
-      { modal: true },
-      t("proceed"),
-      t("cancel")
-    );
-    if (choice !== t("proceed")) {
+        ? buildSyncConfirmModel({
+            mode: "chatsOnly",
+            incoming,
+            n: 0,
+            m: 0,
+          })
+        : buildSyncConfirmModel({
+            mode: preserveLocalOnly
+              ? "syncNow"
+              : resetToRemote
+                ? "resetMirror"
+                : "pullMirror",
+            incoming,
+            localOnlyKeys,
+            conflictKeys: classified.conflicts.map((row) => row.relativeSyncKey),
+            n: counts.n,
+            m: counts.m,
+            k: counts.k,
+          });
+    const confirmed = await openSyncConfirmPanel({ context, model });
+    if (!confirmed) {
       logger.appendLine(`[${new Date().toISOString()}] Pull cancelled by user`);
       sendEvent(context, "sync_failed", { direction: "pull", reason: "cancelled", trigger });
       await clearPendingCloneReset(context);
