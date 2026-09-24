@@ -37,6 +37,7 @@ import {
   restoreExcludedJsonKeys,
   stripExcludedJsonKeys,
 } from "./json-key-filter.js";
+import { writeAtomicFile } from "./atomic-file-write.js";
 
 const MANIFEST_NAME = "manifest.json";
 const SPECIAL_ROOT_FILES = new Set([
@@ -66,10 +67,7 @@ export function cloneManifestAbs(clonePath: string, basePath: string): string {
 }
 
 async function writeAtomic(absPath: string, content: Buffer): Promise<void> {
-  await ensureParentDirectory(absPath);
-  const tmp = `${absPath}.tmp`;
-  await fs.writeFile(tmp, content);
-  await fs.rename(tmp, absPath);
+  await writeAtomicFile(absPath, content, ensureParentDirectory);
 }
 
 async function listFilesRelativePosix(absDir: string): Promise<string[]> {

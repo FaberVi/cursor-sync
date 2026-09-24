@@ -37,6 +37,7 @@ import {
 } from "./chat-import-activate-watcher.js";
 import { flushPendingSidebarWriteback } from "./chat-import-sidebar-writeback.js";
 import { executeSyncNow } from "./sync-now.js";
+import { executeRefreshSyncStatus } from "./refresh-sync-status.js";
 import { isLegacyGistConfigured } from "./remote/destination.js";
 import { restorePendingCloneResetIfAny } from "./sync-clone.js";
 import {
@@ -178,6 +179,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand("cursorSync.syncNow", () => executeSyncNow(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cursorSync.refreshSyncStatus", () =>
+      executeRefreshSyncStatus(context)
+    )
   );
 
   context.subscriptions.push(

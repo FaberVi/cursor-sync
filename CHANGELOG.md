@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.2.1
+
+### Changed
+- Sidebar title refresh button re-checks sync status (local vs clone and remote-ahead probe) instead of running Sync Now
+
+### Fixed
+- Windows push/pull copy no longer fails with `EPERM` on atomic rename when the destination file is briefly locked (retry + `copyFile` fallback)
+
 ## v2.2.0
 
 ### Added

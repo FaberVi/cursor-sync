@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync (Community)",
   "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub repository",
-	"version": "2.2.0",
+	"version": "2.2.1",
   "icon": "assets/icon.png",
   "publisher": "FaberVi",
   "author": {
@@ -49,7 +49,7 @@
     "menus": {
       "view/title": [
         {
-          "command": "cursorSync.syncNow",
+          "command": "cursorSync.refreshSyncStatus",
           "when": "view == cursorSync.sidebar && cursorSync.configured",
           "group": "navigation"
         },
@@ -95,6 +95,12 @@
         "command": "cursorSync.syncNow",
         "title": "Cursor Sync: Sync Now",
         "icon": "$(sync)",
+        "enablement": "cursorSync.configured"
+      },
+      {
+        "command": "cursorSync.refreshSyncStatus",
+        "title": "Cursor Sync: Refresh Sync Status",
+        "icon": "$(refresh)",
         "enablement": "cursorSync.configured"
       },
       {
