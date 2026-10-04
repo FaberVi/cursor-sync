@@ -62,6 +62,7 @@ describe("buildSyncConfirmModel", () => {
     expect(model.mode).toBe("syncNow");
     expect(model.localOnlyKeys).toEqual(["dot-cursor/skills/bar/SKILL.md"]);
     expect(model.conflictKeys).toEqual(["cursor-user/settings.json"]);
+    expect(model.intentionalDeletionKeys).toEqual([]);
     expect(model.n).toBe(2);
     expect(model.k).toBe(0);
   });

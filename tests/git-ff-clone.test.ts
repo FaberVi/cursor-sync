@@ -172,4 +172,54 @@ describe("git fast-forward clone", () => {
     await checkoutBranch(cloneB, "main");
     expect(await fs.readFile(path.join(cloneB, "readme.txt"), "utf8")).toBe("from-origin");
   });
+
+  it.skipIf(!gitAvailable())("rebaseOntoOrigin keeps a local deletion and takes the new origin file", async () => {
+    const { runGit } = await import("../src/git-cli.js");
+    const { rebaseOntoOrigin } = await import("../src/sync-clone.js");
+
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-rebase-"));
+    const bare = path.join(tmp, "origin.git");
+    const origin = path.join(tmp, "origin-work");
+    const local = path.join(tmp, "local");
+
+    await runGit({ args: ["init", "--bare", "-b", "main", bare] });
+    await runGit({ args: ["clone", fileUrl(bare), origin] });
+    await fs.mkdir(path.join(origin, "dot-cursor", "skills", "foo"), { recursive: true });
+    await fs.writeFile(path.join(origin, "dot-cursor", "skills", "foo", "SKILL.md"), "skill");
+    await runGit({ args: ["add", "."], cwd: origin });
+    await runGit({
+      args: ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "skill"],
+      cwd: origin,
+      env: gitIdentity,
+    });
+    await runGit({ args: ["push", "-u", "origin", "HEAD:main"], cwd: origin });
+
+    await runGit({ args: ["clone", "-b", "main", fileUrl(bare), local] });
+    await fs.rm(path.join(local, "dot-cursor", "skills", "foo", "SKILL.md"));
+    await runGit({ args: ["add", "-A"], cwd: local });
+    await runGit({
+      args: ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "delete skill"],
+      cwd: local,
+      env: gitIdentity,
+    });
+
+    await fs.mkdir(path.join(origin, "dot-cursor", "rules"), { recursive: true });
+    await fs.writeFile(path.join(origin, "dot-cursor", "rules", "keep.mdc"), "keep");
+    await runGit({ args: ["add", "."], cwd: origin });
+    await runGit({
+      args: ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "add rule"],
+      cwd: origin,
+      env: gitIdentity,
+    });
+    await runGit({ args: ["push", "origin", "HEAD:main"], cwd: origin });
+    await runGit({ args: ["fetch", "origin"], cwd: local });
+
+    await rebaseOntoOrigin(local, "main");
+    await expect(
+      fs.access(path.join(local, "dot-cursor", "skills", "foo", "SKILL.md"))
+    ).rejects.toThrow();
+    expect(await fs.readFile(path.join(local, "dot-cursor", "rules", "keep.mdc"), "utf8")).toBe(
+      "keep"
+    );
+  });
 });

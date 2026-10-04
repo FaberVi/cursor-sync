@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.2.2
+
+### Fixed
+- Pull and Sync Now no longer restore skills, rules, or other synced files you deleted on this machine, and do not recreate an emptied sync folder when the clone has a new file inside it. The review tab lists them; the next push removes them from the repository. Reset to remote still mirrors the clone
+- When origin is ahead, Sync Now commits local deletions in the clone and replays them onto origin before copying remote updates, then pushes. A pull that is cancelled rolls the clone back so those deletions are not left half-applied
+- Sync lock can recover when stale (~10 minutes) so Push/Pull/scheduled sync are not blocked forever after an interrupted operation
+- Sync Now force-clears a stuck in-memory latch and refreshes sidebar status when a concurrent sync is not actually running
+- Reset Extension State cancels any in-flight sync, clears the latch, then wipes token and clone (no longer refuses while “sync in progress”)
+- Sync Now does not steal the latch while Push/Pull abort scope is active
+- An extension update is detected before the window reloads. Status, Sync Now, and push rebuild `extensions.json` from the installed extensions folder, which already has the new version while the running window still reports the previous one
+- Extensions installed from the store stay an id and version and reinstall from the marketplace. Extensions installed from a local package (not on the store) are packed into `vsix/` and reinstalled from that file
+- The sidebar shows a blurred overlay with a spinner and “Loading” until the first load finishes
+- Clicking a sync history entry opens its file list in the file-list panel instead of the IDE quick pick
+- Clicking a file in that panel opens it in the editor. If the local copy is missing, the clone copy opens instead
+- Sidebar Push, Pull, and Reset stay in Actions. Open clone and Cursor folder are a separate Folders row
+
 ## v2.2.1
 
 ### Changed

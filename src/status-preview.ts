@@ -6,6 +6,7 @@ import {
   CURSOR_CHAT_SYNC_KEY,
 } from "./chat-sync.js";
 import { loadSyncState } from "./diagnostics.js";
+import { ensureExtensionsJsonOnDisk } from "./extensions.js";
 import { computeChecksum } from "./packaging.js";
 import { runGit } from "./git-cli.js";
 import { syncKeysFromDiffNameOnly } from "./pull-confirm.js";
@@ -96,6 +97,7 @@ export async function listStatusPreviewEntries(
     }
   }
 
+  await ensureExtensionsJsonOnDisk();
   const localHashes = await hashCursorSyncFiles();
   const cloneHashes = await hashCloneSyncFiles(clonePath, identity.basePath);
 

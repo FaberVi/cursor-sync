@@ -1,7 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ExtensionContext } from "vscode";
 
+const syncRoots = vi.hoisted(() => ({
+  cursorUser: "",
+  dotCursor: "",
+}));
+
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
+vi.mock("../src/paths.js", () => ({
+  resolveSyncRoots: () => syncRoots,
+}));
 
 import * as vscode from "vscode";
 import {
@@ -198,6 +209,44 @@ describe("sync extensions after pull", () => {
       expect(warningSpy.mock.calls[0]?.[0]).toContain("ms-python.python");
       expect(warningSpy.mock.calls[0]?.[0]).not.toContain("evil.malware");
       expect(installed).toEqual(["ms-python.python"]);
+    });
+
+    it("installs a local package from the synced vsix instead of the store id", async () => {
+      const cursorUser = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-install-"));
+      syncRoots.cursorUser = cursorUser;
+      syncRoots.dotCursor = cursorUser;
+      await fs.mkdir(path.join(cursorUser, "vsix"), { recursive: true });
+      const vsixPath = path.join(cursorUser, "vsix", "domo.local-1.0.0.vsix");
+      await fs.writeFile(vsixPath, "vsix-bytes", "utf-8");
+      const seen: unknown[] = [];
+      __setExecuteCommandImpl(async (command: string, ...args: unknown[]) => {
+        if (command === "workbench.extensions.installExtension") {
+          seen.push(args[0]);
+          installed.push("called");
+        }
+      });
+      __setShowWarningMessageResult("Install");
+      __setMockGlobalConfig({ "syncExtensions.autoInstall": true });
+      __setExtensionsAll([]);
+
+      await promptAndInstallMissingExtensions(
+        [
+          {
+            id: "domo.local",
+            version: "1.0.0",
+            source: "vsix",
+            package: "vsix/domo.local-1.0.0.vsix",
+          },
+        ],
+        logger
+      );
+
+      expect(warningSpy.mock.calls[0]?.[0]).toContain("domo.local (synced package)");
+      expect(seen).toEqual([
+        expect.objectContaining({ scheme: "file", fsPath: vsixPath }),
+      ]);
+
+      await fs.rm(cursorUser, { recursive: true, force: true });
     });
   });
 

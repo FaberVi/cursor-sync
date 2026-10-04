@@ -41,6 +41,11 @@ export interface SyncState {
   completedFileSync?: boolean;
   /** owner/repo@branch:path of the last clone used for a completed copy. */
   cloneIdentity?: string;
+  /**
+   * Synced keys removed on this machine that must not be restored from the clone
+   * until a push drops them from the repository.
+   */
+  pendingDeletions?: string[];
 }
 
 export interface PackagedFile {

@@ -216,6 +216,7 @@ export function buildRepoSyncState(options: {
   checksums: Record<string, string>;
   direction: "push" | "pull";
   completedFileSync: boolean;
+  pendingDeletions?: readonly string[];
 }): SyncState {
   const identity = cloneIdentityKey({
     owner: options.owner,
@@ -223,6 +224,10 @@ export function buildRepoSyncState(options: {
     branch: options.branch,
     basePath: options.basePath,
   });
+  const pendingDeletions =
+    options.pendingDeletions !== undefined
+      ? [...options.pendingDeletions].sort()
+      : options.previous?.pendingDeletions;
   return {
     lastSyncTimestamp: new Date().toISOString(),
     lastSyncDirection: options.direction,
@@ -237,5 +242,6 @@ export function buildRepoSyncState(options: {
     remoteChecksums: options.checksums,
     completedFileSync: options.completedFileSync,
     cloneIdentity: options.completedFileSync ? identity : options.previous?.cloneIdentity,
+    ...(pendingDeletions !== undefined ? { pendingDeletions } : {}),
   };
 }

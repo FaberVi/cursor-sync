@@ -132,6 +132,37 @@ describe("renderSyncConfirmHtml", () => {
     expect(html).not.toContain("will be kept");
   });
 
+  it("lists intentional deletions only when present", () => {
+    const withDeletions = renderSyncConfirmHtml({
+      model: buildSyncConfirmModel({
+        mode: "syncNow",
+        incoming: emptyIncoming(),
+        intentionalDeletionKeys: ["dot-cursor/rules/old.mdc"],
+        n: 0,
+        m: 0,
+      }),
+      cssUri: "css",
+      jsUri: "js",
+      csp: "default-src 'none'",
+    });
+    expect(withDeletions).toContain("Removed on this machine (will stay deleted)");
+    expect(withDeletions).toContain("rules/old.mdc");
+    expect(withDeletions).toContain("1 kept deleted");
+
+    const without = renderSyncConfirmHtml({
+      model: buildSyncConfirmModel({
+        mode: "syncNow",
+        incoming: emptyIncoming(),
+        n: 0,
+        m: 0,
+      }),
+      cssUri: "css",
+      jsUri: "js",
+      csp: "default-src 'none'",
+    });
+    expect(without).not.toContain("Removed on this machine (will stay deleted)");
+  });
+
   it("uses Reset title for resetMirror", () => {
     const html = renderSyncConfirmHtml({
       model: buildSyncConfirmModel({

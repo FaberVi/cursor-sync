@@ -81,6 +81,14 @@ export function throwIfAborted(): void {
   }
 }
 
+/** Resolves when every sync abort scope has ended, or after `timeoutMs`. */
+export async function waitForSyncAbortIdle(timeoutMs = 5000): Promise<void> {
+  const started = Date.now();
+  while (abortRefCount > 0 && Date.now() - started < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 export function requestSyncCancel(): boolean {
   if (!controller || abortRefCount <= 0) {
     return false;

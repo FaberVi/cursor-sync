@@ -41,3 +41,11 @@ export function decideSyncAction(input: {
   }
   return { action: "push" };
 }
+
+/** Origin is ahead and this machine deleted synced files: commit those first, then integrate origin. */
+export function shouldStageDeletionsBeforePull(
+  relation: GitRelation,
+  removedCount: number
+): boolean {
+  return relation === "behind" && removedCount > 0;
+}

@@ -406,4 +406,79 @@ body {
 .action-btn:hover .codicon {
   color: #6ee7b7;
 }
+.action-btn-span {
+  grid-column: 1 / -1;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.shortcut-btn {
+  padding: 7px 10px;
+  border: 1px solid rgba(237, 236, 236, 0.08);
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(237, 236, 236, 0.45);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.shortcut-btn .codicon {
+  color: rgba(237, 236, 236, 0.35);
+  font-size: 13px;
+}
+.shortcut-btn:hover {
+  color: #edecec;
+  border-color: rgba(237, 236, 236, 0.18);
+  background: rgba(237, 236, 236, 0.04);
+}
+.shortcut-btn:hover .codicon {
+  color: rgba(237, 236, 236, 0.7);
+}
+
+/* ── Startup overlay ── */
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 18, 11, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.boot-overlay.is-hidden {
+  display: none;
+}
+.boot-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.boot-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(237, 236, 236, 0.16);
+  border-top-color: #34d399;
+  border-radius: 50%;
+  animation: boot-spin 0.7s linear infinite;
+}
+.boot-overlay-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #edecec;
+}
+@keyframes boot-spin {
+  to { transform: rotate(360deg); }
+}
 

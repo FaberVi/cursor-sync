@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
+const ensureExtensionsJsonOnDisk = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("../src/extensions.js", () => ({
+  ensureExtensionsJsonOnDisk,
+}));
+
 import {
   __resetLocalDiffersForTests,
   computeCursorDiffers,
@@ -136,13 +141,21 @@ describe("computeCursorDiffers", () => {
 
   it("is false when Cursor hashes match the clone and chat sync is off", async () => {
     const hashes = { "cursor-user/settings.json": "aaa" };
-    vi.spyOn(copy, "hashCursorSyncFiles").mockResolvedValue(hashes);
+    const order: string[] = [];
+    ensureExtensionsJsonOnDisk.mockImplementation(async () => {
+      order.push("extensions");
+    });
+    vi.spyOn(copy, "hashCursorSyncFiles").mockImplementation(async () => {
+      order.push("hash");
+      return hashes;
+    });
     vi.spyOn(copy, "hashCloneSyncFiles").mockResolvedValue(hashes);
     vi.spyOn(chat, "isChatSyncEnabled").mockReturnValue(false);
     vi.spyOn(diagnostics, "loadSyncState").mockResolvedValue(undefined);
     expect(await computeCursorDiffers(context(), "/tmp/clone", "cursor-sync")).toBe(
       false
     );
+    expect(order).toEqual(["extensions", "hash"]);
   });
 
   it("is true when a local file hash differs", async () => {

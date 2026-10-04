@@ -37,6 +37,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _syncProgressSub: vscode.Disposable | undefined;
   private _htmlInitialized = false;
   private _hydrateGeneration = 0;
+  private _bootId = 0;
 
   constructor(private context: vscode.ExtensionContext) {}
 
@@ -59,12 +60,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._hydrateGeneration += 1;
     });
     if (!this._htmlInitialized) {
-      webviewView.webview.html = renderSidebarShellHtml(
-        this.context,
-        webviewView.webview
-      );
-      this._htmlInitialized = true;
-      void this._hydrateSidebar();
+      this._showShell();
       return;
     }
     void this._update();
@@ -88,12 +84,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (!this._view) {
       return;
     }
-    this._view.webview.html = renderSidebarShellHtml(this.context, this._view.webview);
-    this._htmlInitialized = true;
-    void this._hydrateSidebar();
+    this._showShell();
   }
 
-  private async _hydrateSidebar(): Promise<void> {
+  private _showShell(): void {
+    const view = this._view;
+    if (!view) {
+      return;
+    }
+    this._bootId += 1;
+    view.webview.html = renderSidebarShellHtml(this.context, view.webview, this._bootId);
+    this._htmlInitialized = true;
+    void this._hydrateSidebar(this._bootId);
+  }
+
+  private async _finishBoot(view: vscode.WebviewView, bootId: number): Promise<void> {
+    if (this._view !== view || bootId !== this._bootId) {
+      return;
+    }
+    await view.webview.postMessage({ type: "sidebar:ready", bootId });
+  }
+
+  private async _hydrateSidebar(bootId: number): Promise<void> {
     this._hydrateGeneration += 1;
     const generation = this._hydrateGeneration;
     const view = this._view;
@@ -117,22 +129,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
       await view.webview.postMessage({ type: "sync:update", html: fullSyncPaneHtml });
+      await this._finishBoot(view, bootId);
     } catch {
-      // Shell is already visible; a later refresh can recover.
+      await this._finishBoot(view, bootId);
     }
   }
 
   private async _update(): Promise<void> {
     this._hydrateGeneration += 1;
     const generation = this._hydrateGeneration;
+    const bootId = this._bootId;
     const view = this._view;
     if (!view) {
       return;
     }
-    const syncPaneHtml = await renderSyncPaneHtml(this.context);
-    if (generation !== this._hydrateGeneration || this._view !== view) {
-      return;
+    try {
+      const syncPaneHtml = await renderSyncPaneHtml(this.context);
+      if (generation !== this._hydrateGeneration || this._view !== view) {
+        return;
+      }
+      await view.webview.postMessage({ type: "sync:update", html: syncPaneHtml });
+      await this._finishBoot(view, bootId);
+    } catch {
+      await this._finishBoot(view, bootId);
     }
-    await view.webview.postMessage({ type: "sync:update", html: syncPaneHtml });
   }
 }

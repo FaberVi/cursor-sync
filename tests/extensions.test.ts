@@ -7,10 +7,14 @@ vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
 import {
   generateExtensionsJson,
+  generateResolvedExtensionsJson,
   isSyncableExtension,
   listSyncableExtensionEntries,
   findMissingExtensions,
   findExtraExtensions,
+  mergeInstalledExtensionEntries,
+  parseExtensionEntries,
+  readInstalledExtensionManifest,
   writeExtensionsFile,
 } from "../src/extensions.js";
 import { __setExtensionsAll, __resetExtensionsAll } from "./__mocks__/vscode.js";
@@ -136,6 +140,120 @@ describe("extensions", () => {
       expect(
         findExtraExtensions([{ id: "publisher.other", version: "1.0.0" }])
       ).toEqual(["publisher.local"]);
+    });
+  });
+
+  describe("installed extension manifest", () => {
+    it("uses the extensions-folder version when the window still has the previous one", async () => {
+      const dotCursor = path.join(os.tmpdir(), `cursor-sync-ext-manifest-${Date.now()}`);
+      await fs.mkdir(path.join(dotCursor, "extensions"), { recursive: true });
+      await fs.writeFile(
+        path.join(dotCursor, "extensions", "extensions.json"),
+        JSON.stringify([
+          {
+            identifier: { id: "vue.volar" },
+            version: "3.3.12",
+            metadata: { isBuiltin: false },
+          },
+          {
+            identifier: { id: "anysphere.cursor-mcp" },
+            version: "1.0.0",
+          },
+          { identifier: { id: "not a valid id" }, version: "1.0.0" },
+        ]),
+        "utf-8"
+      );
+      __setExtensionsAll([
+        { id: "vue.volar", packageJSON: { version: "3.3.11" } },
+        { id: "publisher.only-host", packageJSON: { version: "1.0.0" } },
+      ]);
+
+      const disk = await readInstalledExtensionManifest(dotCursor);
+      expect(disk).toEqual([{ id: "vue.volar", version: "3.3.12" }]);
+      expect(
+        mergeInstalledExtensionEntries(listSyncableExtensionEntries(), disk)
+      ).toEqual([
+        { id: "publisher.only-host", version: "1.0.0" },
+        { id: "vue.volar", version: "3.3.12" },
+      ]);
+
+      const json = await generateResolvedExtensionsJson(dotCursor);
+      expect(JSON.parse(json)).toEqual([
+        { id: "publisher.only-host", version: "1.0.0" },
+        { id: "vue.volar", version: "3.3.12" },
+      ]);
+
+      await fs.rm(dotCursor, { recursive: true, force: true });
+    });
+
+    it("marks store installs and local packages, and reinstalls a newer local package", async () => {
+      const dotCursor = path.join(os.tmpdir(), `cursor-sync-ext-source-${Date.now()}`);
+      await fs.mkdir(path.join(dotCursor, "extensions"), { recursive: true });
+      await fs.writeFile(
+        path.join(dotCursor, "extensions", "extensions.json"),
+        JSON.stringify([
+          {
+            identifier: { id: "vue.volar" },
+            version: "3.3.12",
+            metadata: { source: "gallery" },
+          },
+          {
+            identifier: { id: "domo.local" },
+            version: "2.0.0",
+            relativeLocation: "domo.local-2.0.0",
+            metadata: { source: "vsix" },
+          },
+        ]),
+        "utf-8"
+      );
+      __setExtensionsAll([
+        { id: "vue.volar", packageJSON: { version: "3.3.12" } },
+        { id: "domo.local", packageJSON: { version: "1.0.0" } },
+      ]);
+
+      const json = JSON.parse(await generateResolvedExtensionsJson(dotCursor));
+      expect(json).toEqual([
+        {
+          id: "domo.local",
+          version: "2.0.0",
+          source: "vsix",
+          package: "vsix/domo.local-2.0.0.vsix",
+        },
+        { id: "vue.volar", version: "3.3.12", source: "gallery" },
+      ]);
+      expect(findMissingExtensions(json)).toEqual([
+        {
+          id: "domo.local",
+          version: "2.0.0",
+          source: "vsix",
+          package: "vsix/domo.local-2.0.0.vsix",
+        },
+      ]);
+      expect(
+        findMissingExtensions(json, [{ id: "domo.local", version: "2.0.0", source: "vsix" }])
+      ).toEqual([]);
+      const cursorUser = path.join(dotCursor, "user");
+      expect(JSON.parse(await generateResolvedExtensionsJson(dotCursor, cursorUser))).toEqual([
+        { id: "domo.local", version: "2.0.0", source: "vsix" },
+        { id: "vue.volar", version: "3.3.12", source: "gallery" },
+      ]);
+      expect(
+        parseExtensionEntries([
+          {
+            id: "domo.local",
+            version: "2.0.0",
+            source: "vsix",
+            package: "../secrets.vsix",
+          },
+        ])
+      ).toEqual([{ id: "domo.local", version: "2.0.0", source: "vsix" }]);
+
+      await fs.rm(dotCursor, { recursive: true, force: true });
+    });
+
+    it("returns no disk entries when the manifest is missing", async () => {
+      const dotCursor = path.join(os.tmpdir(), `cursor-sync-ext-missing-${Date.now()}`);
+      expect(await readInstalledExtensionManifest(dotCursor)).toEqual([]);
     });
   });
 

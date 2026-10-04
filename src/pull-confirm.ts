@@ -141,6 +141,7 @@ export type SyncConfirmModel = {
   incoming: IncomingCommitSummary;
   localOnlyKeys: readonly string[];
   conflictKeys: readonly string[];
+  intentionalDeletionKeys: readonly string[];
   n: number;
   m: number;
   k: number;
@@ -151,6 +152,7 @@ export function buildSyncConfirmModel(input: {
   incoming: IncomingCommitSummary;
   localOnlyKeys?: readonly string[];
   conflictKeys?: readonly string[];
+  intentionalDeletionKeys?: readonly string[];
   n: number;
   m: number;
   k?: number;
@@ -160,6 +162,7 @@ export function buildSyncConfirmModel(input: {
     incoming: input.incoming,
     localOnlyKeys: input.localOnlyKeys ?? [],
     conflictKeys: input.conflictKeys ?? [],
+    intentionalDeletionKeys: input.intentionalDeletionKeys ?? [],
     n: input.n,
     m: input.m,
     k: input.k ?? 0,

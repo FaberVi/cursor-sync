@@ -8,6 +8,7 @@ import {
 import { loadSyncState } from "./diagnostics.js";
 import { computeChecksum } from "./packaging.js";
 import type { GitRelation } from "./sync-clone.js";
+import { ensureExtensionsJsonOnDisk } from "./extensions.js";
 import {
   hashCloneSyncFiles,
   hashCursorSyncFiles,
@@ -53,6 +54,15 @@ export function listHashDiffs(
   return out;
 }
 
+export function removedSyncKeys(
+  local: Record<string, string>,
+  clone: Record<string, string>
+): string[] {
+  return listHashDiffs(local, clone)
+    .filter((change) => change.change === "removed")
+    .map((change) => change.syncKey);
+}
+
 let localDiffers: boolean | undefined;
 
 export function getLocalDiffersCache(): boolean | undefined {
@@ -76,6 +86,7 @@ export async function computeCursorDiffers(
   clonePath: string,
   basePath: string
 ): Promise<boolean> {
+  await ensureExtensionsJsonOnDisk();
   const syncState = await loadSyncState(context);
   const localHashes = await hashCursorSyncFiles();
   const cloneHashes = await hashCloneSyncFiles(clonePath, basePath);

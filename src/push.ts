@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { getLogger, addSyncHistoryEntry, saveSyncState, loadSyncState } from "./diagnostics.js";
 import { notifySyncQuiet } from "./sync-notify.js";
 import { updateStatusBar, restoreStatusBarAfterCancel } from "./statusbar.js";
-import { recordLocalDiffers } from "./cursor-differs.js";
+import { recordLocalDiffers, removedSyncKeys } from "./cursor-differs.js";
 import { syncStatusBarWithRemoteAheadCache } from "./remote-ahead.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
@@ -31,8 +31,9 @@ import { createBackup } from "./rollback.js";
 import { resolveSyncRoots } from "./paths.js";
 import {
   cacheLastRemoteExtensions,
-  generateExtensionsJson,
+  ensureExtensionsJsonOnDisk,
   parseExtensionEntries,
+  prepareExtensionsJsonForSync,
   writeExtensionsFile,
 } from "./extensions.js";
 import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
@@ -46,16 +47,22 @@ import {
   storeChatSyncFingerprint,
   computeChatSyncLocalFingerprint,
 } from "./chat-sync.js";
-import { copyCursorToClone, readCloneChatRaw } from "./sync-copy.js";
+import { copyCursorToClone, hashCloneSyncFiles, hashCursorSyncFiles, readCloneChatRaw } from "./sync-copy.js";
+import { pendingDeletionsAfterPush } from "./intentional-deletions.js";
 import {
   commitCloneChanges,
   currentHeadSha,
   pushClone,
+  rebaseOntoOrigin,
+  relationToOrigin,
   resetCloneWorktree,
 } from "./sync-clone.js";
 import { buildRepoSyncState } from "./remote/destination.js";
+import { shouldStageDeletionsBeforePull } from "./sync-action.js";
+import { gitResetHard } from "./git-cli.js";
 import { blockOnRelation, failSync, prepareRepoSync, type SyncOpTrigger } from "./sync-prepare.js";
-import { enterSyncLock, isSyncLocked, leaveSyncLock } from "./sync-lock.js";
+import { isSyncLocked, leaveSyncLock } from "./sync-lock.js";
+import { acquireSyncOperationLock } from "./sync-lock-acquire.js";
 
 export type PushTrigger = SyncOpTrigger;
 
@@ -74,7 +81,7 @@ export async function executePush(
 ): Promise<boolean> {
   const trigger = options?.trigger ?? "manual";
 
-  const lockHold = enterSyncLock({ skipLock: options?.skipLock });
+  const lockHold = await acquireSyncOperationLock(context, { skipLock: options?.skipLock });
   if (lockHold === "busy") {
     vscode.window.showWarningMessage("A sync operation is already in progress.");
     return false;
@@ -207,7 +214,8 @@ async function doPush(
     userEmail: prepared.userEmail,
   });
 
-  if (committed) {
+  const relationAfterCommit = await relationToOrigin(clone.clonePath, clone.identity.branch);
+  if (committed || relationAfterCommit === "ahead") {
     progress.report({ message: "Pushing to origin…" });
     await pushClone({
       clonePath: clone.clonePath,
@@ -221,8 +229,10 @@ async function doPush(
     journalAfterPush.cloneReset = undefined;
   }
 
+  const previousState = await loadSyncState(context);
+  const cloneChecksums = await hashCloneSyncFiles(clone.clonePath, clone.identity.basePath);
   const next = buildRepoSyncState({
-    previous: await loadSyncState(context),
+    previous: previousState,
     owner: clone.identity.owner,
     repo: clone.identity.repo,
     branch: clone.identity.branch,
@@ -230,6 +240,11 @@ async function doPush(
     checksums: copied.checksums,
     direction: "push",
     completedFileSync: true,
+    pendingDeletions: pendingDeletionsAfterPush({
+      pending: previousState?.pendingDeletions,
+      writtenChecksums: copied.checksums,
+      cloneChecksums,
+    }),
   });
   await saveSyncState(context, next);
   if (chatFingerprint) {
@@ -257,8 +272,92 @@ async function doPush(
   return true;
 }
 
+export type StagedDeletions =
+  | { status: "skipped" }
+  | { status: "failed" }
+  | {
+      status: "staged";
+      clonePath: string;
+      branch: string;
+      token: string;
+      preSha: string;
+    };
+
+/**
+ * When origin is ahead and Cursor deleted synced files, commit that deletion
+ * on the current clone HEAD and rebase it onto origin before any pull copies
+ * files back. Does not push and does not update sync state.
+ */
+export async function stageDeletionsAndRebase(
+  context: vscode.ExtensionContext,
+  progress: vscode.Progress<SyncProgressReport>
+): Promise<StagedDeletions> {
+  const prepared = await prepareRepoSync(context, "push", "syncNow", progress);
+  if (!prepared || prepared.clone.empty) {
+    return { status: "skipped" };
+  }
+  await ensureExtensionsJsonOnDisk();
+  const localHashes = await hashCursorSyncFiles();
+  const cloneHashes = await hashCloneSyncFiles(
+    prepared.clone.clonePath,
+    prepared.clone.identity.basePath
+  );
+  const removed = removedSyncKeys(localHashes, cloneHashes);
+  if (!shouldStageDeletionsBeforePull(prepared.relation, removed.length)) {
+    return { status: "skipped" };
+  }
+
+  const preSha = (await currentHeadSha(prepared.clone.clonePath)) ?? "HEAD";
+  await resetCloneWorktree(prepared.clone.clonePath);
+  progress.report({ message: "Recording local deletions…" });
+  await writeLocalExtensionsJson(context);
+  await migrateAndLogSkillArtifacts();
+  let chatContent: string | undefined;
+  if (isChatSyncEnabled()) {
+    chatContent = (await resolveChatPushContent(
+      context,
+      prepared.clone.clonePath,
+      prepared.clone.identity.basePath,
+      progress
+    )).content;
+  }
+  const profileName =
+    vscode.workspace.getConfiguration("cursorSync").get<string>("syncProfileName") ?? "default";
+  await copyCursorToClone({
+    clonePath: prepared.clone.clonePath,
+    basePath: prepared.clone.identity.basePath,
+    chatContent,
+    profileName,
+  });
+  const committed = await commitCloneChanges({
+    clonePath: prepared.clone.clonePath,
+    basePath: prepared.clone.identity.basePath,
+    userName: prepared.userName,
+    userEmail: prepared.userEmail,
+  });
+  if (!committed) {
+    return { status: "skipped" };
+  }
+  try {
+    progress.report({ message: "Replaying local deletions onto origin…" });
+    await rebaseOntoOrigin(prepared.clone.clonePath, prepared.clone.identity.branch);
+  } catch (err) {
+    await gitResetHard(prepared.clone.clonePath, preSha);
+    const message = err instanceof Error ? err.message : String(err);
+    await failSync(context, "push", "syncNow", message, "CONFLICT");
+    return { status: "failed" };
+  }
+  return {
+    status: "staged",
+    clonePath: prepared.clone.clonePath,
+    branch: prepared.clone.identity.branch,
+    token: prepared.token,
+    preSha,
+  };
+}
+
 async function writeLocalExtensionsJson(context: vscode.ExtensionContext): Promise<void> {
-  const extensionsJson = generateExtensionsJson();
+  const extensionsJson = await prepareExtensionsJsonForSync();
   try {
     const parsed = parseExtensionEntries(JSON.parse(extensionsJson));
     if (parsed) {

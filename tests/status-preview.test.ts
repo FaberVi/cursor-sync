@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
+const ensureExtensionsJsonOnDisk = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("../src/extensions.js", () => ({
+  ensureExtensionsJsonOnDisk,
+}));
+
 const runGit = vi.hoisted(() => vi.fn());
 const readRepoIdentity = vi.hoisted(() => vi.fn());
 const getSyncClonePath = vi.hoisted(() => vi.fn());
@@ -90,6 +95,7 @@ describe("listStatusPreviewEntries", () => {
     expect(await listStatusPreviewEntries(context(), "local")).toEqual([
       { syncKey: "cursor-user/settings.json", change: "modified" },
     ]);
+    expect(ensureExtensionsJsonOnDisk).toHaveBeenCalledTimes(1);
   });
 
   it("lists local-only keys absent from the clone", async () => {
@@ -128,6 +134,7 @@ describe("listStatusPreviewEntries", () => {
     expect(await listStatusPreviewEntries(context(), "incoming")).toEqual([
       { syncKey: "cursor-user/settings.json", change: "incoming" },
     ]);
+    expect(ensureExtensionsJsonOnDisk).not.toHaveBeenCalled();
     expect(runGit).toHaveBeenCalledWith(
       expect.objectContaining({
         args: ["diff", "--name-only", "HEAD...origin/main"],

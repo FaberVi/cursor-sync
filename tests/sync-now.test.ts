@@ -3,6 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
 const executePushMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+const stageDeletionsMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ status: "skipped" })
+);
+const pushCloneMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const gitResetHardMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const executePullMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const determineSyncActionMock = vi.hoisted(() => vi.fn());
 const showSyncFailureWithDebugMock = vi.hoisted(() =>
@@ -14,6 +19,15 @@ const promptAndInstallMissingExtensionsMock = vi.hoisted(() =>
 
 vi.mock("../src/push.js", () => ({
   executePush: executePushMock,
+  stageDeletionsAndRebase: stageDeletionsMock,
+}));
+
+vi.mock("../src/sync-clone.js", () => ({
+  pushClone: pushCloneMock,
+}));
+
+vi.mock("../src/git-cli.js", () => ({
+  gitResetHard: gitResetHardMock,
 }));
 
 vi.mock("../src/pull.js", () => ({
@@ -80,6 +94,9 @@ describe("executeSyncNow", () => {
     determineSyncActionMock.mockReset();
     showSyncFailureWithDebugMock.mockReset().mockResolvedValue(undefined);
     promptAndInstallMissingExtensionsMock.mockReset().mockResolvedValue(undefined);
+    stageDeletionsMock.mockReset().mockResolvedValue({ status: "skipped" });
+    pushCloneMock.mockReset().mockResolvedValue(undefined);
+    gitResetHardMock.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -88,6 +105,44 @@ describe("executeSyncNow", () => {
     while (getSyncAbortSignal()) {
       endSyncAbort();
     }
+  });
+
+  it("commits deletions onto origin before copying remote files, then pushes", async () => {
+    stageDeletionsMock.mockResolvedValue({
+      status: "staged",
+      clonePath: "/tmp/clone",
+      branch: "main",
+      token: "ghp_test_token",
+      preSha: "abc",
+    });
+    determineSyncActionMock.mockResolvedValue({ action: "pull" });
+    await executeSyncNow(mockContext());
+    expect(executePullMock).toHaveBeenCalledTimes(1);
+    expect(pushCloneMock).toHaveBeenCalledWith({
+      clonePath: "/tmp/clone",
+      branch: "main",
+      pat: "ghp_test_token",
+      setUpstream: false,
+    });
+    expect(executePushMock).not.toHaveBeenCalled();
+    expect(stageDeletionsMock.mock.invocationCallOrder[0]).toBeLessThan(
+      executePullMock.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("rolls the clone back when pull fails after deletions were staged", async () => {
+    stageDeletionsMock.mockResolvedValue({
+      status: "staged",
+      clonePath: "/tmp/clone",
+      branch: "main",
+      token: "ghp_test_token",
+      preSha: "abc",
+    });
+    determineSyncActionMock.mockResolvedValue({ action: "pull" });
+    executePullMock.mockResolvedValue(false);
+    await executeSyncNow(mockContext());
+    expect(gitResetHardMock).toHaveBeenCalledWith("/tmp/clone", "abc");
+    expect(pushCloneMock).not.toHaveBeenCalled();
   });
 
   it("pulls then pushes when leftover local changes remain", async () => {

@@ -133,10 +133,10 @@ The local clone lives under the extension global storage folder (`sync-repo`), s
 ### 3. Push and pull
 
 - **Push Now** copies Cursor User + `~/.cursor` into the clone and `git push` (no force; Git refuses non-fast-forward). If origin is ahead, Push refuses until you Pull. If histories have diverged, Push refuses until **Reset to remote** or you fix the clone in a file manager.
-- **Pull Now** fast-forwards the clone, then **mirrors** synced Cursor folders from it (deletes local-only synced files and replaces skill folders). A modal names incoming commits and the local-only files that will be deleted.
+- **Pull Now** fast-forwards the clone, then **mirrors** synced Cursor folders from it (deletes local-only synced files and replaces skill folders). Files you already synced and then removed on this machine stay deleted and are listed in the review tab; the next push removes them from the repository. A modal names incoming commits and the local-only files that will be deleted.
 - **Reset to remote** discards local clone commits, matches origin, then copies into Cursor (same mirror confirmation).
 - **Open clone** reveals the clone directory in the OS file manager.
-- **Sync Now** uses the same decision table as the scheduler: pull if origin is ahead or a never-synced machine already has nested clone files; otherwise push. A Sync Now pull is git-like: it updates tracked files and **keeps local-only** synced files (skills, rules, MCP, settings, extras in a tracked skill). If both sides changed the same file, an **editor tab** (`Cursor Sync: Conflicts`) lets you keep local or remote per file. Fast-forward only — no content merge.
+- **Sync Now** uses the same decision table as the scheduler: pull if origin is ahead or a never-synced machine already has nested clone files; otherwise push. If origin is ahead and this machine deleted synced files, those deletions are committed in the local clone and replayed onto origin before remote files are copied in, then pushed. A Sync Now pull is git-like: it updates tracked files and **keeps local-only** synced files (skills, rules, MCP, settings, extras in a tracked skill). Files removed on this machine after a previous sync stay deleted (listed in the review tab when origin is ahead). If both sides changed the same file, an **editor tab** (`Cursor Sync: Conflicts`) lets you keep local or remote per file. Fast-forward only — no content merge, except replaying a local deletion commit when origin is also ahead. **Reset to remote** still mirrors the clone, including files you deleted locally.
 - When origin is ahead, the Sync tab shows a banner, the status bar shows remote updates, and a toast appears once until you pull or histories match again.
 - Scheduled sync **never** shows the pull replace modal or the conflict tab: if a pull would be required it skips and records history `"pull required"`.
 - **Stop Sync** aborts the in-flight run, restores local Cursor files that run changed, and can `git reset --hard` the clone to the SHA captured before copy.
@@ -176,8 +176,8 @@ The **Cursor Sync** activity bar view has three tabs:
 ### Sync
 
 - Status card (relative last sync, direction, file count). On first open the tab shows **Loading…** until sync metadata is hydrated — not a false “never synced” state.
-- **Sync Now**, Push, Pull, Reset to remote, Open clone, Open Cursor folder
-- Sync history: click a row to open files when recorded; delete one entry (trash icon) or **Clear** all via the control next to the History title (both ask for modal confirmation)
+- **Sync Now**, then Push, Pull, and Reset to remote. Open clone and Cursor folder sit in a separate Folders row; they only reveal a directory
+- Sync history: click a row to open its file list in the file panel (the same one used for commit and status files). Click a file there to open it in the editor. Delete one entry (trash icon) or **Clear** all via the control next to the History title (both ask for modal confirmation)
 - Live progress with elapsed time and absolute percent on pull/push; large repo pushes upload Git trees in chunks to avoid GitHub timeouts
 
 ### Chats
@@ -237,7 +237,7 @@ Fidelity notes: [`docs/transcript-fidelity-matrix.md`](docs/transcript-fidelity-
 
 ## Extension list sync
 
-Push writes `extensions.json` (non-builtin extensions). **`syncExtensions.autoInstall` defaults on**: Pull and Sync Now prompt **Install / Skip** for missing extensions (never silent). Turn it off for zero prompts. When `syncExtensions.autoUninstall` is on, extras not in the synced list are uninstalled without a second prompt.
+Push writes `extensions.json` (non-builtin extensions). Status checks and Sync Now rebuild that file from `~/.cursor/extensions` first, so an update is visible even when this window still has the previous version loaded. Each entry records whether it came from the store (`source: gallery`) or from a local package (`source: vsix`). Store extensions stay an id and version and are reinstalled from the marketplace. Local packages are copied into `vsix/` (up to 50 MB) and reinstalled from that file, so an extension you built yourself still arrives on the other machine. **`syncExtensions.autoInstall` defaults on**: Pull and Sync Now prompt **Install / Skip** for missing extensions (never silent). Turn it off for zero prompts. When `syncExtensions.autoUninstall` is on, extras not in the synced list are uninstalled without a second prompt.
 
 ## Security
 

@@ -296,33 +296,8 @@ export async function dispatchSidebarMessage(
       break;
     }
     case "history:details": {
-      const { loadSyncHistory } = await import("../diagnostics.js");
-      const history = await loadSyncHistory(context);
-      const entry = history.find((e) => e.timestamp === msg.timestamp);
-      if (!entry) {
-        void vscode.window.showWarningMessage(t("historyEntryNotFound"));
-        break;
-      }
-      const files = entry.files ?? [];
-      if (files.length === 0) {
-        void vscode.window.showInformationMessage(t("historyNoFileListRecorded"));
-        break;
-      }
-      const dirLabel = entry.direction === "push" ? t("push") : t("pull");
-      const countLabel =
-        typeof entry.totalFileCount === "number" && entry.totalFileCount > 0
-          ? t("historyFilesCountRatio", {
-              changed: files.length,
-              total: entry.totalFileCount,
-            })
-          : t("historyFiles", { n: files.length });
-      const { showSyncKeyQuickPick } = await import("../sync-key-picker.js");
-      await showSyncKeyQuickPick({
-        entries: files.map((syncKey) => ({ syncKey })),
-        title: `${dirLabel} · ${countLabel}`,
-        placeHolder: t("historyFilesPlaceholder"),
-        emptyMessage: t("historyNoFileListRecorded"),
-      });
+      const { openHistoryFilesPanel } = await import("../status-preview-panel.js");
+      await openHistoryFilesPanel(context, msg.timestamp);
       break;
     }
     case "history:delete": {

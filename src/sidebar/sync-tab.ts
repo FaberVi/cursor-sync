@@ -354,9 +354,15 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
     <div class="action-grid">
       <button class="action-btn" data-command="push" title="${escapeHtml(t("pushHint"))}"><span class="codicon codicon-cloud-upload"></span> ${escapeHtml(t("push"))}</button>
       <button class="action-btn" data-command="pull" title="${escapeHtml(t("pullHint"))}"><span class="codicon codicon-cloud-download"></span> ${escapeHtml(t("pull"))}</button>
-      <button class="action-btn action-btn-secondary" data-command="resetToRemote" title="${escapeHtml(t("resetToRemoteHint"))}"><span class="codicon codicon-discard"></span> ${escapeHtml(t("resetToRemote"))}</button>
-      <button class="action-btn action-btn-secondary" data-command="openSyncClone" title="${escapeHtml(t("openSyncCloneHint"))}"><span class="codicon codicon-repo"></span> ${escapeHtml(t("openSyncClone"))}</button>
-      <button class="action-btn action-btn-secondary" data-command="openCursorFolder" title="${escapeHtml(t("openCursorFolderHint"))}"><span class="codicon codicon-folder-opened"></span> ${escapeHtml(t("openCursorFolder"))}</button>
+      <button class="action-btn action-btn-span" data-command="resetToRemote" title="${escapeHtml(t("resetToRemoteHint"))}"><span class="codicon codicon-discard"></span> ${escapeHtml(t("resetToRemote"))}</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">${escapeHtml(t("folders"))}</div>
+    <div class="shortcut-row">
+      <button class="shortcut-btn" data-command="openSyncClone" title="${escapeHtml(t("openSyncCloneHint"))}"><span class="codicon codicon-repo"></span> ${escapeHtml(t("openSyncClone"))}</button>
+      <button class="shortcut-btn" data-command="openCursorFolder" title="${escapeHtml(t("openCursorFolderHint"))}"><span class="codicon codicon-folder-opened"></span> ${escapeHtml(t("openCursorFolder"))}</button>
     </div>
   </div>
 

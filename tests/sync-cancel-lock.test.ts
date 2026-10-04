@@ -67,7 +67,7 @@ describe("sync cancel releases locks", () => {
 
   it("executePull refuses while the shared sync lock is held", async () => {
     const { enterSyncLock } = await import("../src/sync-lock.js");
-    expect(enterSyncLock()).toBe("acquired");
+    expect(enterSyncLock()).toMatchObject({ kind: "acquired" });
     const { executePull, isPullLocked } = await import("../src/pull.js");
     const ok = await executePull(mockContext(tmpDir));
     expect(ok).toBe(false);

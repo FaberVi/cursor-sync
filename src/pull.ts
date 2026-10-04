@@ -36,7 +36,7 @@ import {
 } from "./chat-sync.js";
 import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import { computeChecksum } from "./packaging.js";
-import { syncExtensionsFromRemoteFiles } from "./extensions.js";
+import { ensureExtensionsJsonOnDisk, syncExtensionsFromRemoteFiles } from "./extensions.js";
 import {
   applyCloneToCursor,
   cloneAbsForSyncKey,
@@ -56,9 +56,17 @@ import {
 } from "./sync-clone.js";
 import { buildRepoSyncState } from "./remote/destination.js";
 import { blockOnRelation, failSync, prepareRepoSync, type SyncOpTrigger } from "./sync-prepare.js";
-import { enterSyncLock, isSyncLocked, leaveSyncLock } from "./sync-lock.js";
+import { isSyncLocked, leaveSyncLock } from "./sync-lock.js";
+import { acquireSyncOperationLock } from "./sync-lock-acquire.js";
 import * as fs from "node:fs/promises";
 import { classifyPullConflicts, overlayPlanWithResolutions, applyKeepLocalChecksums, keepLocalKeysFromResolutions } from "./sync-conflicts.js";
+import {
+  checksumsWithoutDeletions,
+  conflictsWithoutDeletions,
+  omitIntentionalDeletions,
+  resolveIntentionalDeletions,
+  withoutDeletionKeys,
+} from "./intentional-deletions.js";
 import { openConflictPanel } from "./conflict-panel.js";
 import {
   buildSyncConfirmModel,
@@ -94,7 +102,7 @@ export async function executePull(
   const trigger = options?.trigger ?? "manual";
   const resetToRemote = options?.resetToRemote === true;
 
-  const lockHold = enterSyncLock({ skipLock: options?.skipLock });
+  const lockHold = await acquireSyncOperationLock(context, { skipLock: options?.skipLock });
   if (lockHold === "busy") {
     vscode.window.showWarningMessage("A sync operation is already in progress.");
     return false;
@@ -234,6 +242,7 @@ async function doPull(
   });
 
   progress.report({ message: "Comparing clone to Cursor folders…" });
+  await ensureExtensionsJsonOnDisk();
   const previousState = await loadSyncState(context);
   const previousChecksums = previousState?.localChecksums ?? {};
   const preserveLocalOnly = trigger === "syncNow" && !resetToRemote;
@@ -242,13 +251,31 @@ async function doPull(
     previousRemoteChecksums: previousChecksums,
   });
   const localHashes = await hashCursorSyncFiles();
-  const classified = preserveLocalOnly
+  const localEntries = await enumerateSyncFiles(resolveSyncRoots());
+  const localKeys = localEntries.map((entry) => entry.relativeSyncKey);
+  const deletionKeys = resolveIntentionalDeletions({
+    resetToRemote,
+    localChecksums: previousChecksums,
+    pendingDeletions: previousState?.pendingDeletions,
+    localHashes,
+    localKeys,
+    cloneChecksums: plan.remoteChecksums,
+  });
+  if (deletionKeys.length > 0) {
+    plan = omitIntentionalDeletions(plan, deletionKeys);
+  }
+  const classifiedRaw = preserveLocalOnly
     ? classifyPullConflicts({
         localChecksums: localHashes,
         remoteChecksums: plan.remoteChecksums,
         baseChecksums: previousChecksums,
       })
-    : { conflicts: [], autoKeepRemote: [], autoKeepLocal: [] };
+    : { conflicts: [], autoKeepRemote: [] as string[], autoKeepLocal: [] as string[] };
+  const classified = {
+    ...classifiedRaw,
+    conflicts: conflictsWithoutDeletions(classifiedRaw.conflicts, deletionKeys),
+    autoKeepLocal: withoutDeletionKeys(classifiedRaw.autoKeepLocal, deletionKeys),
+  };
   let keepLocalKeys = [...classified.autoKeepLocal];
   if (keepLocalKeys.length > 0) {
     plan = overlayPlanWithResolutions(
@@ -266,9 +293,8 @@ async function doPull(
     basePath: clone.identity.basePath,
     preSha,
   });
-  const localEntries = await enumerateSyncFiles(resolveSyncRoots());
   const localOnlyKeys = listLocalOnlyKeys({
-    localKeys: localEntries.map((e) => e.relativeSyncKey),
+    localKeys,
     remoteChecksums: plan.remoteChecksums,
     previousRemoteChecksums: previousChecksums,
   });
@@ -278,13 +304,15 @@ async function doPull(
     counts.m === 0 &&
     counts.k === 0 &&
     !importChat &&
-    classified.conflicts.length === 0
+    classified.conflicts.length === 0 &&
+    deletionKeys.length === 0
   ) {
     await saveCompletedState(
       context,
       clone.identity,
       withChatCollectionChecksum(plan.remoteChecksums, plan.chatRaw),
-      "pull"
+      "pull",
+      resetToRemote ? [] : deletionKeys
     );
     await clearPendingCloneReset(context);
     recordRemoteRelation({ relation: "equal" });
@@ -304,7 +332,11 @@ async function doPull(
 
   if (trigger === "manual" || trigger === "syncNow") {
     const model =
-      counts.n === 0 && counts.m === 0 && counts.k === 0 && importChat
+      counts.n === 0 &&
+      counts.m === 0 &&
+      counts.k === 0 &&
+      importChat &&
+      deletionKeys.length === 0
         ? buildSyncConfirmModel({
             mode: "chatsOnly",
             incoming,
@@ -323,6 +355,7 @@ async function doPull(
             n: counts.n,
             m: counts.m,
             k: counts.k,
+            intentionalDeletionKeys: deletionKeys,
           });
     const confirmed = await openSyncConfirmPanel({ context, model });
     if (!confirmed) {
@@ -396,16 +429,20 @@ async function doPull(
     await storeChatSyncFingerprint(context, await computeChatSyncLocalFingerprint());
   }
 
-  const checksums = applyKeepLocalChecksums(
-    withChatCollectionChecksum(applied.checksums, plan.chatRaw),
-    previousChecksums,
-    keepLocalKeys
+  const checksums = checksumsWithoutDeletions(
+    applyKeepLocalChecksums(
+      withChatCollectionChecksum(applied.checksums, plan.chatRaw),
+      previousChecksums,
+      keepLocalKeys
+    ),
+    deletionKeys
   );
   const next = await saveCompletedState(
     context,
     clone.identity,
     checksums,
-    "pull"
+    "pull",
+    resetToRemote ? [] : deletionKeys
   );
   markJournalStateWritten();
   await clearPendingCloneReset(context);
@@ -441,7 +478,8 @@ async function saveCompletedState(
     basePath: string;
   },
   checksums: Record<string, string>,
-  direction: "push" | "pull"
+  direction: "push" | "pull",
+  pendingDeletions: readonly string[]
 ) {
   const next = buildRepoSyncState({
     previous: await loadSyncState(context),
@@ -452,6 +490,7 @@ async function saveCompletedState(
     checksums,
     direction,
     completedFileSync: true,
+    pendingDeletions,
   });
   await saveSyncState(context, next);
   return next;

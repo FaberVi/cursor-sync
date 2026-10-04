@@ -165,6 +165,20 @@
     var msg = ev.data;
     if (!msg || !msg.type) return;
 
+    if (msg.type === "sidebar:ready") {
+      var overlay = document.getElementById("boot-overlay");
+      if (!overlay) return;
+      if (
+        msg.bootId != null &&
+        String(overlay.getAttribute("data-boot")) !== String(msg.bootId)
+      ) {
+        return;
+      }
+      overlay.classList.add("is-hidden");
+      overlay.setAttribute("aria-busy", "false");
+      return;
+    }
+
     if (msg.type === "sync:update") {
       var syncPane = document.getElementById("sync-pane");
       if (syncPane && msg.html) {

@@ -6,7 +6,8 @@ import { clearLastRemoteExtensions } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { removeSyncClone } from "./sync-clone.js";
-import { enterSyncLock, leaveSyncLock } from "./sync-lock.js";
+import { requestSyncCancel, waitForSyncAbortIdle } from "./sync-abort.js";
+import { releaseSyncLockIfGeneration, resetSyncLock } from "./sync-lock.js";
 
 export async function executeReset(context: vscode.ExtensionContext): Promise<void> {
   const confirmation = await vscode.window.showWarningMessage(
@@ -19,11 +20,9 @@ export async function executeReset(context: vscode.ExtensionContext): Promise<vo
     return;
   }
 
-  const lockHold = enterSyncLock();
-  if (lockHold === "busy") {
-    vscode.window.showWarningMessage("A sync operation is already in progress.");
-    return;
-  }
+  requestSyncCancel();
+  const generation = resetSyncLock();
+  await waitForSyncAbortIdle();
 
   try {
     await clearToken(context);
@@ -66,6 +65,6 @@ export async function executeReset(context: vscode.ExtensionContext): Promise<vo
 
     vscode.window.showInformationMessage(`${EXTENSION_LABEL} has been fully reset.`);
   } finally {
-    leaveSyncLock(lockHold);
+    releaseSyncLockIfGeneration(generation);
   }
 }

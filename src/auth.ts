@@ -50,7 +50,7 @@ export async function configureGithub(
       value: repo && !repo.includes("/") ? `${repo}/` : repo || "",
       validateInput: (value) => {
         if (!parseOwnerRepo(value || "")) {
-          return "Use owner/name format (example: FaberVi/cursor-backup)";
+          return "Use owner/name format (example: acme/cursor-backup)";
         }
         return undefined;
       },

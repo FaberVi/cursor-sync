@@ -20,7 +20,8 @@ import {
 import { computeCursorDiffers, recordLocalDiffers } from "./cursor-differs.js";
 import { decideSyncAction, type SyncAction } from "./sync-action.js";
 import { GitNotFoundError } from "./git-cli.js";
-import { enterSyncLock, leaveSyncLock } from "./sync-lock.js";
+import { isSyncLockStale, leaveSyncLock } from "./sync-lock.js";
+import { acquireSyncOperationLock } from "./sync-lock-acquire.js";
 import { beginSyncAbort, endSyncAbort } from "./sync-abort.js";
 
 const MAX_JITTER_MS = 60_000;
@@ -127,7 +128,7 @@ export async function scheduledTick(
     return;
   }
 
-  if (isPushLocked() || isPullLocked()) {
+  if ((isPushLocked() || isPullLocked()) && !isSyncLockStale()) {
     logger.appendLine(
       `[${new Date().toISOString()}] Scheduled sync skipped: operation in progress`
     );
@@ -144,7 +145,7 @@ export async function scheduledTick(
     return;
   }
 
-  const lockHold = enterSyncLock();
+  const lockHold = await acquireSyncOperationLock(context);
   if (lockHold === "busy") {
     logger.appendLine(
       `[${new Date().toISOString()}] Scheduled sync skipped: operation in progress`

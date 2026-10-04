@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideSyncAction } from "../src/sync-action.js";
+import { decideSyncAction, shouldStageDeletionsBeforePull } from "../src/sync-action.js";
 
 describe("decideSyncAction", () => {
   it("errors when clone and origin have diverged", () => {
@@ -74,6 +74,13 @@ describe("decideSyncAction", () => {
         hasNestedRemoteFiles: false,
       })
     ).toEqual({ action: "push" });
+  });
+
+  it("stages deletions before pull only when origin is ahead and files were removed", () => {
+    expect(shouldStageDeletionsBeforePull("behind", 1)).toBe(true);
+    expect(shouldStageDeletionsBeforePull("behind", 0)).toBe(false);
+    expect(shouldStageDeletionsBeforePull("equal", 2)).toBe(false);
+    expect(shouldStageDeletionsBeforePull("ahead", 1)).toBe(false);
   });
 
   it("pushes when already synced and Cursor differs from the clone", () => {

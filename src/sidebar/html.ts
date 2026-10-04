@@ -179,8 +179,9 @@ function assembleSidebarDocument(params: {
   syncPaneHtml: string;
   settingsPaneHtml: string;
   htmlLang: string;
+  bootId?: number;
 }): string {
-  const { webview, context, syncPaneHtml, settingsPaneHtml, htmlLang } = params;
+  const { webview, context, syncPaneHtml, settingsPaneHtml, htmlLang, bootId } = params;
   const scriptUri = webview.asWebviewUri(
     vscode.Uri.joinPath(context.extensionUri, "resources", "sidebar", "webview.js")
   );
@@ -215,6 +216,16 @@ function assembleSidebarDocument(params: {
 </head>
 <body>
   <script type="application/json" id="ui-i18n">${JSON.stringify(webviewI18nPayload()).replace(/</g, "\\u003c")}</script>
+  ${
+    bootId === undefined
+      ? ""
+      : `<div id="boot-overlay" class="boot-overlay" data-boot="${bootId}" role="status" aria-live="polite" aria-busy="true">
+    <div class="boot-overlay-card">
+      <div class="boot-spinner" aria-hidden="true"></div>
+      <div class="boot-overlay-label">${escapeHtml(t("bootLoading"))}</div>
+    </div>
+  </div>`
+  }
   <div class="tab-bar">
     <button class="tab-btn active" data-tab="sync-pane" title="${escapeHtml(t("tabSyncHint"))}">${escapeHtml(t("tabSync"))}</button>
     <button class="tab-btn" data-tab="chats-pane" title="${escapeHtml(t("tabChatsHint"))}">${escapeHtml(t("tabChats"))}</button>
@@ -269,7 +280,8 @@ function assembleSidebarDocument(params: {
 
 export function renderSidebarShellHtml(
   context: vscode.ExtensionContext,
-  webview: vscode.Webview
+  webview: vscode.Webview,
+  bootId: number
 ): string {
   const settingsValues = readSettingsValues();
   return assembleSidebarDocument({
@@ -278,6 +290,7 @@ export function renderSidebarShellHtml(
     syncPaneHtml: renderSyncPane(buildSyncTabStateShell(context)),
     settingsPaneHtml: renderSettingsPane(settingsValues),
     htmlLang: settingsValues["ui.language"] === "it" ? "it" : "en",
+    bootId,
   });
 }
 

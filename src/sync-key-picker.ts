@@ -1,7 +1,11 @@
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { t } from "./sidebar/i18n.js";
 import { resolveSyncRoots } from "./paths.js";
+import { pathIsInsideDirectory } from "./rollback.js";
+import { getSyncClonePath, readRepoIdentity } from "./sync-clone.js";
+import { cloneAbsForSyncKey, cloneBaseAbs } from "./sync-copy.js";
 import { syncKeyToAbsolutePath } from "./sync-local-deletes.js";
 import type { FileChangeKind } from "./cursor-differs.js";
 
@@ -29,60 +33,83 @@ export function syncKeyChangeLabel(
   return t(key);
 }
 
-/** Open the Cursor-side file for a sync key; warn if it is missing. */
-export async function openSyncKeyFile(syncKey: string): Promise<void> {
-  const roots = resolveSyncRoots();
-  const absolutePath = syncKeyToAbsolutePath(syncKey, roots);
-  if (!absolutePath) {
-    void vscode.window.showWarningMessage(
-      t("historyFileNotFound", { path: syncKey })
-    );
-    return;
+function isConfinedSyncPath(candidate: string, roots: readonly string[]): string | undefined {
+  const resolved = path.resolve(candidate);
+  if (!roots.some((root) => pathIsInsideDirectory(resolved, root))) {
+    return undefined;
   }
+  return resolved;
+}
+
+/** Local Cursor file first, then the same path inside the sync clone. */
+export function syncKeyOpenCandidates(
+  syncKey: string,
+  roots: { cursorUser: string; dotCursor: string },
+  clone?: { clonePath: string; basePath: string }
+): string[] {
+  if (syncKey.split("/").includes("..")) {
+    return [];
+  }
+  const allowed = [roots.cursorUser, roots.dotCursor];
+  if (clone) {
+    allowed.push(cloneBaseAbs(clone.clonePath, clone.basePath));
+  }
+  const raw: string[] = [];
+  const local = syncKeyToAbsolutePath(syncKey, roots);
+  if (local) {
+    raw.push(local);
+  }
+  if (clone) {
+    raw.push(cloneAbsForSyncKey(clone.clonePath, clone.basePath, syncKey));
+  }
+  const confined: string[] = [];
+  for (const candidate of raw) {
+    const safe = isConfinedSyncPath(candidate, allowed);
+    if (safe) {
+      confined.push(safe);
+    }
+  }
+  return confined;
+}
+
+async function showFileInEditor(absolutePath: string): Promise<void> {
+  const uri = vscode.Uri.file(absolutePath);
+  const options = {
+    viewColumn: vscode.ViewColumn.One,
+    preview: true,
+    preserveFocus: false,
+  };
   try {
-    await fs.access(absolutePath);
-    await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(absolutePath));
+    await vscode.window.showTextDocument(uri, options);
   } catch {
-    void vscode.window.showWarningMessage(
-      t("historyFileNotFound", { path: syncKey })
-    );
+    await vscode.commands.executeCommand("vscode.open", uri, options);
   }
 }
 
-/**
- * QuickPick of sync keys. Selecting a row opens the Cursor-side file when it exists.
- */
-export async function showSyncKeyQuickPick(options: {
-  entries: readonly SyncKeyPreviewEntry[];
-  title: string;
-  placeHolder: string;
-  emptyMessage: string;
-}): Promise<void> {
-  if (options.entries.length === 0) {
-    void vscode.window.showInformationMessage(options.emptyMessage);
-    return;
-  }
-  const roots = resolveSyncRoots();
-  const picked = await vscode.window.showQuickPick(
-    options.entries.map((entry) => {
-      const absolutePath = syncKeyToAbsolutePath(entry.syncKey, roots);
-      const change = syncKeyChangeLabel(entry.change);
-      return {
-        label: entry.syncKey,
-        description: change ?? absolutePath ?? entry.syncKey,
-        detail: change && absolutePath ? absolutePath : undefined,
-        syncKey: entry.syncKey,
-      };
-    }),
-    {
-      title: options.title,
-      placeHolder: options.placeHolder,
-      matchOnDescription: true,
-      matchOnDetail: true,
+/** Open a listed sync file in the main editor. Falls back to the clone copy. */
+export async function openSyncKeyFile(
+  syncKey: string,
+  context?: vscode.ExtensionContext
+): Promise<void> {
+  const identity = context ? readRepoIdentity() : undefined;
+  const clone =
+    context && identity
+      ? { clonePath: getSyncClonePath(context), basePath: identity.basePath }
+      : undefined;
+  const candidates = syncKeyOpenCandidates(syncKey, resolveSyncRoots(), clone);
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+    } catch {
+      continue;
     }
-  );
-  if (!picked) {
-    return;
+    try {
+      await showFileInEditor(candidate);
+      return;
+    } catch {
+      continue;
+    }
   }
-  await openSyncKeyFile(picked.syncKey);
+  void vscode.window.showWarningMessage(t("historyFileNotFound", { path: syncKey }));
 }
+

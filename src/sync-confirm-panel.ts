@@ -72,6 +72,14 @@ function renderChips(model: SyncConfirmModel): string {
       chip(t("syncConfirmChipLocalOnly", { n: model.localOnlyKeys.length }), "local")
     );
   }
+  if (model.intentionalDeletionKeys.length > 0) {
+    chips.push(
+      chip(
+        t("syncConfirmChipKeptDeleted", { n: model.intentionalDeletionKeys.length }),
+        "delete"
+      )
+    );
+  }
   if (chips.length === 0) {
     return "";
   }
@@ -128,6 +136,14 @@ export function renderSyncConfirmHtml(options: {
   if (model.conflictKeys.length > 0) {
     sections.push(
       renderSection(t("syncConfirmSectionConflicts"), renderRows(model.conflictKeys))
+    );
+  }
+  if (model.intentionalDeletionKeys.length > 0) {
+    sections.push(
+      renderSection(
+        t("syncConfirmSectionKeptDeleted"),
+        renderRows(model.intentionalDeletionKeys)
+      )
     );
   }
 

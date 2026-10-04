@@ -52,6 +52,7 @@ export const EN: Record<MessageKey, string> = {
   chatsNotIncluded: "Chats: not included in sync",
   syncNow: "Sync Now",
   actions: "Actions",
+  folders: "Folders",
   export: "Export",
   import: "Import",
   history: "History",
@@ -85,7 +86,7 @@ export const EN: Record<MessageKey, string> = {
   pathInRepo: "Path in repo",
   connectRepository: "Connect repository",
   connectRepoHint:
-    "Connect verifies the PAT and repo access. Git must be installed. If the repo is missing you can create it (private or public). Format: FaberVi/my-backup-repo.",
+    "Connect verifies the PAT and repo access. Git must be installed. If the repo is missing you can create it (private or public). Format: acme/cursor-backup.",
   language: "Language",
   languageEn: "English",
   languageIt: "Italiano",
@@ -122,6 +123,7 @@ export const EN: Record<MessageKey, string> = {
   bundleFiles: "Bundle files",
   clear: "Clear",
   loading: "Loading…",
+  bootLoading: "Loading",
   noLocalChats: "No local chats found",
   groupLoadEmpty: "No chats could be loaded for this project. Try refreshing the Chats tab.",
   noImportHistory: "No import history",
@@ -266,6 +268,8 @@ export const EN: Record<MessageKey, string> = {
   syncConfirmSectionLocalOnlyDeleted: "Local-only (will be deleted)",
   syncConfirmSectionConflicts:
     "Conflicts (choose local or remote after Proceed)",
+  syncConfirmChipKeptDeleted: "{n} kept deleted",
+  syncConfirmSectionKeptDeleted: "Removed on this machine (will stay deleted)",
   syncConfirmWaitingReview: "Review sync in the editor tab…",
   syncConfirmWaitingConflicts: "Resolve conflicts in the editor tab…",
   resolvedCount: "{k}/{n} resolved",

@@ -52,6 +52,7 @@ export const IT: Record<MessageKey, string> = {
   chatsNotIncluded: "Chat: non incluse nella sync",
   syncNow: "Sincronizza ora",
   actions: "Azioni",
+  folders: "Cartelle",
   export: "Esporta",
   import: "Importa",
   history: "Cronologia",
@@ -85,7 +86,7 @@ export const IT: Record<MessageKey, string> = {
   pathInRepo: "Percorso nel repo",
   connectRepository: "Collega repository",
   connectRepoHint:
-    "Collega verifica il PAT e l'accesso al repo. Git deve essere installato. Se manca puoi crearlo (privato o pubblico). Formato: FaberVi/my-backup-repo.",
+    "Collega verifica il PAT e l'accesso al repo. Git deve essere installato. Se manca puoi crearlo (privato o pubblico). Formato: acme/cursor-backup.",
   language: "Lingua",
   languageEn: "English",
   languageIt: "Italiano",
@@ -122,6 +123,7 @@ export const IT: Record<MessageKey, string> = {
   bundleFiles: "File bundle",
   clear: "Cancella",
   loading: "Caricamento…",
+  bootLoading: "Caricamento",
   noLocalChats: "Nessuna chat locale trovata",
   groupLoadEmpty: "Impossibile caricare le chat per questo progetto. Prova ad aggiornare la tab Chat.",
   noImportHistory: "Nessuna cronologia import",
@@ -266,6 +268,8 @@ export const IT: Record<MessageKey, string> = {
   syncConfirmSectionLocalOnlyDeleted: "Solo-locali (verranno eliminati)",
   syncConfirmSectionConflicts:
     "Conflitti (dopo Procedi scegli locale o remoto)",
+  syncConfirmChipKeptDeleted: "{n} restano eliminati",
+  syncConfirmSectionKeptDeleted: "Rimossi su questo computer (resteranno eliminati)",
   syncConfirmWaitingReview: "Rivedi la sync nella scheda editor…",
   syncConfirmWaitingConflicts: "Risolvi i conflitti nella scheda editor…",
   resolvedCount: "{k}/{n} risolti",

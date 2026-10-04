@@ -45,6 +45,7 @@ import {
   stopRemoteAheadWatch,
   syncStatusBarWithRemoteAheadCache,
 } from "./remote-ahead.js";
+import { resetSyncLock } from "./sync-lock.js";
 
 export { executeSyncNow } from "./sync-now.js";
 
@@ -52,6 +53,8 @@ let configListener: vscode.Disposable | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const logger = getLogger();
+
+  resetSyncLock();
 
   initializeStatusBar(context);
 
@@ -276,6 +279,7 @@ export function deactivate(): void {
   disposeActivationWatcher();
   stopScheduler();
   stopRemoteAheadWatch();
+  resetSyncLock();
 }
 
 async function updateConfiguredContext(

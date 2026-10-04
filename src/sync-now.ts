@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
-import { executePush } from "./push.js";
+import { executePush, stageDeletionsAndRebase } from "./push.js";
 import { executePull } from "./pull.js";
+import { pushClone } from "./sync-clone.js";
+import { gitResetHard } from "./git-cli.js";
 import { determineSyncAction } from "./scheduler.js";
 import { getLogger } from "./diagnostics.js";
 import { notifySyncQuiet } from "./sync-notify.js";
@@ -19,7 +21,8 @@ import {
   getSyncAbortSignal,
   isAbortError,
 } from "./sync-abort.js";
-import { enterSyncLock, leaveSyncLock } from "./sync-lock.js";
+import { leaveSyncLock } from "./sync-lock.js";
+import { acquireSyncOperationLock } from "./sync-lock-acquire.js";
 
 export async function executeSyncNow(
   context: vscode.ExtensionContext
@@ -27,9 +30,11 @@ export async function executeSyncNow(
   const logger = getLogger();
   logger.appendLine(`[${new Date().toISOString()}] Sync Now triggered`);
 
-  const lockHold = enterSyncLock();
+  let lockHold = await acquireSyncOperationLock(context, { forceRecover: true });
   if (lockHold === "busy") {
     vscode.window.showWarningMessage("A sync operation is already in progress.");
+    const { executeRefreshSyncStatus } = await import("./refresh-sync-status.js");
+    await executeRefreshSyncStatus(context);
     return;
   }
 
@@ -49,13 +54,32 @@ export async function executeSyncNow(
         progress.complete(true);
         break;
       case "pull": {
+        const staged = await stageDeletionsAndRebase(context, progress);
+        if (staged.status === "failed") {
+          progress.complete(false);
+          break;
+        }
         progress.report({ message: "Pulling…" });
         const pulled = await executePull(context, {
           trigger: "syncNow",
           skipLock: true,
         });
         if (!pulled) {
+          if (staged.status === "staged") {
+            await gitResetHard(staged.clonePath, staged.preSha);
+          }
           progress.complete(false);
+          break;
+        }
+        if (staged.status === "staged") {
+          progress.report({ message: "Pushing local deletions…" });
+          await pushClone({
+            clonePath: staged.clonePath,
+            branch: staged.branch,
+            pat: staged.token,
+            setUpstream: false,
+          });
+          progress.complete(true);
           break;
         }
         const followUp = await determineSyncAction(context);

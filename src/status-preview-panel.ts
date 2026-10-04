@@ -5,16 +5,18 @@ import {
   listStatusPreviewEntries,
   type StatusPreviewKind,
 } from "./status-preview.js";
+import { loadSyncHistory } from "./diagnostics.js";
 import {
   openSyncKeyFile,
   syncKeyChangeLabel,
   type SyncKeyPreviewEntry,
 } from "./sync-key-picker.js";
+import type { SyncHistoryEntry } from "./types.js";
 
 export type StatusPreviewBody =
   | { kind: "loading" }
   | { kind: "list"; entries: readonly SyncKeyPreviewEntry[] }
-  | { kind: "empty" }
+  | { kind: "empty"; message?: string }
   | { kind: "error"; error: string };
 
 export type PreviewChangeCounts = {
@@ -40,7 +42,7 @@ export function countPreviewChanges(
       counts.removed += 1;
     } else if (entry.change === "incoming") {
       counts.incoming += 1;
-    } else {
+    } else if (entry.change === "modified") {
       counts.modified += 1;
     }
   }
@@ -79,12 +81,25 @@ export function renderPreviewCounts(
   return `<ul class="preview-counts" aria-label="${escapeHtml(t("statusPreviewCountsLabel"))}">${chips.join("")}</ul>`;
 }
 
+type PanelSource =
+  | { type: "status"; kind: StatusPreviewKind }
+  | { type: "history"; timestamp: string };
+
 type PanelSession = {
   panel: vscode.WebviewPanel;
-  kind: StatusPreviewKind;
+  source: PanelSource;
   generation: number;
   loading: boolean;
   context: vscode.ExtensionContext;
+  /** True after the webview script is listening, so later paints do not reload the page. */
+  webviewReady: boolean;
+};
+
+type LoadedPanel = {
+  heading: string;
+  title: string;
+  entries: SyncKeyPreviewEntry[];
+  emptyMessage?: string;
 };
 
 let session: PanelSession | undefined;
@@ -93,7 +108,20 @@ export function __resetStatusPreviewPanelForTests(): void {
   session = undefined;
 }
 
-function headingFor(kind: StatusPreviewKind): string {
+function sourcesMatch(left: PanelSource, right: PanelSource): boolean {
+  if (left.type !== right.type) {
+    return false;
+  }
+  if (left.type === "status" && right.type === "status") {
+    return left.kind === right.kind;
+  }
+  if (left.type === "history" && right.type === "history") {
+    return left.timestamp === right.timestamp;
+  }
+  return false;
+}
+
+function statusHeading(kind: StatusPreviewKind): string {
   if (kind === "incoming") {
     return t("statusPreviewIncomingTitle");
   }
@@ -106,8 +134,22 @@ function headingFor(kind: StatusPreviewKind): string {
   return t("statusPreviewLocalTitle");
 }
 
-function previewTitle(kind: StatusPreviewKind, count: number): string {
-  return `${headingFor(kind)} · ${t("historyFiles", { n: count })}`;
+function headingFor(source: PanelSource): string {
+  if (source.type === "history") {
+    return t("history");
+  }
+  return statusHeading(source.kind);
+}
+
+function historyCountLabel(entry: SyncHistoryEntry, fileCount: number): string {
+  return typeof entry.totalFileCount === "number" && entry.totalFileCount > 0
+    ? t("historyFilesCountRatio", { changed: fileCount, total: entry.totalFileCount })
+    : t("historyFiles", { n: fileCount });
+}
+
+function historyHeading(entry: SyncHistoryEntry, fileCount: number): string {
+  const dirLabel = entry.direction === "push" ? t("push") : t("pull");
+  return `${dirLabel} · ${historyCountLabel(entry, fileCount)}`;
 }
 
 function renderBody(body: StatusPreviewBody): string {
@@ -118,7 +160,7 @@ function renderBody(body: StatusPreviewBody): string {
     </div>`;
   }
   if (body.kind === "empty") {
-    return `<p class="preview-empty">${escapeHtml(t("statusPreviewEmpty"))}</p>`;
+    return `<p class="preview-empty">${escapeHtml(body.message ?? t("statusPreviewEmpty"))}</p>`;
   }
   if (body.kind === "error") {
     return `<p class="preview-error">${escapeHtml(
@@ -156,15 +198,17 @@ export function renderStatusPreviewHtml(options: {
 <body>
   <header class="preview-header">
     <div class="preview-heading-row">
-      <h1>${escapeHtml(options.heading)}</h1>
-      <button type="button" class="preview-refresh" data-command="refresh"${
+      <h1 id="preview-heading">${escapeHtml(options.heading)}</h1>
+      <button type="button" id="preview-refresh" class="preview-refresh" data-command="refresh"${
         options.body.kind === "loading" ? " disabled" : ""
       } title="${escapeHtml(t("statusPreviewRefreshHint"))}">${escapeHtml(t("statusPreviewRefresh"))}</button>
     </div>
     <p class="preview-subtitle">${escapeHtml(t("statusPreviewPlaceholder"))}</p>
-    ${options.body.kind === "list" ? renderPreviewCounts(options.body.entries) : ""}
+    <div id="preview-counts">${
+      options.body.kind === "list" ? renderPreviewCounts(options.body.entries) : ""
+    }</div>
   </header>
-  <main class="preview-main">${renderBody(options.body)}</main>
+  <main id="preview-main" class="preview-main">${renderBody(options.body)}</main>
   <script src="${options.jsUri}"></script>
 </body>
 </html>`;
@@ -193,15 +237,56 @@ function resourceUris(
   return { cssUri, jsUri, csp };
 }
 
-function assignHtml(current: PanelSession, body: StatusPreviewBody): void {
+function assignHtml(
+  current: PanelSession,
+  body: StatusPreviewBody,
+  heading?: string
+): void {
+  const resolvedHeading = heading ?? headingFor(current.source);
+  if (current.webviewReady) {
+    void current.panel.webview.postMessage({
+      type: "render",
+      heading: resolvedHeading,
+      countsHtml: body.kind === "list" ? renderPreviewCounts(body.entries) : "",
+      bodyHtml: renderBody(body),
+      refreshDisabled: body.kind === "loading",
+    });
+    return;
+  }
   const { cssUri, jsUri, csp } = resourceUris(current.panel, current.context);
   current.panel.webview.html = renderStatusPreviewHtml({
-    heading: headingFor(current.kind),
+    heading: resolvedHeading,
     body,
     cssUri,
     jsUri,
     csp,
   });
+}
+
+async function loadPanel(current: PanelSession): Promise<LoadedPanel> {
+  const source = current.source;
+  if (source.type === "history") {
+    const history = await loadSyncHistory(current.context);
+    const entry = history.find((item) => item.timestamp === source.timestamp);
+    if (!entry) {
+      throw new Error(t("historyEntryNotFound"));
+    }
+    const files = entry.files ?? [];
+    const heading = historyHeading(entry, files.length);
+    return {
+      heading,
+      title: heading,
+      entries: files.map((syncKey) => ({ syncKey })),
+      emptyMessage: t("historyNoFileListRecorded"),
+    };
+  }
+  const entries = await listStatusPreviewEntries(current.context, source.kind);
+  const heading = statusHeading(source.kind);
+  return {
+    heading,
+    title: `${heading} · ${t("historyFiles", { n: entries.length })}`,
+    entries,
+  };
 }
 
 async function reloadCurrent(current: PanelSession): Promise<void> {
@@ -210,9 +295,9 @@ async function reloadCurrent(current: PanelSession): Promise<void> {
   }
   current.generation += 1;
   current.loading = true;
-  current.panel.title = headingFor(current.kind);
+  current.panel.title = headingFor(current.source);
   assignHtml(current, { kind: "loading" });
-  await fetchKind(current, current.generation, current.kind);
+  await fetchSource(current, current.generation);
 }
 
 function wirePanel(current: PanelSession): void {
@@ -221,8 +306,12 @@ function wirePanel(current: PanelSession): void {
       return;
     }
     const msg = raw as { type?: string; syncKey?: string };
+    if (msg.type === "ready") {
+      current.webviewReady = true;
+      return;
+    }
     if (msg.type === "open" && typeof msg.syncKey === "string") {
-      void openSyncKeyFile(msg.syncKey);
+      void openSyncKeyFile(msg.syncKey, current.context);
       return;
     }
     if (msg.type === "refresh") {
@@ -236,23 +325,19 @@ function wirePanel(current: PanelSession): void {
   });
 }
 
-async function fetchKind(
-  current: PanelSession,
-  generation: number,
-  kind: StatusPreviewKind
-): Promise<void> {
+async function fetchSource(current: PanelSession, generation: number): Promise<void> {
   try {
-    const entries = await listStatusPreviewEntries(current.context, kind);
+    const loaded = await loadPanel(current);
     if (session !== current || current.generation !== generation) {
       return;
     }
     current.loading = false;
-    current.panel.title = previewTitle(kind, entries.length);
-    if (entries.length === 0) {
-      assignHtml(current, { kind: "empty" });
+    current.panel.title = loaded.title;
+    if (loaded.entries.length === 0) {
+      assignHtml(current, { kind: "empty", message: loaded.emptyMessage }, loaded.heading);
       return;
     }
-    assignHtml(current, { kind: "list", entries });
+    assignHtml(current, { kind: "list", entries: loaded.entries }, loaded.heading);
   } catch (err) {
     if (session !== current || current.generation !== generation) {
       return;
@@ -263,27 +348,27 @@ async function fetchKind(
   }
 }
 
-export async function openStatusPreviewPanel(
+async function openPanel(
   context: vscode.ExtensionContext,
-  kind: StatusPreviewKind
+  source: PanelSource
 ): Promise<void> {
   if (session) {
     session.panel.reveal(vscode.ViewColumn.Beside);
-    if (session.kind === kind) {
+    if (sourcesMatch(session.source, source)) {
       return;
     }
-    session.kind = kind;
+    session.source = source;
     session.generation += 1;
     session.loading = true;
-    session.panel.title = headingFor(kind);
+    session.panel.title = headingFor(source);
     assignHtml(session, { kind: "loading" });
-    await fetchKind(session, session.generation, kind);
+    await fetchSource(session, session.generation);
     return;
   }
 
   const panel = vscode.window.createWebviewPanel(
     "cursorSync.statusPreview",
-    headingFor(kind),
+    headingFor(source),
     vscode.ViewColumn.Beside,
     {
       enableScripts: true,
@@ -295,13 +380,34 @@ export async function openStatusPreviewPanel(
   );
   const current: PanelSession = {
     panel,
-    kind,
+    source,
     generation: 1,
     loading: true,
     context,
+    webviewReady: false,
   };
   session = current;
   wirePanel(current);
   assignHtml(current, { kind: "loading" });
-  await fetchKind(current, current.generation, kind);
+  await fetchSource(current, current.generation);
+}
+
+export async function openStatusPreviewPanel(
+  context: vscode.ExtensionContext,
+  kind: StatusPreviewKind
+): Promise<void> {
+  await openPanel(context, { type: "status", kind });
+}
+
+/** Show one history entry's files in the shared file-list panel. */
+export async function openHistoryFilesPanel(
+  context: vscode.ExtensionContext,
+  timestamp: string
+): Promise<void> {
+  const history = await loadSyncHistory(context);
+  if (!history.some((entry) => entry.timestamp === timestamp)) {
+    void vscode.window.showWarningMessage(t("historyEntryNotFound"));
+    return;
+  }
+  await openPanel(context, { type: "history", timestamp });
 }

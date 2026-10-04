@@ -7,6 +7,7 @@ vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
 import * as vscode from "vscode";
 import { dispatchSidebarMessage } from "../src/sidebar/messages.js";
+import { __resetStatusPreviewPanelForTests } from "../src/status-preview-panel.js";
 import {
   HISTORY_PAGE_SIZE,
   renderHistoryEntry,
@@ -193,6 +194,23 @@ describe("renderSyncPane loading shell", () => {
     expect(html).not.toContain("Never");
     expect(html).not.toContain("Not linked");
     expect(html).not.toContain("No sync history yet");
+  });
+});
+
+describe("renderSyncPane actions", () => {
+  it("keeps folder shortcuts out of the action grid", () => {
+    const html = renderSyncPane(minimalSyncState(), 0);
+    const actions = html.slice(
+      html.indexOf('class="action-grid"'),
+      html.indexOf('class="shortcut-row"')
+    );
+    expect(actions).toContain('data-command="push"');
+    expect(actions).toContain('data-command="pull"');
+    expect(actions).toContain('data-command="resetToRemote"');
+    expect(actions).not.toContain("openSyncClone");
+    expect(actions).not.toContain("openCursorFolder");
+    expect(html).toContain('class="shortcut-btn"');
+    expect(html).toContain("Folders");
   });
 });
 
@@ -394,21 +412,58 @@ describe("dispatchSidebarMessage - history:details", () => {
   let storageRoot: string;
   let showQuickPick: ReturnType<typeof vi.spyOn>;
   let showInformationMessage: ReturnType<typeof vi.spyOn>;
+  let showWarningMessage: ReturnType<typeof vi.spyOn>;
+  let panels: Array<{ title: string; webview: { html: string } }>;
 
   beforeEach(async () => {
     storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-history-"));
+    __resetStatusPreviewPanelForTests();
+    panels = [];
     showQuickPick = vi.spyOn(vscode.window, "showQuickPick").mockResolvedValue(undefined);
     showInformationMessage = vi
       .spyOn(vscode.window, "showInformationMessage")
       .mockResolvedValue(undefined);
+    showWarningMessage = vi
+      .spyOn(vscode.window, "showWarningMessage")
+      .mockResolvedValue(undefined);
+    vi.spyOn(vscode.window, "createWebviewPanel").mockImplementation((...args) => {
+      const panel = {
+        title: String(args[1] ?? ""),
+        webview: {
+          html: "",
+          cspSource: "https://mock",
+          asWebviewUri: (uri: { fsPath?: string }) => ({
+            toString: () => uri.fsPath ?? "",
+          }),
+          onDidReceiveMessage: () => ({ dispose: () => {} }),
+          postMessage: async () => true,
+        },
+        reveal: () => {},
+        dispose: () => {},
+        onDidDispose: () => ({ dispose: () => {} }),
+      };
+      panels.push(panel);
+      return panel as unknown as vscode.WebviewPanel;
+    });
   });
 
   afterEach(() => {
+    __resetStatusPreviewPanelForTests();
     showQuickPick.mockRestore();
     showInformationMessage.mockRestore();
+    showWarningMessage.mockRestore();
+    vi.restoreAllMocks();
   });
 
-  it("shows QuickPick with files for a matching history entry", async () => {
+  function historyContext() {
+    return {
+      globalStorageUri: { fsPath: storageRoot },
+      globalState: { get: () => undefined, update: async () => {} },
+      extensionUri: { fsPath: "/fake" },
+    } as import("vscode").ExtensionContext;
+  }
+
+  it("opens the file-list panel for a matching history entry", async () => {
     const entry: SyncHistoryEntry = {
       timestamp: "2026-07-19T12:00:00.000Z",
       direction: "pull",
@@ -423,30 +478,20 @@ describe("dispatchSidebarMessage - history:details", () => {
       "utf-8"
     );
 
-    const ctx = {
-      globalStorageUri: { fsPath: storageRoot },
-      globalState: { get: () => undefined, update: async () => {} },
-      extensionUri: { fsPath: "/fake" },
-    } as any;
-
-    await dispatchSidebarMessage(ctx, mockWebview(), {
+    await dispatchSidebarMessage(historyContext(), mockWebview(), {
       command: "history:details",
       timestamp: entry.timestamp,
     });
 
-    expect(showQuickPick).toHaveBeenCalledOnce();
-    const [items, options] = showQuickPick.mock.calls[0]!;
-    expect(items).toMatchObject([
-      { label: "settings.json", syncKey: "settings.json" },
-      { label: "keybindings.json", syncKey: "keybindings.json" },
-    ]);
-    expect(options).toMatchObject({
-      title: "Pull · 2 files",
-      placeHolder: "Files involved in this sync",
-    });
+    expect(showQuickPick).not.toHaveBeenCalled();
+    expect(panels).toHaveLength(1);
+    expect(panels[0]?.title).toBe("Pull · 2 files");
+    expect(panels[0]?.webview.html).toContain('data-sync-key="settings.json"');
+    expect(panels[0]?.webview.html).toContain('data-sync-key="keybindings.json"');
+    expect(panels[0]?.webview.html).toContain(">Pull · 2 files<");
   });
 
-  it("informs when file list was not recorded", async () => {
+  it("shows an empty file list in the panel when none was recorded", async () => {
     const entry: SyncHistoryEntry = {
       timestamp: "2026-07-19T11:00:00.000Z",
       direction: "push",
@@ -460,21 +505,25 @@ describe("dispatchSidebarMessage - history:details", () => {
       "utf-8"
     );
 
-    const ctx = {
-      globalStorageUri: { fsPath: storageRoot },
-      globalState: { get: () => undefined, update: async () => {} },
-      extensionUri: { fsPath: "/fake" },
-    } as any;
-
-    await dispatchSidebarMessage(ctx, mockWebview(), {
+    await dispatchSidebarMessage(historyContext(), mockWebview(), {
       command: "history:details",
       timestamp: entry.timestamp,
     });
 
     expect(showQuickPick).not.toHaveBeenCalled();
-    expect(showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining("File list was not recorded")
-    );
+    expect(showInformationMessage).not.toHaveBeenCalled();
+    expect(panels[0]?.webview.html).toContain("File list was not recorded");
+    expect(panels[0]?.title).toBe("Push · 0 files");
+  });
+
+  it("warns when the history entry is missing", async () => {
+    await dispatchSidebarMessage(historyContext(), mockWebview(), {
+      command: "history:details",
+      timestamp: "missing",
+    });
+
+    expect(panels).toHaveLength(0);
+    expect(showWarningMessage).toHaveBeenCalledWith("History entry not found.");
   });
 });
 

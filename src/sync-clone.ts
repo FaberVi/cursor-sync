@@ -229,6 +229,30 @@ export async function relationToOrigin(
   return "diverged";
 }
 
+/**
+ * Replay local commits (such as a deletion commit) onto origin.
+ * On conflict the rebase is aborted and the clone is left on the pre-rebase commit.
+ */
+export async function rebaseOntoOrigin(clonePath: string, branch: string): Promise<void> {
+  throwIfAborted();
+  try {
+    await runGit({
+      args: ["rebase", `origin/${branch}`],
+      cwd: clonePath,
+    });
+  } catch (err) {
+    try {
+      await runGit({ args: ["rebase", "--abort"], cwd: clonePath });
+    } catch {
+      // not in a rebase
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Local deletions could not be replayed onto origin (${message}). Nothing was pushed.`
+    );
+  }
+}
+
 export async function ffMergeFromOrigin(
   clonePath: string,
   branch: string
