@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.2.3
+
+### Added
+- Sync review tab summary chips filter the file list (update, delete, local-only, conflicts, kept deleted)
+- On Windows, when pull delete fails with a locked path, a guided unlock flow offers retry, optional force-close of non-Cursor processes (with confirmation), or Reload Window when Cursor likely holds the skill folder
+
+### Changed
+- Remote-ahead notifications no longer offer Sync Now or Reset from the toast; use the sidebar review flow instead
+- Sidebar view title keeps only the refresh control; overflow menu entries for reset, open clone, and Cursor folder were removed (still in the sidebar and Command Palette)
+- Italian package strings for the view-title refresh tooltip (`package.nls.it.json`)
+
+### Fixed
+- Status preview file rows use the same colors as summary chips (modified, local-only, removed, incoming)
+- Windows pull/skill folder deletes retry `EBUSY`/`EPERM` and can prompt for lock recovery instead of failing immediately
+
 ## v2.2.2
 
 ### Fixed

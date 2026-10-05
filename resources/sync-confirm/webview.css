@@ -31,8 +31,13 @@ body {
   gap: 6px;
   margin-top: 12px;
   list-style: none;
+  padding: 0;
+}
+.confirm-chips > li {
+  list-style: none;
 }
 .confirm-chip {
+  font: inherit;
   font-size: 11px;
   font-weight: 600;
   padding: 3px 8px;
@@ -40,6 +45,16 @@ body {
   border: 1px solid rgba(237, 236, 236, 0.12);
   background: rgba(237, 236, 236, 0.05);
   color: rgba(237, 236, 236, 0.72);
+  cursor: pointer;
+}
+.confirm-chip:hover {
+  background: rgba(237, 236, 236, 0.1);
+}
+.confirm-chip.is-active {
+  box-shadow: 0 0 0 1px currentColor;
+}
+.confirm-section.is-filtered-out {
+  display: none;
 }
 .confirm-chip-update {
   border-color: rgba(96, 165, 250, 0.35);

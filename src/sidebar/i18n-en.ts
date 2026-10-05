@@ -262,6 +262,7 @@ export const EN: Record<MessageKey, string> = {
   syncConfirmChipDelete: "{n} to delete",
   syncConfirmChipConflict: "{n} conflict(s)",
   syncConfirmChipLocalOnly: "{n} local-only",
+  syncConfirmFilterChipsLabel: "Filter file list",
   syncConfirmSectionCommits: "Incoming commits",
   syncConfirmSectionIncoming: "Incoming files",
   syncConfirmSectionLocalOnlyKept: "Local-only (will be kept)",
@@ -270,6 +271,21 @@ export const EN: Record<MessageKey, string> = {
     "Conflicts (choose local or remote after Proceed)",
   syncConfirmChipKeptDeleted: "{n} kept deleted",
   syncConfirmSectionKeptDeleted: "Removed on this machine (will stay deleted)",
+  pathLockBlocked:
+    "Sync is blocked: cannot remove {path}. Another program may be using it.",
+  pathLockRetry: "Retry",
+  pathLockCancel: "Cancel sync",
+  pathLockForce: "Force unlock",
+  pathLockForceConfirm:
+    "Close these processes that appear to use {path}? Cursor and VS Code will not be closed: {processes}",
+  pathLockForceProceed: "Close processes and retry",
+  pathLockNoExternalProcess:
+    "No other processes were found for {path}. Cursor often holds skill folders open until you reload the window.",
+  pathLockReloadWindow: "Reload Window",
+  pathLockForceUnsupported:
+    "Force unlock is only available on Windows. Close other apps using the folder, then retry.",
+  pathLockStopped: "Stopped: {processes}. Retrying removal…",
+  pathLockStopFailed: "Could not stop the listed processes. Close them manually and retry.",
   syncConfirmWaitingReview: "Review sync in the editor tab…",
   syncConfirmWaitingConflicts: "Resolve conflicts in the editor tab…",
   resolvedCount: "{k}/{n} resolved",

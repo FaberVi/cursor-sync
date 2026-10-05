@@ -124,6 +124,25 @@ describe("package menu contributions", () => {
     ]);
   });
 
+  it("puts only refresh in the sidebar view title (no overflow menu)", () => {
+    const pkg = readPackageJson();
+    const viewTitle = pkg.contributes.menus["view/title"] as Array<{ command: string }>;
+    expect(viewTitle).toEqual([
+      {
+        command: "cursorSync.refreshSyncStatus",
+        when: "view == cursorSync.sidebar && cursorSync.configured",
+        group: "navigation",
+      },
+    ]);
+  });
+
+  it("localizes refresh sync status command title for Italian UI", () => {
+    const nlsIt = JSON.parse(
+      readFileSync(path.join(root, "package.nls.it.json"), "utf8")
+    ) as Record<string, string>;
+    expect(nlsIt["cursorSync.refreshSyncStatus.title"]).toMatch(/Aggiorna stato sincronizzazione/);
+  });
+
   it("declares set chat encryption password command", () => {
     const pkg = readPackageJson();
     const command = pkg.contributes.commands.find(

@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync (Community)",
   "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub repository",
-	"version": "2.2.2",
+	"version": "2.2.3",
   "icon": "assets/icon.png",
   "publisher": "FaberVi",
   "author": {
@@ -52,21 +52,6 @@
           "command": "cursorSync.refreshSyncStatus",
           "when": "view == cursorSync.sidebar && cursorSync.configured",
           "group": "navigation"
-        },
-        {
-          "command": "cursorSync.resetToRemote",
-          "when": "view == cursorSync.sidebar && cursorSync.configured",
-          "group": "1_overflow"
-        },
-        {
-          "command": "cursorSync.openSyncClone",
-          "when": "view == cursorSync.sidebar && cursorSync.configured",
-          "group": "1_overflow"
-        },
-        {
-          "command": "cursorSync.openCursorFolder",
-          "when": "view == cursorSync.sidebar",
-          "group": "1_overflow"
         }
       ],
       "editor/title": [
@@ -99,7 +84,7 @@
       },
       {
         "command": "cursorSync.refreshSyncStatus",
-        "title": "Cursor Sync: Refresh Sync Status",
+        "title": "%cursorSync.refreshSyncStatus.title%",
         "icon": "$(refresh)",
         "enablement": "cursorSync.configured"
       },

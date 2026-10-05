@@ -146,5 +146,17 @@ body {
 .preview-change {
   flex-shrink: 0;
   font-size: 11px;
+  font-weight: 600;
+}
+.preview-change-modified {
   color: #fbbf24;
+}
+.preview-change-added {
+  color: #34d399;
+}
+.preview-change-removed {
+  color: #f87171;
+}
+.preview-change-incoming {
+  color: #60a5fa;
 }

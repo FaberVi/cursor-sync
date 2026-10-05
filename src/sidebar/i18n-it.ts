@@ -262,6 +262,7 @@ export const IT: Record<MessageKey, string> = {
   syncConfirmChipDelete: "{n} da eliminare",
   syncConfirmChipConflict: "{n} conflitti",
   syncConfirmChipLocalOnly: "{n} solo-locali",
+  syncConfirmFilterChipsLabel: "Filtra elenco file",
   syncConfirmSectionCommits: "Commit in arrivo",
   syncConfirmSectionIncoming: "File in arrivo",
   syncConfirmSectionLocalOnlyKept: "Solo-locali (verranno conservati)",
@@ -270,6 +271,22 @@ export const IT: Record<MessageKey, string> = {
     "Conflitti (dopo Procedi scegli locale o remoto)",
   syncConfirmChipKeptDeleted: "{n} restano eliminati",
   syncConfirmSectionKeptDeleted: "Rimossi su questo computer (resteranno eliminati)",
+  pathLockBlocked:
+    "Sincronizzazione bloccata: impossibile rimuovere {path}. Un altro programma potrebbe usarlo.",
+  pathLockRetry: "Riprova",
+  pathLockCancel: "Annulla sincronizzazione",
+  pathLockForce: "Sblocco forzato",
+  pathLockForceConfirm:
+    "Chiudere questi processi che sembrano usare {path}? Cursor e VS Code non verranno chiusi: {processes}",
+  pathLockForceProceed: "Chiudi processi e riprova",
+  pathLockNoExternalProcess:
+    "Nessun altro processo trovato per {path}. Spesso è Cursor che tiene aperta la cartella skill finché non ricarichi la finestra.",
+  pathLockReloadWindow: "Ricarica finestra",
+  pathLockForceUnsupported:
+    "Lo sblocco forzato è disponibile solo su Windows. Chiudi le altre app che usano la cartella e riprova.",
+  pathLockStopped: "Chiusi: {processes}. Nuovo tentativo di rimozione…",
+  pathLockStopFailed:
+    "Impossibile chiudere i processi elencati. Chiudili manualmente e riprova.",
   syncConfirmWaitingReview: "Rivedi la sync nella scheda editor…",
   syncConfirmWaitingConflicts: "Risolvi i conflitti nella scheda editor…",
   resolvedCount: "{k}/{n} risolti",

@@ -4,6 +4,7 @@ import type * as vscode from "vscode";
 import { getLogger } from "./diagnostics.js";
 import { isExcludedSyncKey } from "./paths.js";
 import { createBackup, type BackupEntry } from "./rollback.js";
+import { removePathResolvingLocks } from "./path-lock-recovery.js";
 
 export type LocalDeleteMode = "mirror" | "remoteRemoved";
 
@@ -77,7 +78,7 @@ export async function pruneEmptyAncestors(
       if (entries.length > 0) {
         break;
       }
-      await fs.rmdir(dir);
+      await removePathResolvingLocks(dir, { emptyDir: true });
     } catch {
       break;
     }
@@ -165,7 +166,7 @@ export async function applyLocalDeletes(
       continue;
     }
     try {
-      await fs.rm(abs, { force: true });
+      await removePathResolvingLocks(abs);
       deletedKeys.push(key);
       await pruneEmptyAncestors(abs, stopRoots);
     } catch (err) {

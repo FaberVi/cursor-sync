@@ -38,6 +38,7 @@ import {
   stripExcludedJsonKeys,
 } from "./json-key-filter.js";
 import { writeAtomicFile } from "./atomic-file-write.js";
+import { removePathResolvingLocks } from "./path-lock-recovery.js";
 
 const MANIFEST_NAME = "manifest.json";
 const SPECIAL_ROOT_FILES = new Set([
@@ -483,7 +484,7 @@ export async function applyCloneToCursor(
 
   for (const abs of wipeAbs) {
     throwIfAborted();
-    await fs.rm(abs, { recursive: true, force: true });
+    await removePathResolvingLocks(abs, { recursive: true });
   }
 
   for (const file of plan.filesToWrite) {

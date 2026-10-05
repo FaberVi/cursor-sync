@@ -50,40 +50,50 @@ function subtitleFor(mode: SyncConfirmMode): string {
   return t("syncConfirmSubtitleSyncNow");
 }
 
-function chip(label: string, tone: string): string {
-  return `<li class="confirm-chip confirm-chip-${tone}">${escapeHtml(label)}</li>`;
+function chip(label: string, tone: string, filter: string): string {
+  return `<li><button type="button" class="confirm-chip confirm-chip-${tone}" data-filter="${escapeHtml(filter)}" aria-pressed="false">${escapeHtml(label)}</button></li>`;
 }
 
 function renderChips(model: SyncConfirmModel): string {
   const chips: string[] = [];
   if (model.n > 0) {
-    chips.push(chip(t("syncConfirmChipUpdate", { n: model.n }), "update"));
+    chips.push(chip(t("syncConfirmChipUpdate", { n: model.n }), "update", "update"));
   }
   if (model.m > 0) {
-    chips.push(chip(t("syncConfirmChipDelete", { n: model.m }), "delete"));
+    chips.push(chip(t("syncConfirmChipDelete", { n: model.m }), "delete", "delete"));
   }
   if (model.conflictKeys.length > 0) {
     chips.push(
-      chip(t("syncConfirmChipConflict", { n: model.conflictKeys.length }), "conflict")
+      chip(
+        t("syncConfirmChipConflict", { n: model.conflictKeys.length }),
+        "conflict",
+        "conflict"
+      )
     );
   }
   if (model.localOnlyKeys.length > 0) {
     chips.push(
-      chip(t("syncConfirmChipLocalOnly", { n: model.localOnlyKeys.length }), "local")
+      chip(
+        t("syncConfirmChipLocalOnly", { n: model.localOnlyKeys.length }),
+        "local",
+        "local"
+      )
     );
   }
   if (model.intentionalDeletionKeys.length > 0) {
     chips.push(
       chip(
         t("syncConfirmChipKeptDeleted", { n: model.intentionalDeletionKeys.length }),
-        "delete"
+        "delete",
+        "kept-deleted"
       )
     );
   }
   if (chips.length === 0) {
     return "";
   }
-  return `<ul class="confirm-chips">${chips.join("")}</ul>`;
+  const label = escapeHtml(t("syncConfirmFilterChipsLabel"));
+  return `<ul class="confirm-chips" role="toolbar" aria-label="${label}">${chips.join("")}</ul>`;
 }
 
 function renderRows(keys: readonly string[], rowClass = "confirm-row"): string {
@@ -93,8 +103,20 @@ function renderRows(keys: readonly string[], rowClass = "confirm-row"): string {
   return `<ul class="confirm-list">${items}</ul>`;
 }
 
-function renderSection(heading: string, body: string): string {
-  return `<section class="confirm-section"><h2>${escapeHtml(heading)}</h2>${body}</section>`;
+function renderSection(
+  heading: string,
+  body: string,
+  sectionFilters: readonly string[]
+): string {
+  const filters = sectionFilters.map((f) => escapeHtml(f)).join(" ");
+  return `<section class="confirm-section" data-section-filters="${filters}"><h2>${escapeHtml(heading)}</h2>${body}</section>`;
+}
+
+function localOnlySectionFilters(mode: SyncConfirmMode): readonly string[] {
+  if (mode === "pullMirror" || mode === "resetMirror") {
+    return ["local", "delete"];
+  }
+  return ["local"];
 }
 
 export function renderSyncConfirmHtml(options: {
@@ -112,7 +134,8 @@ export function renderSyncConfirmHtml(options: {
     sections.push(
       renderSection(
         t("syncConfirmSectionCommits"),
-        `<ul class="confirm-list">${rows}</ul>`
+        `<ul class="confirm-list">${rows}</ul>`,
+        ["update"]
       )
     );
   }
@@ -120,7 +143,8 @@ export function renderSyncConfirmHtml(options: {
     sections.push(
       renderSection(
         t("syncConfirmSectionIncoming"),
-        renderRows(model.incoming.incomingSyncKeys)
+        renderRows(model.incoming.incomingSyncKeys),
+        ["update"]
       )
     );
   }
@@ -129,20 +153,26 @@ export function renderSyncConfirmHtml(options: {
     sections.push(
       renderSection(
         t(kept ? "syncConfirmSectionLocalOnlyKept" : "syncConfirmSectionLocalOnlyDeleted"),
-        renderRows(model.localOnlyKeys)
+        renderRows(model.localOnlyKeys),
+        localOnlySectionFilters(model.mode)
       )
     );
   }
   if (model.conflictKeys.length > 0) {
     sections.push(
-      renderSection(t("syncConfirmSectionConflicts"), renderRows(model.conflictKeys))
+      renderSection(
+        t("syncConfirmSectionConflicts"),
+        renderRows(model.conflictKeys),
+        ["conflict"]
+      )
     );
   }
   if (model.intentionalDeletionKeys.length > 0) {
     sections.push(
       renderSection(
         t("syncConfirmSectionKeptDeleted"),
-        renderRows(model.intentionalDeletionKeys)
+        renderRows(model.intentionalDeletionKeys),
+        ["kept-deleted"]
       )
     );
   }

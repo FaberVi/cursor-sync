@@ -124,7 +124,7 @@ describe("remote-ahead", () => {
     expect(getRemoteAheadCache()?.behindCount).toBe(2);
   });
 
-  it("toasts only once per behind episode", async () => {
+  it("logs remote-ahead only once per behind episode (no sync action toast)", async () => {
     recordRemoteRelation({ relation: "behind", behindCount: 1 });
     isSyncLocked.mockReturnValue(false);
     const spy = vi
@@ -132,10 +132,10 @@ describe("remote-ahead", () => {
       .mockResolvedValue(undefined);
     await maybeToastRemoteAhead();
     await maybeToastRemoteAhead();
-    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).not.toHaveBeenCalled();
   });
 
-  it("toasts again when behind becomes diverged", async () => {
+  it("logs again when behind becomes diverged without action buttons", async () => {
     isSyncLocked.mockReturnValue(false);
     const spy = vi
       .spyOn(vscode.window, "showWarningMessage")
@@ -144,8 +144,7 @@ describe("remote-ahead", () => {
     await maybeToastRemoteAhead();
     recordRemoteRelation({ relation: "diverged" });
     await maybeToastRemoteAhead();
-    expect(spy).toHaveBeenCalledTimes(2);
-    expect(spy.mock.calls[1]?.[1]).toBe("Reset to remote");
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

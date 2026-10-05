@@ -97,6 +97,10 @@ describe("renderSyncConfirmHtml", () => {
     expect(html).not.toContain("0 to delete");
     expect(html).toContain("1 conflict");
     expect(html).toContain("1 local-only");
+    expect(html).toContain('data-filter="update"');
+    expect(html).toContain('data-filter="local"');
+    expect(html).toContain('data-section-filters="update"');
+    expect(html).toContain('data-section-filters="local"');
     expect(html).toContain("cursor-sync: sync from VincenzoMSI");
     expect(html).toContain("extensions.json");
     expect(html).toContain("extra-four.md");
@@ -128,6 +132,8 @@ describe("renderSyncConfirmHtml", () => {
     });
     expect(html).toContain("Review Pull");
     expect(html).toContain("will be deleted");
+    expect(html).toContain('data-section-filters="local delete"');
+    expect(html).toContain('data-filter="delete"');
     expect(html).toContain("bar/SKILL.md");
     expect(html).not.toContain("will be kept");
   });

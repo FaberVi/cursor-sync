@@ -14,9 +14,9 @@ import {
   type GitRelation,
 } from "./sync-clone.js";
 import { isSyncLocked } from "./sync-lock.js";
-import { notifySyncActionRequired } from "./sync-notify.js";
+import { notifySyncQuiet } from "./sync-notify.js";
 import { getStatusBarState, updateStatusBar } from "./statusbar.js";
-import { statusWarningPlain, t } from "./sidebar/i18n.js";
+import { statusWarningPlain } from "./sidebar/i18n.js";
 import { getPendingConflictCount } from "./conflict-panel.js";
 import { getLocalDiffersCache } from "./cursor-differs.js";
 
@@ -144,26 +144,11 @@ export async function maybeToastRemoteAhead(): Promise<void> {
     return;
   }
   toastedEpisode = rel;
-  const later = t("later");
-  if (rel === "diverged") {
-    const message = statusWarningPlain("diverged");
-    const reset = t("resetToRemote");
-    const choice = await notifySyncActionRequired(message, reset, later);
-    if (choice === reset) {
-      await import("vscode").then((vscode) =>
-        vscode.commands.executeCommand("cursorSync.resetToRemote")
-      );
-    }
-    return;
-  }
-  const message = statusWarningPlain("behind");
-  const syncNow = t("syncNow");
-  const choice = await notifySyncActionRequired(message, syncNow, later);
-  if (choice === syncNow) {
-    await import("vscode").then((vscode) =>
-      vscode.commands.executeCommand("cursorSync.syncNow")
-    );
-  }
+  const message =
+    rel === "diverged"
+      ? statusWarningPlain("diverged")
+      : statusWarningPlain("behind");
+  notifySyncQuiet(message);
 }
 
 export function syncStatusBarWithRemoteAheadCache(

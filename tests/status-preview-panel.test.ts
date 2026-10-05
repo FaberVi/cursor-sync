@@ -100,6 +100,7 @@ describe("renderStatusPreviewHtml", () => {
       csp: "default-src 'none'",
     });
     expect(list).toContain('data-sync-key="cursor-user/settings.json"');
+    expect(list).toContain('class="preview-change preview-change-modified"');
     expect(list).toContain('data-command="refresh"');
     expect(list).toContain("1 changed");
     expect(list).toContain("0 local only");
@@ -125,6 +126,9 @@ describe("renderStatusPreviewHtml", () => {
     expect(html).toContain("2 changed");
     expect(html).toContain("1 local only");
     expect(html).toContain("1 missing locally");
+    expect(html).toContain('preview-change-modified');
+    expect(html).toContain('preview-change-added');
+    expect(html).toContain('preview-change-removed');
   });
 });
 

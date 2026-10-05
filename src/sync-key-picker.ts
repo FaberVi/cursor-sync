@@ -33,6 +33,25 @@ export function syncKeyChangeLabel(
   return t(key);
 }
 
+/** CSS tone for status-preview row labels (matches summary count chips). */
+export function syncKeyChangeTone(
+  change: SyncKeyPreviewChange | undefined
+): string | undefined {
+  if (!change) {
+    return undefined;
+  }
+  if (change === "added") {
+    return "added";
+  }
+  if (change === "removed") {
+    return "removed";
+  }
+  if (change === "incoming") {
+    return "incoming";
+  }
+  return "modified";
+}
+
 function isConfinedSyncPath(candidate: string, roots: readonly string[]): string | undefined {
   const resolved = path.resolve(candidate);
   if (!roots.some((root) => pathIsInsideDirectory(resolved, root))) {
