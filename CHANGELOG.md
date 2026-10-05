@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.2.5
+
+### Fixed
+- Restored `engines.vscode` to `^1.128.0` so the VSIX installs on Cursor/VS Code 1.128.x (2.2.4 required ^1.140.0)
+- Pin `@types/vscode` to `^1.128.0` for vsce 4 compatibility with that engine floor
+
 ## v2.2.4
 
 ### Changed

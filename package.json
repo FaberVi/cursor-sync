@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync (Community)",
   "description": "Community fork: sync user-level Cursor settings and assets to a private GitHub repository",
-	"version": "2.2.4",
+	"version": "2.2.5",
   "icon": "assets/icon.png",
   "publisher": "FaberVi",
   "author": {
@@ -18,7 +18,7 @@
   },
   "license": "MIT",
   "engines": {
-    "vscode": "^1.140.0"
+    "vscode": "^1.128.0"
   },
   "categories": [
     "Other"
@@ -422,7 +422,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
-    "@types/vscode": "^1.140.0",
+    "@types/vscode": "^1.128.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
