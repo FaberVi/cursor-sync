@@ -3,7 +3,22 @@ import * as vscode from "vscode";
 export const CHAT_ENCRYPTION_PASSWORD_SECRET = "cursorSync.chatEncryption.password";
 
 export function isChatGistEncryptionEnabled(): boolean {
-  return vscode.workspace.getConfiguration("cursorSync").get<boolean>("chatGist.encrypt") ?? true;
+  const config = vscode.workspace.getConfiguration("cursorSync");
+  const next = config.inspect<boolean>("chats.encrypt");
+  if (next?.globalValue !== undefined) {
+    return next.globalValue;
+  }
+  if (next?.workspaceValue !== undefined) {
+    return next.workspaceValue;
+  }
+  const legacy = config.inspect<boolean>("chatGist.encrypt");
+  if (legacy?.globalValue !== undefined) {
+    return legacy.globalValue;
+  }
+  if (legacy?.workspaceValue !== undefined) {
+    return legacy.workspaceValue;
+  }
+  return true;
 }
 
 export async function getChatEncryptionPassword(
@@ -94,7 +109,7 @@ export async function executeSetChatEncryptionPassword(
   await setChatEncryptionPassword(context, password);
   if (hadPassword) {
     vscode.window.showWarningMessage(
-      "Chat encryption password updated. Gists encrypted with a previous password cannot be decrypted unless you still know that password."
+      "Chat encryption password updated. Collections encrypted with a previous password cannot be decrypted unless you still know that password."
     );
   } else {
     vscode.window.showInformationMessage("Chat encryption password saved.");

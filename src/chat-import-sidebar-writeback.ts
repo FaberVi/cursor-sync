@@ -10,6 +10,7 @@ import {
   repairComposerDataAfterActivation,
   type WorkspaceIdentifier as MergeWorkspaceIdentifier,
 } from "./chat-import-merge.js";
+import { repairDiskKvAfterActivation } from "./chat-disk-kv-import.js";
 import {
   buildActivationManifest,
   enrichManifestPartialStateFromDisk,
@@ -21,13 +22,16 @@ import { resolveSyncRoots } from "./paths.js";
 import { requireWorkspaceContext } from "./chat-workspace-context.js";
 
 const STORAGE_KEY = "cursorSync.pendingSidebarWriteback";
-const PENDING_DIR = path.join(os.homedir(), ".cursor", "import-activation", "sidebar-pending");
+
+function pendingSidebarDir(): string {
+  return path.join(os.homedir(), ".cursor", "import-activation", "sidebar-pending");
+}
 const COMPOSER_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function resolvePendingBundlePath(bundlePath: string): string | null {
   const resolved = path.resolve(bundlePath);
-  const pendingRoot = path.resolve(PENDING_DIR);
+  const pendingRoot = path.resolve(pendingSidebarDir());
   if (resolved === pendingRoot || !resolved.startsWith(`${pendingRoot}${path.sep}`)) {
     return null;
   }
@@ -113,8 +117,9 @@ export async function queueSidebarWriteback(
   if (!conversationId || !COMPOSER_ID_RE.test(conversationId) || !bundle.sidebarSnapshot) {
     return;
   }
-  await fs.mkdir(PENDING_DIR, { recursive: true });
-  const bundlePath = path.join(PENDING_DIR, `${conversationId}.json`);
+  const pendingDir = pendingSidebarDir();
+  await fs.mkdir(pendingDir, { recursive: true });
+  const bundlePath = path.join(pendingDir, `${conversationId}.json`);
   await fs.writeFile(bundlePath, JSON.stringify(bundle), "utf8");
 
   const entry: PendingSidebarWritebackEntry = {
@@ -221,6 +226,8 @@ export async function flushPendingSidebarWriteback(
           try {
             await repairComposerDataAfterActivation(workspaceDb, entry.conversationId, partial);
             await repairComposerDataAfterActivation(globalDb, entry.conversationId, partial);
+            await repairDiskKvAfterActivation(workspaceDb, entry.conversationId, bundle);
+            await repairDiskKvAfterActivation(globalDb, entry.conversationId, bundle);
             applied = true;
           } catch (repairErr) {
             activationOk = false;

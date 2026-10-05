@@ -1,8 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
@@ -10,8 +8,7 @@ vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 import { mergeComposerHeadersChain } from "../src/composer-merge.js";
 import { SQLITE_PYTHON_FALLBACK_SCRIPT } from "../src/transcripts-sqlite.js";
 import { __transcriptsTestUtils } from "../src/transcripts.js";
-
-const execFile = promisify(execFileCallback);
+import { execPython } from "./python-cmd.js";
 const { isCommandMissingError, isExecFileTimeoutError, querySqliteRowsImpl } =
   __transcriptsTestUtils;
 
@@ -114,7 +111,7 @@ describe("runSqliteQuery python fallback", () => {
     const dbPath = path.join(tmpDir, "state.vscdb");
     const sql =
       "SELECT key, value FROM ItemTable WHERE key = 'composer.composerHeaders';";
-    await execFile("python3", [
+    await execPython([
       "-c",
       [
         "import json, sqlite3, sys",
@@ -130,7 +127,7 @@ describe("runSqliteQuery python fallback", () => {
     ]);
 
     const runQuery = async (_dbPath: string, _sql: string) => {
-      const { stdout, stderr } = await execFile("python3", [
+      const { stdout, stderr } = await execPython([
         "-c",
         SQLITE_PYTHON_FALLBACK_SCRIPT,
         dbPath,

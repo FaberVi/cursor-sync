@@ -1,29 +1,70 @@
+# Cursor Sync
+
+VS Code/Cursor extension (publisher FaberVi, extension id `fabervi.cursor-sync`) that syncs user-level Cursor settings and selected `~/.cursor` assets to a private GitHub repository. Gist destination was removed in 2.0.0.
+
+The local clone is `ExtensionContext.globalStorageUri/sync-repo`. On Windows that is `%APPDATA%\Cursor\User\globalStorage\fabervi.cursor-sync\sync-repo`. Synced files sit under `cursorSync.destination.path` (default `cursor-sync`): `{base}/cursor-user/`, `{base}/dot-cursor/`, `{base}/manifest.json`, and `{base}/cursor-chat.json`. Skill folders on disk are `~/.cursor/skills/<name>` (sync key `dot-cursor/skills/<name>`).
+
+This extension writes real user files. Treat every sync change as potentially destructive.
+
+## Commands
+
+Use pnpm. Node 20+, Git on PATH, VS Code/Cursor `^1.128.0`.
+
+```bash
+pnpm install
+pnpm run build
+pnpm run lint
+pnpm test
+pnpm run package
+```
+
+`pnpm run lint` is `tsc --noEmit`. Tests are Vitest. The sidebar is a webview (`src/sidebar/`) with Sync, Chats, and Settings. `refreshSidebar()` updates that webview only, not Cursor's native Composer history.
+
+`extension.ts` stays thin: register commands, wire modules, start background work. Put behavior in the module that already owns it.
+
+## Repo workflow
+
+- Do not commit or push unless the user asks. When they ask to commit and push, open a pull request instead of pushing the default branch.
+- Maintenance commits: update `CHANGELOG.md` and `package.json` together, in phased semver commits. If the version was not bumped for the change set, ask before releasing. Keep `pnpm-lock.yaml` aligned with `package.json`.
+- Do not stage `docs/` unless the user asks. `docs/superpowers/specs/` and `docs/superpowers/plans/` are gitignored. Shipped docs live under `docs/` (for example `docs/chat-import-activate.md`). `package-vsix.sh` is tracked.
+- Paths must work on Windows, macOS, and Linux. On Windows the shell is PowerShell 5.x: do not chain commands with `&&`.
+
+## Sync safety
+
+Never silently drop user data. Keep rollback, conflict handling, checksums, and manifest compatibility. A change that overwrites local files follows the existing confirm path.
+
+- Tokens stay in SecretStorage. Do not print, log, or put them in `settings.json` or telemetry.
+- Push copies the machine into the clone, then deletes clone files that are not on disk. A skill directory that is **missing** is a real deletion and will be published. An **empty** skill directory is a vacant shell: `restoreVacantSkillFoldersFromClone` refills it from the clone before push or pull. Do not skip that restore.
+- A file directly in `skills/` (for example `operations.json`) is a file, not a skill folder.
+- On replace, clear the skill folder's children and write the clone files back. Do not `rm` the skill directory itself. Record the skill-folder backup on the sync journal before clearing, so a failure midway can restore it. On Windows an open directory handle deletes the contents, then fails the rmdir, and the write-back never runs. A local-only skill whose empty directory cannot be removed stays in place and the pull continues.
+- Windows lock recovery uses Restart Manager on files only (not the directory, not junctions), in batches. It may close the process that holds a file after checking the live image. Never kill Cursor, VS Code, this extension host, or Windows session processes (`svchost`, `csrss`, `lsass`, and the other critical images).
+
+## Chats
+
+Native chat JSON is the transport since v0.8.0: `version: 1`, `conversationState` + `blobs`, optional `storeDb`. The file in the clone is `{base}/cursor-chat.json` (sync key `dot-cursor/cursor-chat.json`). Encryption (`cursorSync.chats.encrypt`, Argon2id + AES-256-GCM) wraps that JSON. Reject legacy ChatBundle (`schemaVersion` / `type: chat-persistence`).
+
+- Do not call `developer.importChat` or `developer.bulkImportChats`. Import through storage. In a running IDE, register with `composer.createNew` (one options object). `composer.createComposer` is not a command. Call `createNew` only when `partialState` has real content (`conversationMap` or `fullConversationHeadersOnly`). Empty `partialState` wipes a disk-restored chat. Never put a base64 `conversationState` string in `partialState`.
+- Do not purge per-conversation `cursorDiskKV` rows on import.
+- Imported chats are synthetic on the destination workspace: clear bubble `requestId`, rebind `workspaceIdentifier`, stamp current timestamps. Do not keep a Request ID.
+- Composer UI reads `composerData.fullConversationHeadersOnly` plus `bubbleId:<composerId>:<uuid>` rows. On-disk `conversationMap` is often empty. Look up `cursorDiskKV` by exact key or `key IN (...)`, never `LIKE 'prefix%'`. If the global DB fails `integrity_check`, write the workspace DB instead.
+- Default hydration is TypeScript protobuf (`cursorSync.chatImport.useProtobufHydration`). The map must be non-empty. After activation, re-persist hydrated state when the IDE clobbers `composerData`.
+- Local chat-bundle import must not prompt or auto-run Reload Window. Transcript import may still offer reload when `cursorSync.transcripts.autoReloadAfterImport` is set or the user chooses it.
+- `queueSidebarWriteback` stages native sidebar rows in `~/.cursor/import-activation/sidebar-pending/` and flushes them on activate. Do not flush that queue before an autoreload.
+
+## Before finishing
+
+Build, lint, and the tests that cover the change. Update `CHANGELOG.md` when behavior changes. Do not commit secrets, weaken confirmations, or reformat unrelated code.
+
 ## Learned User Preferences
 
-- Do not run `git commit` or `git push` without explicit permission; when asked to commit and push, open a pull request instead of pushing directly to the default branch.
-- For npm-package maintenance in this repo: split uncommitted work into phased semver commits, update `CHANGELOG.md` and `package.json`, and ask before releasing if the version was not bumped for the change set.
-- During maintenance commits, do not stage `docs/` unless the user explicitly asks; leave `package-vsix.sh` untracked unless they ask to include it.
-- User often starts work with `/light-prompt` for a tight structured prompt (~200 tokens) and uses parallel swarms for multi-part implementation or research; never spawn subagents on Fast model variants.
-- For chat transport across machines or repos (often the `bergamota` workspace), use the Cursor Sync extension Chats sidebar, not the deprecated `/transport-chat` skill workflow (standalone `~/.cursor/skills/transport-chat` removed in v0.7.0).
-- For substantial features, use superpowers brainstorming then writing-plans; store specs and plans under `docs/superpowers/`.
-- Refreshes `AGENTS.md` via continual-learning and the agents-memory-updater subagent when asked.
-- Prefer concise, high-quality English responses; do not use emojis.
-- Chat bundle import (local file and private Gist) should not prompt or auto-run Reload Window. Transcript import can still offer reload when `cursorSync.transcripts.autoReloadAfterImport` is set or the user picks it.
-- Do not purge per-conversation `cursorDiskKV` rows at import time. That breaks importing the same chat across workspaces on one machine.
-- Imported Composer chats must not keep or show a Request ID. Treat imports as synthetic on the destination workspace (clear bubble `requestId`, rebind `workspaceIdentifier`, stamp current createdAt/lastUpdated/lastOpenedAt).
-- Automated/Gist chat import must not call `developer.importChat` or `developer.bulkImportChats` (those open file/folder pickers). Use storage-level native JSON import. In a running IDE, register the composer with `composer.createNew` (single options object → `composerService.createComposer`). `composer.createComposer` is not a registered command. Call createNew only when `partialState` has real conversation content (`conversationMap` or `fullConversationHeadersOnly`). Empty `partialState` wipes disk-restored chats. Never pass tilde-base64 `conversationState` strings in `partialState`. Open with `composer.openComposer` and `openExistingOnly: true` for the disk-written id.
+- Do not commit or push without an explicit ask. A requested commit-and-push opens a pull request instead of pushing the default branch.
+- Package maintenance uses phased semver commits, `CHANGELOG.md`, and `package.json`. Ask before releasing when the version was not bumped.
+- Do not stage `docs/` unless asked. `docs/superpowers/` is gitignored.
+- Use pnpm for package operations.
+- Refresh this file via continual-learning only when asked.
 
 ## Learned Workspace Facts
 
-- `cursor-sync` is a VS Code extension (publisher MarceloBarella) that syncs Cursor user config and selected `~/.cursor` assets to a private GitHub Gist.
-- v0.8.0+ native chat JSON is the transport format: `version: 1`, `conversationState` + `blobs`. TypeScript read/write lives in SQLite (`src/native-chat-json/`). Hard cutover rejects ChatBundle (`schemaVersion` / `type: chat-persistence`). Spec `docs/superpowers/specs/2026-06-02-native-chat-json-design.md`, plan `docs/superpowers/plans/2026-06-02-native-chat-json.md`. Private Gist file `cursor-chat.json` (encryption wraps native JSON). Built-in IDE export/import is in `docs/cursor-native-export-import-chat.md`.
-- Bundled Python under `resources/transport-chat/scripts/` is not used for extension chat disk import. Tool/MCP fidelity comes from export `blobs`, not JSONL or legacy `diskKvSnapshot`.
-- Sync failure toasts (push, pull, Sync Now, scheduled) offer Debug with Cursor via `src/sync-debug.ts`: sanitized prompt, Composer prefill when available, clipboard fallback otherwise (v0.7.3+).
-- Chat import uses native JSON (`version: 1`, `conversationState` + `blobs`, optional `storeDb`) per `docs/cursor-native-export-import-chat.md`. Flow: write blobs, `syncImportedComposerSidebar` (global and workspace `composer.composerHeaders`), then hydrate `composerData` before open. Default path is TS protobuf hydration (`cursorSync.chatImport.useProtobufHydration`, default true): build a non-empty `conversationMap` from `conversationState` + export `bubbles`, keep `blobEncryptionKey`. IDE fallback (`cursorSync.chatImport.useIdeHydration`, default false) uses `composer.createComposer` when protobuf hydration is off. `strictDiskGates` fails when the map stays empty. Decode hex `cursorDiskKV` via `parseComposerDataKvJson`. After activation, `repairComposerDataAfterActivation` re-persists hydrated `conversationMap`, headers, `conversationState`, encryption keys, and `status: completed` when the IDE clobbers `composerData`. `ensureNativeChatStoreDb` writes `~/.cursor/chats/<workspace-key>/<composerId>/store.db` (export snapshot or golden template) so `getComposerHandleById` does not stall on Loading Chat. Inline activation: live `composer.createNew` registration (SQLite-only header/`composerData` writes get clobbered by the IDE in-memory composer list while Cursor is running), `openExistingOnly: true`, `stagePending: false`, manifest v2. On reload Cursor serializes in-memory composer back to global `composer.composerHeaders`; activation partial state must preserve destination `workspaceIdentifier`, header `name`, and timestamps after rich disk hydration, not only SQLite rows. Do not pass base64 `conversationState` in `partialState` (`createComposer` protobuf `.toBinary()` expects a decoded object; restore the string on disk after).
-- Cursor Composer runtime (3.7.x+): UI renders from `composerData.fullConversationHeadersOnly` plus per-bubble `bubbleId:<composerId>:<uuid>` `cursorDiskKV` rows. On-disk `conversationMap` is often empty even for working chats. Assistant/tool bodies are blob-backed via export `conversationState` + `blobs` (`~`+base64 protobuf → `agentKv:blob:<hash>`), not transcript JSONL alone. `composer.openComposer` / `getComposerHandleById` use in-memory `composerDataService`, not a disk load-by-id. Global `state.vscdb` `cursorDiskKV` can be partially corrupt. Use exact-key / `key IN (...)` lookups, never `LIKE 'prefix%'` scans (triggers "database disk image is malformed"). When global `integrity_check` fails, write/import `cursorDiskKV` to workspace `state.vscdb` instead and promote diskKv `composerData` into ItemTable before activation.
-- Feature specs and implementation plans for this repo live under `docs/superpowers/specs/` and `docs/superpowers/plans/` (e.g. protobuf hydration plan `2026-06-05-protobuf-conversation-hydration.md`).
-- `cursor-detective` is a personal read-only forensics skill at `~/.cursor/skills/cursor-detective/` (explicit `/cursor-detective`); probe to maximum depth in one pass (workbench bundle, DBs, module paths) without asking permission to go deeper; writes `.cursor/plans/detective-<theme>.plan.md` in the workspace; design spec in-repo, not shipped in the VSIX.
-- Git and release workflow for this repo is defined in `.cursor/rules/git.mdc`.
-- Keep `package-lock.json` version aligned with `package.json` on releases; `.worktrees` belongs in `.gitignore`.
-- Sidebar UX is webview-based with Sync, Chats, and Settings tabs (`src/sidebar/`). `refreshSidebar()` updates that webview only, not Cursor's native Composer history list. Native Composer history reads global `composer.composerHeaders` → `allComposers[]` filtered by `workspaceIdentifier.id` (workspace-only merge leaves imports invisible). Post-import `queueSidebarWriteback` stages pending entries (`~/.cursor/import-activation/sidebar-pending/`); `flushPendingSidebarWriteback` replays on `extension.activate`. Do not flush pending writeback before autoreload—it clears the queue and breaks post-reload native sidebar replay. Gist/local chat paths use native JSON (`cursor-chat.json`, `cursorSync.exportChatBundle` / `restoreNativeChatsBatch`). Composer titles come from `allComposers[].name`; `buildChatBundle` sets `bundle.title` via `resolveComposerConversationTitle` (snapshot header name wins over transcript), and `headersPayloadForImport` preserves snapshot `name` when non-empty instead of letting `bundle.title` overwrite it. See `.cursor/plans/detective-composer-chat-title.plan.md`, `.cursor/plans/detective-chat-import-sidebar.plan.md`, and `.cursor/plans/detective-cross-workspace-chat-import.plan.md`.
-- v0.7.5+ optional client-side encryption for chat Gist files (`cursorSync.chatGist.encrypt`, `cursorSync.setChatEncryptionPassword`, Argon2id + AES-256-GCM via `hash-wasm`); plaintext kinds `cursor-chat` / `cursor-chat-collection` in v0.8.0+.
+- Sync destination is a GitHub repository. The clone is `%APPDATA%\Cursor\User\globalStorage\fabervi.cursor-sync\sync-repo` on Windows, under `cursorSync.destination.path` (default `cursor-sync`). Gists are not a destination.
+- Skill replace must not remove the skill directory. Push treats a missing skill directory as a deletion and an empty one as vacant, and refills the vacant one from the clone first.
+- Chat sync is native JSON (`cursor-chat.json`). ChatBundle is rejected. Import constraints are in the Chats section above.

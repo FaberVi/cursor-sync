@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const configurationValues: Record<string, unknown> = {
-  "chatGist.encrypt": true,
-};
+const configurationValues: Record<string, unknown> = {};
+const inspectValues: Record<string, { globalValue?: boolean }> = {};
 
 const secretsStore = new Map<string, string>();
 const showInputBoxMock = vi.fn();
@@ -13,6 +12,7 @@ vi.mock("vscode", () => ({
     getConfiguration: () => ({
       get: <T>(key: string, defaultValue?: T) =>
         (configurationValues[key] as T | undefined) ?? defaultValue,
+      inspect: (key: string) => inspectValues[key],
     }),
   },
   window: {
@@ -38,7 +38,8 @@ function makeContext() {
 describe("chat-encryption-auth", () => {
   beforeEach(() => {
     secretsStore.clear();
-    configurationValues["chatGist.encrypt"] = true;
+    inspectValues["chats.encrypt"] = { globalValue: true };
+    delete inspectValues["chatGist.encrypt"];
     showInputBoxMock.mockReset();
     showWarningMessageMock.mockReset();
   });
@@ -53,7 +54,7 @@ describe("chat-encryption-auth", () => {
   });
 
   it("requireChatEncryptionPassword returns undefined when encrypt is false on export", async () => {
-    configurationValues["chatGist.encrypt"] = false;
+    inspectValues["chats.encrypt"] = { globalValue: false };
     const { requireChatEncryptionPassword } = await import("../src/chat-encryption-auth.js");
     const ctx = makeContext() as never;
     const pw = await requireChatEncryptionPassword(ctx, "export");
@@ -74,7 +75,7 @@ describe("chat-encryption-auth", () => {
   });
 
   it("requireChatEncryptionPassword uses stored password on import-envelope even when encrypt false", async () => {
-    configurationValues["chatGist.encrypt"] = false;
+    inspectValues["chats.encrypt"] = { globalValue: false };
     const { setChatEncryptionPassword, requireChatEncryptionPassword } = await import(
       "../src/chat-encryption-auth.js"
     );

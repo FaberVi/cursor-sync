@@ -39,6 +39,17 @@ vi.mock("vscode", async () => {
   };
 });
 
+vi.mock("../src/paths.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/paths.js")>();
+  return {
+    ...actual,
+    resolveSyncRoots: () => ({
+      cursorUser: path.join(env.home, "AppData", "Roaming", "Cursor", "User"),
+      dotCursor: path.join(env.home, ".cursor"),
+    }),
+  };
+});
+
 const CHAT_ID = "11111111-2222-4333-8444-555555555555";
 const OTHER_CHAT_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 

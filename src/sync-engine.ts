@@ -9,7 +9,6 @@ import {
   GOLDEN_TEMPLATE_CAPTURED_FOR_CURSOR,
   hydrateGoldenStoreTemplate,
 } from "./store-template-hydrate.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
 import {
   copyStateDbTriple,
   mergeComposerHeadersIntoDb,
@@ -26,8 +25,9 @@ import {
   buildComposerHeaderPayloadsFromSyncChatHistory,
   validateWorkspaceKeysForImport,
 } from "./chat-id-sync.js";
-
-const { resolveChatsRoot, runSqliteScript } = __chatPersistenceInternals;
+import { resolveChatsRoot } from "./transcripts-cursor-paths.js";
+import { runSqliteScript } from "./transcripts-sqlite.js";
+import { assertPathUnderRoot } from "./composer-id.js";
 
 const MANIFEST_FILE = "sync-manifest.json";
 
@@ -197,19 +197,31 @@ export class SyncEngine {
     const storeReplacements: Array<{ livePath: string; shadowPath: string }> = [];
 
     for (const entry of manifest.chat_history) {
-      const shadowStore = path.join(
+      const shadowStoreRaw = path.join(
         runDir,
         "chats",
         entry.workspace_key,
         entry.conversation_id,
         "store.db"
       );
-      const liveStore = path.join(
+      const liveStoreRaw = path.join(
         chatsRoot,
         entry.workspace_key,
         entry.conversation_id,
         "store.db"
       );
+      const shadowStore = assertPathUnderRoot(shadowStoreRaw, path.join(runDir, "chats"));
+      const liveStore = assertPathUnderRoot(liveStoreRaw, chatsRoot);
+      if (!shadowStore || !liveStore) {
+        await fs.rm(runDir, { recursive: true, force: true }).catch(() => {});
+        return {
+          ok: false,
+          errors: [
+            `chat_history path escapes chats root (${entry.workspace_key}/${entry.conversation_id})`,
+          ],
+          warnings,
+        };
+      }
 
       if (entry.store_db_file) {
         const src = resolveLandingAssetPath(this.landingZoneAbsolutePath, entry.store_db_file);

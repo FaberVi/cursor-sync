@@ -1,290 +1,447 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
-import { enumerateSyncFiles, syncKeyToGistFileName } from "./paths.js";
-import { packageFiles, computeChecksum } from "./packaging.js";
-import { GistClient } from "./gist.js";
-import { requireToken, validateStoredToken } from "./auth.js";
-import { withRetry } from "./retry.js";
-import { loadSyncState, saveSyncState, getLogger, addSyncHistoryEntry } from "./diagnostics.js";
-import { detectConflicts, clearConflicts, getPendingConflicts, getResolutionForKey } from "./conflicts.js";
-import { generateExtensionsJson } from "./extensions.js";
-import { updateStatusBar } from "./statusbar.js";
+import * as path from "node:path";
+import {
+  getLogger,
+  addSyncHistoryEntry,
+  saveSyncState,
+  loadSyncState,
+  syncHistoryFromOperations,
+} from "./diagnostics.js";
+import { notifySyncQuiet } from "./sync-notify.js";
+import { updateStatusBar, restoreStatusBarAfterCancel } from "./statusbar.js";
+import { recordLocalDiffers, removedSyncKeys } from "./cursor-differs.js";
+import { syncStatusBarWithRemoteAheadCache } from "./remote-ahead.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
 import {
   buildSyncDebugFailure,
   showSyncFailureWithDebug,
 } from "./sync-debug.js";
-import type { SyncState } from "./types.js";
+import { createSidebarSyncProgress } from "./sync-progress-events.js";
+import type { SyncProgressReport } from "./sync-progress-events.js";
+import { formatElapsedPrecise } from "./elapsed.js";
+import {
+  beginSyncAbort,
+  commitSyncFileJournal,
+  endSyncAbort,
+  finishCancelledOperation,
+  getSyncFileJournal,
+  isAbortError,
+  isSyncAborted,
+  rollbackSyncFileJournal,
+  setSyncFileJournal,
+  throwIfAborted,
+} from "./sync-abort.js";
+import { createBackup } from "./rollback.js";
+import { resolveSyncRoots } from "./paths.js";
+import {
+  cacheLastRemoteExtensions,
+  ensureExtensionsJsonOnDisk,
+  parseExtensionEntries,
+  prepareExtensionsJsonForSync,
+  writeExtensionsFile,
+} from "./extensions.js";
+import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
+import {
+  isChatSyncEnabled,
+  canSkipChatPackaging,
+  prepareChatSyncPushPayload,
+  fetchRemoteChatCollectionFromFiles,
+  formatChatSyncFidelityToast,
+  CURSOR_CHAT_GIST_FILE_NAME,
+  storeChatSyncFingerprint,
+  computeChatSyncLocalFingerprint,
+} from "./chat-sync.js";
+import { copyCursorToClone, hashCloneSyncFiles, hashCursorSyncFiles, readCloneChatRaw } from "./sync-copy.js";
+import { pendingDeletionsAfterPush } from "./intentional-deletions.js";
+import {
+  commitCloneChanges,
+  currentHeadSha,
+  pushClone,
+  rebaseOntoOrigin,
+  relationToOrigin,
+  resetCloneWorktree,
+} from "./sync-clone.js";
+import { buildRepoSyncState } from "./remote/destination.js";
+import { shouldStageDeletionsBeforePull } from "./sync-action.js";
+import { gitResetHard } from "./git-cli.js";
+import { blockOnRelation, failSync, prepareRepoSync, type SyncOpTrigger } from "./sync-prepare.js";
+import { isSyncLocked, leaveSyncLock } from "./sync-lock.js";
+import { acquireSyncOperationLock } from "./sync-lock-acquire.js";
 
-export type PushTrigger = "manual" | "scheduled";
+export type PushTrigger = SyncOpTrigger;
 
-let pushLock = false;
+export type PushOptions = {
+  trigger?: PushTrigger;
+  skipLock?: boolean;
+};
 
 export function isPushLocked(): boolean {
-  return pushLock;
+  return isSyncLocked();
 }
 
 export async function executePush(
   context: vscode.ExtensionContext,
-  options?: { trigger?: PushTrigger }
+  options?: PushOptions
 ): Promise<boolean> {
   const trigger = options?.trigger ?? "manual";
-  const logger = getLogger();
 
-  if (pushLock) {
+  const lockHold = await acquireSyncOperationLock(context, { skipLock: options?.skipLock });
+  if (lockHold === "busy") {
     vscode.window.showWarningMessage("A sync operation is already in progress.");
     return false;
   }
 
-  pushLock = true;
   updateStatusBar("syncing");
+  beginSyncAbort();
+  const progress = createSidebarSyncProgress("push");
+  const startedAt = Date.now();
   try {
-    const success = await doPush(context, trigger);
-    updateStatusBar(success ? "ok" : "error", new Date());
+    progress.report({ message: "Starting push…" });
+    const success = await doPush(context, trigger, progress);
+    if (!success && isSyncAborted()) {
+      await finishCancelledOperation(context, "push", trigger);
+      progress.complete(false);
+      restoreStatusBarAfterCancel();
+      refreshSidebar();
+      return false;
+    }
+    if (success) {
+      commitSyncFileJournal();
+    } else {
+      await rollbackSyncFileJournal(context);
+    }
+    progress.complete(success);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Push finished in ${formatElapsedPrecise(Date.now() - startedAt)} (${success ? "ok" : "failed"}).`
+    );
+    if (success) {
+      recordLocalDiffers(false);
+      syncStatusBarWithRemoteAheadCache(new Date(), { includeSyncing: true });
+    } else {
+      updateStatusBar("error", new Date());
+    }
     refreshSidebar();
     return success;
   } catch (err) {
+    progress.complete(false);
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] Push finished in ${formatElapsedPrecise(Date.now() - startedAt)} (failed).`
+    );
+    if (isAbortError(err) || isSyncAborted()) {
+      await finishCancelledOperation(context, "push", trigger);
+      restoreStatusBarAfterCancel();
+      refreshSidebar();
+      return false;
+    }
+    await rollbackSyncFileJournal(context);
     updateStatusBar("error", new Date());
     refreshSidebar();
-    throw err;
+    const errMessage = err instanceof Error ? err.message : String(err);
+    void showSyncFailureWithDebug(
+      context,
+      buildSyncDebugFailure("push", trigger, errMessage, {
+        direction: "push",
+      }),
+      { title: `Push failed: ${errMessage}` }
+    );
+    return false;
   } finally {
-    pushLock = false;
+    leaveSyncLock(lockHold);
+    endSyncAbort();
+    void import("./remote-ahead.js").then((mod) => mod.onSyncLockReleased(context));
   }
 }
 
 async function doPush(
   context: vscode.ExtensionContext,
-  trigger: PushTrigger = "manual"
+  trigger: PushTrigger = "manual",
+  progress: vscode.Progress<SyncProgressReport> & { percent?: number } = {
+    report: () => {},
+  }
 ): Promise<boolean> {
   const logger = getLogger();
   logger.appendLine(`[${new Date().toISOString()}] Push started`);
 
-  const authFailedMessage =
-    "GitHub token not configured. Configure your token to sync.";
-
-  if (!(await validateStoredToken(context))) {
-    const token = await requireToken(context);
-    if (!token) {
-      void showSyncFailureWithDebug(
-        context,
-        buildSyncDebugFailure("push", trigger, authFailedMessage, {
-          direction: "push",
-          category: "AUTH_FAILED",
-        }),
-        { title: authFailedMessage }
-      );
-      logger.appendLine(`[${new Date().toISOString()}] Push failed: AUTH_FAILED`);
-      sendEvent(context, "sync_failed", { direction: "push", reason: "AUTH_FAILED", trigger });
-      return false;
-    }
-  }
-
-  const token = await requireToken(context);
-  if (!token) {
-    void showSyncFailureWithDebug(
-      context,
-      buildSyncDebugFailure("push", trigger, authFailedMessage, {
-        direction: "push",
-        category: "AUTH_FAILED",
-      }),
-      { title: authFailedMessage }
-    );
-    logger.appendLine(`[${new Date().toISOString()}] Push failed: AUTH_FAILED`);
-    sendEvent(context, "sync_failed", { direction: "push", reason: "AUTH_FAILED", trigger });
+  const prepared = await prepareRepoSync(context, "push", trigger, progress);
+  if (!prepared) {
     return false;
   }
 
-  const client = new GistClient(token);
-  const syncState = await loadSyncState(context);
-
-  if (syncState) {
-    const remoteChecksums = syncState.remoteChecksums;
-    const conflicts = await detectConflicts(context, remoteChecksums);
-    if (conflicts.length > 0) {
-      const unresolved = conflicts.filter((c) => {
-        const resolution = getResolutionForKey(c.relativeSyncKey);
-        return !resolution || resolution === "skip";
-      });
-      if (unresolved.length > 0) {
-        const conflictMessage = `${unresolved.length} conflict(s) detected. Resolve them before pushing.`;
-        void showSyncFailureWithDebug(
-          context,
-          buildSyncDebugFailure("push", trigger, conflictMessage, {
-            direction: "push",
-            category: "CONFLICT",
-            conflictCount: unresolved.length,
-          }),
-          { level: "warning", title: conflictMessage }
-        );
-        logger.appendLine(`[${new Date().toISOString()}] Push blocked: CONFLICT`);
-        sendEvent(context, "sync_failed", { direction: "push", reason: "CONFLICT", trigger });
-        return false;
-      }
-    }
+  const blocked = blockOnRelation(prepared.relation, "push");
+  if (blocked) {
+    return failSync(context, "push", trigger, blocked, "CONFLICT");
   }
 
-  const extensionsJson = generateExtensionsJson();
-  const cursorUserRoot = (await import("./paths.js")).resolveSyncRoots().cursorUser;
-  await writeExtensionsFile(cursorUserRoot, extensionsJson);
+  const { clone, token } = prepared;
+  const preSha = (await currentHeadSha(clone.clonePath)) ?? "HEAD";
+  await resetCloneWorktree(clone.clonePath);
+  setSyncFileJournal({
+    backupEntries: [],
+    createdPaths: [],
+    previousSyncState: await loadSyncState(context),
+    cloneReset: { clonePath: clone.clonePath, sha: preSha },
+  });
 
-  const files = await enumerateSyncFiles();
-  const config = vscode.workspace.getConfiguration("cursorSync");
-  const profileName = config.get<string>("syncProfileName") ?? "default";
-  const { packaged, manifest } = await packageFiles(files, profileName);
+  progress.report({ message: "Preparing local files…" });
+  await writeLocalExtensionsJson(context);
+  await migrateAndLogSkillArtifacts();
 
-  const gistFiles: Record<string, { content: string }> = {};
-  gistFiles["manifest.json"] = { content: JSON.stringify(manifest, null, 2) };
-
-  for (const [key, value] of packaged) {
-    const gistFileName = syncKeyToGistFileName(key);
-    gistFiles[gistFileName] = { content: value.content };
-  }
-
-  let gistId = syncState?.gistId;
-  let isNewGist = false;
-
-  if (!gistId) {
-    const existingResult = await withRetry(() => client.findExistingGist());
-    if (existingResult.ok && existingResult.data) {
-      gistId = existingResult.data.id;
-    }
-  }
-
-  if (!gistId) {
-    const result = await withRetry(() =>
-      client.createGist(gistFiles, "Cursor Sync - Settings Backup")
+  let chatContent: string | undefined;
+  let chatFingerprint: string | undefined;
+  if (isChatSyncEnabled()) {
+    const resolved = await resolveChatPushContent(
+      context,
+      clone.clonePath,
+      clone.identity.basePath,
+      progress
     );
-    if (!result.ok) {
-      void showSyncFailureWithDebug(
-        context,
-        buildSyncDebugFailure("push", trigger, result.error.message, {
-          direction: "push",
-          category: result.error.category,
-          statusCode: result.error.statusCode,
-        }),
-        { title: `Push failed: ${result.error.message}` }
-      );
-      logger.appendLine(
-        `[${new Date().toISOString()}] Push failed: ${result.error.category} - ${result.error.message}`
-      );
-      await addSyncHistoryEntry(context, {
-        timestamp: new Date().toISOString(),
-        direction: "push",
-        trigger,
-        fileCount: 0,
-        success: false,
-        error: result.error.message,
-      });
-      sendEvent(context, "sync_failed", {
-        direction: "push",
-        reason: result.error.category,
-        trigger,
-        status_code: result.error.statusCode,
-      });
-      return false;
-    }
-    gistId = result.data.id;
-    isNewGist = true;
-  } else {
-    const existingResult = await withRetry(() => client.getGist(gistId!));
-    let filesToDelete: Record<string, null> = {};
-    if (existingResult.ok) {
-      const existingFiles = Object.keys(existingResult.data.files);
-      for (const existing of existingFiles) {
-        if (existing !== "manifest.json" && !gistFiles[existing]) {
-          filesToDelete[existing] = null;
-        }
-      }
-    }
-
-    const updatePayload: Record<string, { content: string } | null> = {
-      ...gistFiles,
-      ...filesToDelete,
-    };
-
-    const result = await withRetry(() =>
-      client.updateGist(gistId!, updatePayload)
-    );
-    if (!result.ok) {
-      void showSyncFailureWithDebug(
-        context,
-        buildSyncDebugFailure("push", trigger, result.error.message, {
-          direction: "push",
-          category: result.error.category,
-          statusCode: result.error.statusCode,
-        }),
-        { title: `Push failed: ${result.error.message}` }
-      );
-      logger.appendLine(
-        `[${new Date().toISOString()}] Push failed: ${result.error.category} - ${result.error.message}`
-      );
-      await addSyncHistoryEntry(context, {
-        timestamp: new Date().toISOString(),
-        direction: "push",
-        trigger,
-        fileCount: 0,
-        success: false,
-        error: result.error.message,
-      });
-      sendEvent(context, "sync_failed", {
-        direction: "push",
-        reason: result.error.category,
-        trigger,
-        status_code: result.error.statusCode,
-      });
-      return false;
-    }
+    chatContent = resolved.content;
+    chatFingerprint = resolved.fingerprint;
   }
 
-  const checksums: Record<string, string> = {};
-  for (const [key, value] of packaged) {
-    checksums[key] = value.checksum;
+  throwIfAborted();
+  const profileName =
+    vscode.workspace.getConfiguration("cursorSync").get<string>("syncProfileName") ?? "default";
+  progress.report({ message: "Copying into git clone…" });
+  const copied = await copyCursorToClone({
+    clonePath: clone.clonePath,
+    basePath: clone.identity.basePath,
+    chatContent,
+    profileName,
+  });
+
+  progress.report({ message: "Committing…" });
+  const committed = await commitCloneChanges({
+    clonePath: clone.clonePath,
+    basePath: clone.identity.basePath,
+    userName: prepared.userName,
+    userEmail: prepared.userEmail,
+  });
+
+  const relationAfterCommit = await relationToOrigin(clone.clonePath, clone.identity.branch);
+  if (committed || relationAfterCommit === "ahead") {
+    progress.report({ message: "Pushing to origin…" });
+    await pushClone({
+      clonePath: clone.clonePath,
+      branch: clone.identity.branch,
+      pat: token,
+      setUpstream: clone.empty || prepared.relation === "empty",
+    });
+  }
+  const journalAfterPush = getSyncFileJournal();
+  if (journalAfterPush) {
+    journalAfterPush.cloneReset = undefined;
   }
 
-  const newState: SyncState = {
-    lastSyncTimestamp: new Date().toISOString(),
-    lastSyncDirection: "push",
-    gistId: gistId!,
-    localChecksums: checksums,
-    remoteChecksums: checksums,
-  };
-  await saveSyncState(context, newState);
-  clearConflicts();
+  const previousState = await loadSyncState(context);
+  const cloneChecksums = await hashCloneSyncFiles(clone.clonePath, clone.identity.basePath);
+  const next = buildRepoSyncState({
+    previous: previousState,
+    owner: clone.identity.owner,
+    repo: clone.identity.repo,
+    branch: clone.identity.branch,
+    basePath: clone.identity.basePath,
+    checksums: copied.checksums,
+    direction: "push",
+    completedFileSync: true,
+    pendingDeletions: pendingDeletionsAfterPush({
+      pending: previousState?.pendingDeletions,
+      writtenChecksums: copied.checksums,
+      cloneChecksums,
+    }),
+  });
+  await saveSyncState(context, next);
+  if (chatFingerprint) {
+    await storeChatSyncFingerprint(context, chatFingerprint);
+  }
 
-  const fileCount = packaged.size;
+  const createdOnPush = new Set(copied.createdKeys);
+  const historyFiles = syncHistoryFromOperations({
+    created: copied.createdKeys,
+    updated: copied.writtenKeys.filter((key) => !createdOnPush.has(key)),
+    deleted: copied.deletedKeys,
+  });
   await addSyncHistoryEntry(context, {
-    timestamp: new Date().toISOString(),
+    timestamp: next.lastSyncTimestamp,
     direction: "push",
     trigger,
-    fileCount,
+    fileCount: historyFiles.fileCount,
+    totalFileCount: Math.max(Object.keys(copied.checksums).length, historyFiles.fileCount),
     success: true,
+    files: historyFiles.files,
+    operations: historyFiles.operations,
   });
   sendEvent(context, "sync_completed", {
     direction: "push",
-    file_count: fileCount,
     trigger,
-    is_new_gist: isNewGist,
+    file_count: historyFiles.fileCount,
   });
-  vscode.window.showInformationMessage(
-    `Push complete: ${fileCount} file(s) synced.`
-  );
-  logger.appendLine(
-    `[${new Date().toISOString()}] Push succeeded: ${fileCount} files`
-  );
+  if (trigger === "manual" || trigger === "scheduled" || trigger === "syncNow") {
+    notifySyncQuiet(
+      committed
+        ? `Pushed ${copied.writtenKeys.length} file(s).`
+        : "Push complete: already in sync."
+    );
+  }
+  const { recordRemoteRelation } = await import("./remote-ahead.js");
+  recordRemoteRelation({ relation: "equal" });
   return true;
 }
 
-async function writeExtensionsFile(
-  cursorUserRoot: string,
-  content: string
-): Promise<string> {
-  const filePath = (await import("node:path")).join(
-    cursorUserRoot,
-    "extensions.json"
+export type StagedDeletions =
+  | { status: "skipped" }
+  | { status: "failed" }
+  | {
+      status: "staged";
+      clonePath: string;
+      branch: string;
+      token: string;
+      preSha: string;
+    };
+
+/**
+ * When origin is ahead and Cursor deleted synced files, commit that deletion
+ * on the current clone HEAD and rebase it onto origin before any pull copies
+ * files back. Does not push and does not update sync state.
+ */
+export async function stageDeletionsAndRebase(
+  context: vscode.ExtensionContext,
+  progress: vscode.Progress<SyncProgressReport>
+): Promise<StagedDeletions> {
+  const prepared = await prepareRepoSync(context, "push", "syncNow", progress);
+  if (!prepared || prepared.clone.empty) {
+    return { status: "skipped" };
+  }
+  await ensureExtensionsJsonOnDisk();
+  const { restoreVacantSkillFoldersFromClone } = await import(
+    "./restore-vacant-skill-folders.js"
   );
-  const dir = (await import("node:path")).dirname(filePath);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(filePath, content, "utf-8");
-  return filePath;
+  await restoreVacantSkillFoldersFromClone({
+    clonePath: prepared.clone.clonePath,
+    basePath: prepared.clone.identity.basePath,
+  });
+  const localHashes = await hashCursorSyncFiles();
+  const cloneHashes = await hashCloneSyncFiles(
+    prepared.clone.clonePath,
+    prepared.clone.identity.basePath
+  );
+  const removed = removedSyncKeys(localHashes, cloneHashes);
+  if (!shouldStageDeletionsBeforePull(prepared.relation, removed.length)) {
+    return { status: "skipped" };
+  }
+
+  const preSha = (await currentHeadSha(prepared.clone.clonePath)) ?? "HEAD";
+  await resetCloneWorktree(prepared.clone.clonePath);
+  progress.report({ message: "Recording local deletions…" });
+  await writeLocalExtensionsJson(context);
+  await migrateAndLogSkillArtifacts();
+  let chatContent: string | undefined;
+  if (isChatSyncEnabled()) {
+    chatContent = (await resolveChatPushContent(
+      context,
+      prepared.clone.clonePath,
+      prepared.clone.identity.basePath,
+      progress
+    )).content;
+  }
+  const profileName =
+    vscode.workspace.getConfiguration("cursorSync").get<string>("syncProfileName") ?? "default";
+  await copyCursorToClone({
+    clonePath: prepared.clone.clonePath,
+    basePath: prepared.clone.identity.basePath,
+    chatContent,
+    profileName,
+  });
+  const committed = await commitCloneChanges({
+    clonePath: prepared.clone.clonePath,
+    basePath: prepared.clone.identity.basePath,
+    userName: prepared.userName,
+    userEmail: prepared.userEmail,
+  });
+  if (!committed) {
+    return { status: "skipped" };
+  }
+  try {
+    progress.report({ message: "Replaying local deletions onto origin…" });
+    await rebaseOntoOrigin(prepared.clone.clonePath, prepared.clone.identity.branch);
+  } catch (err) {
+    await gitResetHard(prepared.clone.clonePath, preSha);
+    const message = err instanceof Error ? err.message : String(err);
+    await failSync(context, "push", "syncNow", message, "CONFLICT");
+    return { status: "failed" };
+  }
+  return {
+    status: "staged",
+    clonePath: prepared.clone.clonePath,
+    branch: prepared.clone.identity.branch,
+    token: prepared.token,
+    preSha,
+  };
+}
+
+async function writeLocalExtensionsJson(context: vscode.ExtensionContext): Promise<void> {
+  const extensionsJson = await prepareExtensionsJsonForSync();
+  try {
+    const parsed = parseExtensionEntries(JSON.parse(extensionsJson));
+    if (parsed) {
+      await cacheLastRemoteExtensions(context, parsed);
+    }
+  } catch {
+    // best-effort
+  }
+  const cursorUserRoot = resolveSyncRoots().cursorUser;
+  const extensionsPath = path.join(cursorUserRoot, "extensions.json");
+  const { entries: extBackups } = await createBackup(context, [extensionsPath]);
+  let createdPaths: string[] = [];
+  try {
+    await fs.access(extensionsPath);
+  } catch {
+    createdPaths = [extensionsPath];
+  }
+  const journal = (await import("./sync-abort.js")).getSyncFileJournal();
+  setSyncFileJournal({
+    backupEntries: [...(journal?.backupEntries ?? []), ...extBackups],
+    createdPaths: [...(journal?.createdPaths ?? []), ...createdPaths],
+    previousSyncState: journal?.previousSyncState,
+    cloneReset: journal?.cloneReset,
+  });
+  await writeExtensionsFile(cursorUserRoot, extensionsJson);
+}
+
+async function resolveChatPushContent(
+  context: vscode.ExtensionContext,
+  clonePath: string,
+  basePath: string,
+  progress: vscode.Progress<SyncProgressReport>
+): Promise<{ content?: string; fingerprint?: string }> {
+  const syncState = await loadSyncState(context);
+  const remoteChecksums = syncState?.remoteChecksums ?? {};
+  const skip = await canSkipChatPackaging(context, remoteChecksums, syncState);
+  if (skip) {
+    progress.report({ message: "Chat backup unchanged…" });
+    return { content: await readCloneChatRaw(clonePath, basePath) };
+  }
+  progress.report({ message: "Preparing chat backup…" });
+  const payload = await prepareChatSyncPushPayload(context, async () => {
+    const raw = await readCloneChatRaw(clonePath, basePath);
+    if (raw === undefined) {
+      return null;
+    }
+    return fetchRemoteChatCollectionFromFiles(context, {
+      [CURSOR_CHAT_GIST_FILE_NAME]: raw,
+    });
+  }, progress);
+  if (!payload) {
+    return { content: await readCloneChatRaw(clonePath, basePath) };
+  }
+  const toast = formatChatSyncFidelityToast(payload.fidelityReport);
+  if (toast) {
+    getLogger().appendLine(`[${new Date().toISOString()}] [chat-sync] ${toast}`);
+  }
+  return {
+    content: payload.content,
+    fingerprint: await computeChatSyncLocalFingerprint(),
+  };
 }

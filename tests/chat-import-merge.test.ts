@@ -8,13 +8,11 @@ import { mergeComposerDataAdditive } from "../src/composer-merge.js";
 const querySqliteRowsMock = vi.hoisted(() => vi.fn());
 const runSqliteScriptMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../src/transcripts.js", () => ({
-  __chatPersistenceInternals: {
-    querySqliteRows: (...args: unknown[]) => querySqliteRowsMock(...args),
-    runSqliteScript: (...args: unknown[]) => runSqliteScriptMock(...args),
-    listGlobalStateVscdbPaths: vi.fn(),
-    resolveStateDbCandidates: vi.fn(),
-  },
+vi.mock("../src/transcripts-sqlite.js", () => ({
+  querySqliteRows: (...args: unknown[]) => querySqliteRowsMock(...args),
+  runSqliteScript: (...args: unknown[]) => runSqliteScriptMock(...args),
+  listGlobalStateVscdbPaths: vi.fn(),
+  resolveStateDbCandidates: vi.fn(),
 }));
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
