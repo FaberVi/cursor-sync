@@ -107,6 +107,23 @@ function assertSafeChatIds(msg: {
   return undefined;
 }
 
+async function postHistorySection(
+  context: vscode.ExtensionContext,
+  webview: vscode.Webview,
+  page: number
+): Promise<void> {
+  const { loadSyncHistory } = await import("../diagnostics.js");
+  const { renderHistorySection, clampHistoryPage } = await import("./sync-tab.js");
+  const history = await loadSyncHistory(context);
+  const safePage = clampHistoryPage(page, history.length);
+  await webview.postMessage({
+    type: "history:update",
+    html: renderHistorySection(history, safePage),
+    page: safePage,
+    empty: history.length === 0,
+  });
+}
+
 export async function dispatchSidebarMessage(
   context: vscode.ExtensionContext,
   webview: vscode.Webview,
@@ -317,8 +334,7 @@ export async function dispatchSidebarMessage(
         void vscode.window.showWarningMessage(t("historyEntryNotFound"));
         break;
       }
-      const { refreshSidebar } = await import("./index.js");
-      refreshSidebar();
+      await postHistorySection(context, webview, Number(msg.page) || 0);
       break;
     }
     case "history:clearAll": {
@@ -334,17 +350,11 @@ export async function dispatchSidebarMessage(
       }
       const { clearSyncHistory } = await import("../diagnostics.js");
       await clearSyncHistory(context);
-      const { refreshSidebar } = await import("./index.js");
-      refreshSidebar();
+      await postHistorySection(context, webview, 0);
       break;
     }
     case "history:page": {
-      const { loadSyncHistory } = await import("../diagnostics.js");
-      const { renderHistorySection, clampHistoryPage } = await import("./sync-tab.js");
-      const history = await loadSyncHistory(context);
-      const page = clampHistoryPage(Number(msg.page) || 0, history.length);
-      const html = renderHistorySection(history, page);
-      await webview.postMessage({ type: "history:update", html, page });
+      await postHistorySection(context, webview, Number(msg.page) || 0);
       break;
     }
     case "settings:get": {

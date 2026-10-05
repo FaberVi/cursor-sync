@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
 const RETRYABLE_REMOVE_CODES = new Set(["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"]);
+const LOCKED_EMPTY_ROOT_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,4 +56,59 @@ export async function removePathWithRetry(
   }
 
   throw lastErr;
+}
+
+/**
+ * Delete direct children of a directory. The directory itself stays.
+ * `ENOENT` on the directory is success (nothing on disk yet).
+ */
+export async function clearDirectoryChildren(
+  absPath: string,
+  removeChild: (child: string) => Promise<void>
+): Promise<void> {
+  let names: string[];
+  try {
+    names = await fs.readdir(absPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return;
+    }
+    throw err;
+  }
+  for (const name of names) {
+    await removeChild(path.join(absPath, name));
+  }
+}
+
+/**
+ * `rmdir` an empty directory. A lock on an already-empty root is `"kept"`.
+ * A non-empty directory or any other error is rethrown.
+ */
+export async function tryRemoveEmptyDirectory(
+  absPath: string
+): Promise<"removed" | "kept"> {
+  try {
+    await removePathWithRetry(absPath, { emptyDir: true });
+    return "removed";
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (!code || !LOCKED_EMPTY_ROOT_CODES.has(code)) {
+      throw err;
+    }
+    let names: string[];
+    try {
+      names = await fs.readdir(absPath);
+    } catch (readErr) {
+      const readCode = (readErr as NodeJS.ErrnoException).code;
+      if (readCode === "ENOENT") {
+        return "removed";
+      }
+      throw err;
+    }
+    if (names.length === 0) {
+      return "kept";
+    }
+    throw err;
+  }
 }

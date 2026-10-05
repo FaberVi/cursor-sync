@@ -1,5 +1,11 @@
 import * as vscode from "vscode";
-import { getLogger, addSyncHistoryEntry, saveSyncState, loadSyncState } from "./diagnostics.js";
+import {
+  getLogger,
+  addSyncHistoryEntry,
+  saveSyncState,
+  loadSyncState,
+  syncHistoryFromOperations,
+} from "./diagnostics.js";
 import { notifySyncQuiet, notifySyncActionRequired } from "./sync-notify.js";
 import { updateStatusBar, restoreStatusBarAfterCancel } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
@@ -149,8 +155,9 @@ export async function executePull(
     return success;
   } catch (err) {
     progress.complete(false);
+    const errMessage = err instanceof Error ? err.message : String(err);
     getLogger().appendLine(
-      `[${new Date().toISOString()}] Pull finished in ${formatElapsedPrecise(Date.now() - startedAt)} (failed).`
+      `[${new Date().toISOString()}] Pull finished in ${formatElapsedPrecise(Date.now() - startedAt)} (failed): ${errMessage}`
     );
     if (isAbortError(err) || isSyncAborted()) {
       await finishCancelledOperation(context, "pull", trigger);
@@ -163,7 +170,6 @@ export async function executePull(
     await clearPendingCloneReset(context);
     updateStatusBar("error", new Date());
     refreshSidebar();
-    const errMessage = err instanceof Error ? err.message : String(err);
     void showSyncFailureWithDebug(
       context,
       buildSyncDebugFailure("pull", trigger, errMessage, {
@@ -243,6 +249,13 @@ async function doPull(
 
   progress.report({ message: "Comparing clone to Cursor folders…" });
   await ensureExtensionsJsonOnDisk();
+  const { restoreVacantSkillFoldersFromClone } = await import(
+    "./restore-vacant-skill-folders.js"
+  );
+  await restoreVacantSkillFoldersFromClone({
+    clonePath: clone.clonePath,
+    basePath: clone.identity.basePath,
+  });
   const previousState = await loadSyncState(context);
   const previousChecksums = previousState?.localChecksums ?? {};
   const preserveLocalOnly = trigger === "syncNow" && !resetToRemote;
@@ -350,6 +363,8 @@ async function doPull(
                 ? "resetMirror"
                 : "pullMirror",
             incoming,
+            writeKeys: plan.filesToWrite.map((file) => file.syncKey),
+            deleteKeys: plan.keysToDelete,
             localOnlyKeys,
             conflictKeys: classified.conflicts.map((row) => row.relativeSyncKey),
             n: counts.n,
@@ -402,12 +417,23 @@ async function doPull(
   progress.report({ message: "Writing Cursor files…" });
   const applied = await applyCloneToCursor(context, plan);
   const journal = (await import("./sync-abort.js")).getSyncFileJournal();
+  const seenBackups = new Set((journal?.backupEntries ?? []).map((entry) => entry.absolutePath));
+  const seenCreated = new Set(journal?.createdPaths ?? []);
+  const seenDirs = new Set(
+    (journal?.directoryRestores ?? []).map((entry) => entry.absolutePath)
+  );
   setSyncFileJournal({
-    backupEntries: [...(journal?.backupEntries ?? []), ...applied.backupEntries],
-    createdPaths: [...(journal?.createdPaths ?? []), ...applied.createdPaths],
+    backupEntries: [
+      ...(journal?.backupEntries ?? []),
+      ...applied.backupEntries.filter((entry) => !seenBackups.has(entry.absolutePath)),
+    ],
+    createdPaths: [
+      ...(journal?.createdPaths ?? []),
+      ...applied.createdPaths.filter((absPath) => !seenCreated.has(absPath)),
+    ],
     directoryRestores: [
       ...(journal?.directoryRestores ?? []),
-      ...applied.directoryRestores,
+      ...applied.directoryRestores.filter((entry) => !seenDirs.has(entry.absolutePath)),
     ],
     previousSyncState: journal?.previousSyncState,
     cloneReset: journal?.cloneReset,
@@ -448,20 +474,25 @@ async function doPull(
   await clearPendingCloneReset(context);
   recordRemoteRelation({ relation: "equal" });
 
-  const files = [...applied.writtenKeys, ...applied.deletedKeys].sort();
+  const historyFiles = syncHistoryFromOperations({
+    created: applied.createdKeys,
+    updated: applied.updatedKeys,
+    deleted: applied.removedKeys,
+  });
   await addSyncHistoryEntry(context, {
     timestamp: next.lastSyncTimestamp,
     direction: "pull",
     trigger,
-    fileCount: files.length,
-    totalFileCount: Object.keys(applied.checksums).length,
+    fileCount: historyFiles.fileCount,
+    totalFileCount: Math.max(Object.keys(applied.checksums).length, historyFiles.fileCount),
     success: true,
-    files,
+    files: historyFiles.files,
+    operations: historyFiles.operations,
   });
   sendEvent(context, "sync_completed", {
     direction: "pull",
     trigger,
-    file_count: files.length,
+    file_count: historyFiles.fileCount,
   });
   if (trigger === "manual" || trigger === "syncNow") {
     notifySyncQuiet(`Pulled ${applied.writtenKeys.length} file(s).`);

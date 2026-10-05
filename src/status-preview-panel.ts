@@ -37,13 +37,13 @@ export function countPreviewChanges(
     incoming: 0,
   };
   for (const entry of entries) {
-    if (entry.change === "added") {
+    if (entry.change === "added" || entry.change === "created") {
       counts.added += 1;
-    } else if (entry.change === "removed") {
+    } else if (entry.change === "removed" || entry.change === "deleted") {
       counts.removed += 1;
     } else if (entry.change === "incoming") {
       counts.incoming += 1;
-    } else if (entry.change === "modified") {
+    } else if (entry.change === "modified" || entry.change === "updated") {
       counts.modified += 1;
     }
   }
@@ -54,9 +54,42 @@ function countChip(label: string, tone: string): string {
   return `<li class="preview-count preview-count-${tone}">${escapeHtml(label)}</li>`;
 }
 
+function isHistoryAction(change: SyncKeyPreviewEntry["change"]): boolean {
+  return change === "created" || change === "updated" || change === "deleted";
+}
+
+export function historyPreviewEntries(entry: SyncHistoryEntry): SyncKeyPreviewEntry[] {
+  if (entry.operations && entry.operations.length > 0) {
+    return entry.operations.map((operation) => ({
+      syncKey: operation.syncKey,
+      change: operation.action,
+    }));
+  }
+  return (entry.files ?? []).map((syncKey) => ({ syncKey }));
+}
+
 export function renderPreviewCounts(
   entries: readonly SyncKeyPreviewEntry[]
 ): string {
+  if (entries.some((entry) => isHistoryAction(entry.change))) {
+    const created = entries.filter((entry) => entry.change === "created").length;
+    const updated = entries.filter((entry) => entry.change === "updated").length;
+    const deleted = entries.filter((entry) => entry.change === "deleted").length;
+    const chips: string[] = [];
+    if (updated > 0) {
+      chips.push(countChip(t("historyCountUpdated", { n: updated }), "incoming"));
+    }
+    if (created > 0) {
+      chips.push(countChip(t("historyCountCreated", { n: created }), "added"));
+    }
+    if (deleted > 0) {
+      chips.push(countChip(t("historyCountDeleted", { n: deleted }), "removed"));
+    }
+    if (chips.length === 0) {
+      return "";
+    }
+    return `<ul class="preview-counts" aria-label="${escapeHtml(t("statusPreviewCountsLabel"))}">${chips.join("")}</ul>`;
+  }
   const counts = countPreviewChanges(entries);
   const chips: string[] = [];
   const hasLocalKinds = counts.added + counts.modified + counts.removed > 0;
@@ -277,12 +310,12 @@ async function loadPanel(current: PanelSession): Promise<LoadedPanel> {
     if (!entry) {
       throw new Error(t("historyEntryNotFound"));
     }
-    const files = entry.files ?? [];
-    const heading = historyHeading(entry, files.length);
+    const entries = historyPreviewEntries(entry);
+    const heading = historyHeading(entry, entries.length);
     return {
       heading,
       title: heading,
-      entries: files.map((syncKey) => ({ syncKey })),
+      entries,
       emptyMessage: t("historyNoFileListRecorded"),
     };
   }

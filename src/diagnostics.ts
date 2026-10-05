@@ -2,7 +2,12 @@ import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { EXTENSION_LABEL } from "./extension-branding.js";
-import type { SyncState, SyncHistoryEntry } from "./types.js";
+import type {
+  SyncHistoryAction,
+  SyncHistoryEntry,
+  SyncHistoryOperation,
+  SyncState,
+} from "./types.js";
 import { remoteUrlForState, syncStateIdentity } from "./remote/destination.js";
 
 const MAX_HISTORY_ENTRIES = 50;
@@ -122,6 +127,34 @@ async function writeSyncHistoryFile(
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(filePath, JSON.stringify(history, null, 2), "utf-8");
+}
+
+export function syncHistoryFromOperations(input: {
+  created?: readonly string[];
+  updated?: readonly string[];
+  deleted?: readonly string[];
+}): Pick<SyncHistoryEntry, "files" | "operations" | "fileCount"> {
+  const rows: Array<{ syncKey: string; action: SyncHistoryAction }> = [];
+  const seen = new Set<string>();
+  const push = (keys: readonly string[] | undefined, action: SyncHistoryAction): void => {
+    for (const syncKey of keys ?? []) {
+      if (!syncKey || seen.has(syncKey)) {
+        continue;
+      }
+      seen.add(syncKey);
+      rows.push({ syncKey, action });
+    }
+  };
+  push(input.created, "created");
+  push(input.updated, "updated");
+  push(input.deleted, "deleted");
+  rows.sort((a, b) => a.syncKey.localeCompare(b.syncKey));
+  const operations: SyncHistoryOperation[] = rows;
+  return {
+    files: operations.map((row) => row.syncKey),
+    operations,
+    fileCount: operations.length,
+  };
 }
 
 export async function addSyncHistoryEntry(

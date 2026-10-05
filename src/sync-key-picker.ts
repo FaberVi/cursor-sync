@@ -9,7 +9,12 @@ import { cloneAbsForSyncKey, cloneBaseAbs } from "./sync-copy.js";
 import { syncKeyToAbsolutePath } from "./sync-local-deletes.js";
 import type { FileChangeKind } from "./cursor-differs.js";
 
-export type SyncKeyPreviewChange = FileChangeKind | "incoming";
+export type SyncKeyPreviewChange =
+  | FileChangeKind
+  | "incoming"
+  | "created"
+  | "updated"
+  | "deleted";
 
 export type SyncKeyPreviewEntry = {
   syncKey: string;
@@ -29,7 +34,13 @@ export function syncKeyChangeLabel(
         ? "fileChangeRemoved"
         : change === "incoming"
           ? "fileChangeIncoming"
-          : "fileChangeModified";
+          : change === "created"
+            ? "historyActionCreated"
+            : change === "updated"
+              ? "historyActionUpdated"
+              : change === "deleted"
+                ? "historyActionDeleted"
+                : "fileChangeModified";
   return t(key);
 }
 
@@ -40,11 +51,14 @@ export function syncKeyChangeTone(
   if (!change) {
     return undefined;
   }
-  if (change === "added") {
+  if (change === "added" || change === "created") {
     return "added";
   }
-  if (change === "removed") {
+  if (change === "removed" || change === "deleted") {
     return "removed";
+  }
+  if (change === "updated") {
+    return "incoming";
   }
   if (change === "incoming") {
     return "incoming";

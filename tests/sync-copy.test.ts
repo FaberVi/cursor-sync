@@ -1,11 +1,55 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+const fsGate = vi.hoisted(() => ({
+  lockedRmdir: "",
+  lockedRmRoot: "",
+  throwFirstChildRm: false,
+}));
+
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const pathMod = await import("node:path");
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    rm: (target: Parameters<typeof actual.rm>[0], options?: Parameters<typeof actual.rm>[1]) => {
+      const recursive =
+        typeof options === "object" &&
+        options !== null &&
+        "recursive" in options &&
+        options.recursive === true;
+      if (
+        fsGate.lockedRmRoot &&
+        recursive &&
+        pathMod.resolve(String(target)) === pathMod.resolve(fsGate.lockedRmRoot)
+      ) {
+        return Promise.reject(Object.assign(new Error("EPERM"), { code: "EPERM" }));
+      }
+      if (fsGate.throwFirstChildRm && recursive) {
+        fsGate.throwFirstChildRm = false;
+        return Promise.reject(Object.assign(new Error("child remove failed"), { code: "EIO" }));
+      }
+      return actual.rm(target, options);
+    },
+    rmdir: (target: Parameters<typeof actual.rmdir>[0]) => {
+      if (
+        fsGate.lockedRmdir &&
+        pathMod.resolve(String(target)) === pathMod.resolve(fsGate.lockedRmdir)
+      ) {
+        return Promise.reject(Object.assign(new Error("EPERM"), { code: "EPERM" }));
+      }
+      return actual.rmdir(target);
+    },
+  };
+});
+
+import * as fs from "node:fs/promises";
+
 import {
+  applyCloneToCursor,
   copyCursorToClone,
   hashCloneSyncFiles,
   hashCursorSyncFiles,
@@ -13,6 +57,7 @@ import {
   planCloneToCursor,
   readCloneBuffer,
   withChatCollectionChecksum,
+  type PullReplacePlan,
 } from "../src/sync-copy.js";
 import * as paths from "../src/paths.js";
 import type { Manifest } from "../src/types.js";
@@ -24,6 +69,9 @@ describe("sync-copy", () => {
   let tmp = "";
 
   afterEach(async () => {
+    fsGate.lockedRmdir = "";
+    fsGate.lockedRmRoot = "";
+    fsGate.throwFirstChildRm = false;
     vi.restoreAllMocks();
     __clearMockGlobalConfigKeys("excludeJsonKeys");
     if (tmp) {
@@ -446,4 +494,112 @@ describe("sync-copy", () => {
       __clearMockGlobalConfigKeys("excludeJsonKeys");
     }
   });
+
+  it("rewrites a skill folder without removing the directory", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-copy-"));
+    const dotCursor = path.join(tmp, "dot");
+    const skillDir = path.join(dotCursor, "skills", "foo");
+    await fs.mkdir(path.join(skillDir, "nested"), { recursive: true });
+    await fs.writeFile(path.join(skillDir, "old.txt"), "old");
+    await fs.writeFile(path.join(skillDir, "nested", "x.txt"), "x");
+    const storage = path.join(tmp, "storage");
+    await fs.mkdir(storage, { recursive: true });
+    vi.spyOn(paths, "resolveSyncRoots").mockReturnValue({
+      cursorUser: path.join(tmp, "user"),
+      dotCursor,
+    });
+    fsGate.lockedRmRoot = skillDir;
+    const content = Buffer.from("# foo\n");
+    const plan: PullReplacePlan = {
+      filesToWrite: [
+        {
+          syncKey: "dot-cursor/skills/foo/SKILL.md",
+          absolutePath: path.join(skillDir, "SKILL.md"),
+          content,
+        },
+      ],
+      keysToDelete: [],
+      skillReplace: ["dot-cursor/skills/foo"],
+      skillDeleteLocalOnly: [],
+      remoteChecksums: {},
+    };
+    const applied = await applyCloneToCursor(
+      { globalStorageUri: { fsPath: storage } } as import("vscode").ExtensionContext,
+      plan
+    );
+    expect(await fs.readFile(path.join(skillDir, "SKILL.md"))).toEqual(content);
+    await expect(fs.access(path.join(skillDir, "old.txt"))).rejects.toThrow();
+    await expect(fs.access(path.join(skillDir, "nested"))).rejects.toThrow();
+    expect(applied.createdKeys).toEqual(["dot-cursor/skills/foo/SKILL.md"]);
+    expect(applied.updatedKeys).toEqual([]);
+    expect(applied.removedKeys.sort()).toEqual([
+      "dot-cursor/skills/foo/nested/x.txt",
+      "dot-cursor/skills/foo/old.txt",
+    ]);
+    expect((await fs.stat(skillDir)).isDirectory()).toBe(true);
+  });
+
+  it("keeps the skill backup on the journal when clearing a child fails", async () => {
+    const { commitSyncFileJournal, getSyncFileJournal, setSyncFileJournal } = await import(
+      "../src/sync-abort.js"
+    );
+    setSyncFileJournal({ backupEntries: [], createdPaths: [] });
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-copy-"));
+    const dotCursor = path.join(tmp, "dot");
+    const skillDir = path.join(dotCursor, "skills", "foo");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(path.join(skillDir, "old.txt"), "old");
+    const storage = path.join(tmp, "storage");
+    await fs.mkdir(storage, { recursive: true });
+    vi.spyOn(paths, "resolveSyncRoots").mockReturnValue({
+      cursorUser: path.join(tmp, "user"),
+      dotCursor,
+    });
+    fsGate.throwFirstChildRm = true;
+    const plan: PullReplacePlan = {
+      filesToWrite: [],
+      keysToDelete: [],
+      skillReplace: ["dot-cursor/skills/foo"],
+      skillDeleteLocalOnly: [],
+      remoteChecksums: {},
+    };
+    await expect(
+      applyCloneToCursor(
+        { globalStorageUri: { fsPath: storage } } as import("vscode").ExtensionContext,
+        plan
+      )
+    ).rejects.toThrow("child remove failed");
+    expect(getSyncFileJournal()?.directoryRestores).toEqual([
+      expect.objectContaining({ absolutePath: skillDir }),
+    ]);
+    commitSyncFileJournal();
+  });
+
+  it("continues when an empty local-only skill directory cannot be removed", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-copy-"));
+    const dotCursor = path.join(tmp, "dot");
+    const skillDir = path.join(dotCursor, "skills", "foo");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(path.join(skillDir, "old.txt"), "old");
+    const storage = path.join(tmp, "storage");
+    await fs.mkdir(storage, { recursive: true });
+    vi.spyOn(paths, "resolveSyncRoots").mockReturnValue({
+      cursorUser: path.join(tmp, "user"),
+      dotCursor,
+    });
+    fsGate.lockedRmdir = skillDir;
+    const plan: PullReplacePlan = {
+      filesToWrite: [],
+      keysToDelete: [],
+      skillReplace: [],
+      skillDeleteLocalOnly: ["dot-cursor/skills/foo"],
+      remoteChecksums: {},
+    };
+    await applyCloneToCursor(
+      { globalStorageUri: { fsPath: storage } } as import("vscode").ExtensionContext,
+      plan
+    );
+    expect(await fs.readdir(skillDir)).toEqual([]);
+    expect((await fs.stat(skillDir)).isDirectory()).toBe(true);
+  }, 15_000);
 });

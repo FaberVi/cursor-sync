@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type * as vscode from "vscode";
 import { getLogger } from "./diagnostics.js";
+import { clearDirectoryChildren } from "./remove-path-with-retry.js";
 
 const MAX_BACKUPS = 3;
 
@@ -97,7 +98,7 @@ export async function backupSkillDirectories(
   return directoryRestores;
 }
 
-/** Replace-restore: rm live dir then copy backup tree back. */
+/** Copy the backup back into the existing skill directory. The directory itself stays. */
 export async function restoreSkillDirectories(
   restores: DirectoryRestore[]
 ): Promise<DirectoryRestore[]> {
@@ -105,8 +106,10 @@ export async function restoreSkillDirectories(
   const restored: DirectoryRestore[] = [];
   for (const entry of restores) {
     try {
-      await fs.rm(entry.absolutePath, { recursive: true, force: true });
-      await fs.mkdir(path.dirname(entry.absolutePath), { recursive: true });
+      await fs.mkdir(entry.absolutePath, { recursive: true });
+      await clearDirectoryChildren(entry.absolutePath, (child) =>
+        fs.rm(child, { recursive: true, force: true })
+      );
       await fs.cp(entry.backupPath, entry.absolutePath, { recursive: true });
       restored.push(entry);
     } catch (err) {

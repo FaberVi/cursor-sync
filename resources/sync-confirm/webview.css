@@ -95,14 +95,62 @@ body {
   gap: 6px;
 }
 .confirm-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   padding: 8px 12px;
   border: 1px solid rgba(237, 236, 236, 0.08);
   border-radius: 8px;
   background: #1c1a13;
-  word-break: break-all;
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
   font-size: 12px;
   line-height: 1.4;
+}
+.confirm-path {
+  min-width: 0;
+  word-break: break-all;
+}
+.confirm-action {
+  flex-shrink: 0;
+  margin-top: 1px;
+  font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(237, 236, 236, 0.12);
+  background: rgba(237, 236, 236, 0.04);
+}
+.confirm-action-update {
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #60a5fa;
+}
+.confirm-action-delete {
+  border-color: rgba(248, 113, 113, 0.35);
+  color: #f87171;
+}
+.confirm-action-conflict {
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fbbf24;
+}
+.confirm-action-local {
+  border-color: rgba(52, 211, 153, 0.35);
+  color: #34d399;
+}
+.confirm-action-kept {
+  border-color: rgba(248, 113, 113, 0.35);
+  color: #f87171;
+}
+.confirm-row-openable {
+  cursor: pointer;
+}
+.confirm-row-openable:hover,
+.confirm-row-openable:focus-visible {
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.06);
+  outline: none;
 }
 .confirm-row-commit {
   font-family: inherit;

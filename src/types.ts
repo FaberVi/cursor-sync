@@ -108,6 +108,13 @@ export interface ResolvedConflict {
   resolution: ConflictResolution;
 }
 
+export type SyncHistoryAction = "created" | "updated" | "deleted";
+
+export interface SyncHistoryOperation {
+  syncKey: string;
+  action: SyncHistoryAction;
+}
+
 export interface SyncHistoryEntry {
   timestamp: string;
   direction: "push" | "pull";
@@ -123,4 +130,9 @@ export interface SyncHistoryEntry {
   error?: string;
   /** Sync keys involved in this operation (absent on older history entries). */
   files?: string[];
+  /**
+   * What this operation did to each file. Absent on older history entries,
+   * which only have `files`.
+   */
+  operations?: SyncHistoryOperation[];
 }

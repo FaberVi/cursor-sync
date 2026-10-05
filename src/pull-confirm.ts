@@ -139,6 +139,10 @@ export type SyncConfirmMode =
 export type SyncConfirmModel = {
   mode: SyncConfirmMode;
   incoming: IncomingCommitSummary;
+  /** Sync keys written from the clone (matches chip `n`). */
+  writeKeys: readonly string[];
+  /** Sync keys removed from disk on pull (matches chip `m`). */
+  deleteKeys: readonly string[];
   localOnlyKeys: readonly string[];
   conflictKeys: readonly string[];
   intentionalDeletionKeys: readonly string[];
@@ -150,6 +154,8 @@ export type SyncConfirmModel = {
 export function buildSyncConfirmModel(input: {
   mode: SyncConfirmMode;
   incoming: IncomingCommitSummary;
+  writeKeys?: readonly string[];
+  deleteKeys?: readonly string[];
   localOnlyKeys?: readonly string[];
   conflictKeys?: readonly string[];
   intentionalDeletionKeys?: readonly string[];
@@ -157,9 +163,12 @@ export function buildSyncConfirmModel(input: {
   m: number;
   k?: number;
 }): SyncConfirmModel {
+  const deleteKeys = input.deleteKeys ?? [];
   return {
     mode: input.mode,
     incoming: input.incoming,
+    writeKeys: input.writeKeys ?? [],
+    deleteKeys,
     localOnlyKeys: input.localOnlyKeys ?? [],
     conflictKeys: input.conflictKeys ?? [],
     intentionalDeletionKeys: input.intentionalDeletionKeys ?? [],

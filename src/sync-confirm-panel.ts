@@ -11,6 +11,7 @@ import {
   requestSyncCancel,
 } from "./sync-abort.js";
 import type { SyncConfirmModel, SyncConfirmMode } from "./pull-confirm.js";
+import { openSyncKeyFile } from "./sync-key-picker.js";
 
 type PanelSession = {
   panel: vscode.WebviewPanel;
@@ -96,9 +97,18 @@ function renderChips(model: SyncConfirmModel): string {
   return `<ul class="confirm-chips" role="toolbar" aria-label="${label}">${chips.join("")}</ul>`;
 }
 
-function renderRows(keys: readonly string[], rowClass = "confirm-row"): string {
+function renderRows(
+  keys: readonly string[],
+  action: { label: string; tone: string }
+): string {
+  const openLabel = t("open");
+  const actionLabel = escapeHtml(action.label);
   const items = keys
-    .map((key) => `<li class="${rowClass}">${escapeHtml(conflictDisplayPath(key))}</li>`)
+    .map((key) => {
+      const label = escapeHtml(conflictDisplayPath(key));
+      const title = escapeHtml(`${openLabel} ${conflictDisplayPath(key)}`);
+      return `<li class="confirm-row confirm-row-openable" data-sync-key="${escapeHtml(key)}" role="button" tabindex="0" title="${title}" aria-label="${title}"><span class="confirm-path">${label}</span><span class="confirm-action confirm-action-${escapeHtml(action.tone)}">${actionLabel}</span></li>`;
+    })
     .join("");
   return `<ul class="confirm-list">${items}</ul>`;
 }
@@ -110,13 +120,6 @@ function renderSection(
 ): string {
   const filters = sectionFilters.map((f) => escapeHtml(f)).join(" ");
   return `<section class="confirm-section" data-section-filters="${filters}"><h2>${escapeHtml(heading)}</h2>${body}</section>`;
-}
-
-function localOnlySectionFilters(mode: SyncConfirmMode): readonly string[] {
-  if (mode === "pullMirror" || mode === "resetMirror") {
-    return ["local", "delete"];
-  }
-  return ["local"];
 }
 
 export function renderSyncConfirmHtml(options: {
@@ -139,12 +142,38 @@ export function renderSyncConfirmHtml(options: {
       )
     );
   }
-  if (model.incoming.incomingSyncKeys.length > 0) {
+  if (model.writeKeys.length > 0) {
+    sections.push(
+      renderSection(
+        t("syncConfirmSectionUpdate"),
+        renderRows(model.writeKeys, {
+          label: t("syncConfirmActionUpdate"),
+          tone: "update",
+        }),
+        ["update"]
+      )
+    );
+  } else if (model.incoming.incomingSyncKeys.length > 0) {
     sections.push(
       renderSection(
         t("syncConfirmSectionIncoming"),
-        renderRows(model.incoming.incomingSyncKeys),
+        renderRows(model.incoming.incomingSyncKeys, {
+          label: t("syncConfirmActionUpdate"),
+          tone: "update",
+        }),
         ["update"]
+      )
+    );
+  }
+  if (model.deleteKeys.length > 0) {
+    sections.push(
+      renderSection(
+        t("syncConfirmSectionDelete"),
+        renderRows(model.deleteKeys, {
+          label: t("syncConfirmActionDelete"),
+          tone: "delete",
+        }),
+        ["delete"]
       )
     );
   }
@@ -153,8 +182,11 @@ export function renderSyncConfirmHtml(options: {
     sections.push(
       renderSection(
         t(kept ? "syncConfirmSectionLocalOnlyKept" : "syncConfirmSectionLocalOnlyDeleted"),
-        renderRows(model.localOnlyKeys),
-        localOnlySectionFilters(model.mode)
+        renderRows(model.localOnlyKeys, {
+          label: t(kept ? "syncConfirmActionKeep" : "syncConfirmActionDelete"),
+          tone: kept ? "local" : "delete",
+        }),
+        ["local"]
       )
     );
   }
@@ -162,7 +194,10 @@ export function renderSyncConfirmHtml(options: {
     sections.push(
       renderSection(
         t("syncConfirmSectionConflicts"),
-        renderRows(model.conflictKeys),
+        renderRows(model.conflictKeys, {
+          label: t("syncConfirmActionConflict"),
+          tone: "conflict",
+        }),
         ["conflict"]
       )
     );
@@ -171,7 +206,10 @@ export function renderSyncConfirmHtml(options: {
     sections.push(
       renderSection(
         t("syncConfirmSectionKeptDeleted"),
-        renderRows(model.intentionalDeletionKeys),
+        renderRows(model.intentionalDeletionKeys, {
+          label: t("syncConfirmActionKeptDeleted"),
+          tone: "kept",
+        }),
         ["kept-deleted"]
       )
     );
@@ -298,6 +336,10 @@ export async function openSyncConfirmPanel(options: {
       if (msg.type === "cancel") {
         requestSyncCancel();
         current.finish(false);
+        return;
+      }
+      if (msg.type === "open" && typeof (raw as { syncKey?: string }).syncKey === "string") {
+        void openSyncKeyFile((raw as { syncKey: string }).syncKey, options.context);
       }
     });
 

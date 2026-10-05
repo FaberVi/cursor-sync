@@ -106,6 +106,8 @@ describe("renderSyncConfirmHtml", () => {
     expect(html).toContain("extra-four.md");
     expect(html).toContain("precise-image-gen");
     expect(html).toContain("settings.json");
+    expect(html).toContain('data-sync-key="cursor-user/settings.json"');
+    expect(html).toContain('role="button"');
     expect(html).toContain('id="proceed"');
     expect(html).not.toContain('id="proceed" disabled');
     expect(html).not.toContain("and 4 more");
@@ -121,9 +123,13 @@ describe("renderSyncConfirmHtml", () => {
           incomingSyncKeys: [],
           incomingDisplayNames: [],
         },
+        deleteKeys: [
+          "dot-cursor/skills/bar/SKILL.md",
+          "cursor-user/extensions.json",
+        ],
         localOnlyKeys: ["dot-cursor/skills/bar/SKILL.md"],
         n: 2,
-        m: 1,
+        m: 2,
         k: 3,
       }),
       cssUri: "css",
@@ -132,10 +138,41 @@ describe("renderSyncConfirmHtml", () => {
     });
     expect(html).toContain("Review Pull");
     expect(html).toContain("will be deleted");
-    expect(html).toContain('data-section-filters="local delete"');
+    expect(html).toContain('data-section-filters="delete"');
+    expect(html).toContain('data-section-filters="local"');
     expect(html).toContain('data-filter="delete"');
+    expect(html).toContain("extensions.json");
     expect(html).toContain("bar/SKILL.md");
+    expect(html).toContain("Delete");
     expect(html).not.toContain("will be kept");
+  });
+
+  it("lists every file the pull will write when the git diff is empty", () => {
+    const html = renderSyncConfirmHtml({
+      model: buildSyncConfirmModel({
+        mode: "pullMirror",
+        incoming: emptyIncoming(),
+        writeKeys: [
+          "dot-cursor/skills/fhub-skill-forge/SKILL.md",
+          "cursor-user/settings.json",
+        ],
+        localOnlyKeys: ["dot-cursor/skills/fhub-adversarial-review/SKILL.md"],
+        n: 2,
+        m: 0,
+      }),
+      cssUri: "css",
+      jsUri: "js",
+      csp: "default-src 'none'",
+    });
+    expect(html).toContain("Files to update");
+    expect(html).toContain("fhub-skill-forge/SKILL.md");
+    expect(html).toContain("settings.json");
+    expect(html).toContain('data-section-filters="update"');
+    expect(html).toContain("confirm-action-update");
+    expect(html).toContain(">Update<");
+    expect(html).toContain("confirm-action-delete");
+    expect(html).toContain(">Delete<");
+    expect(html).not.toContain("Incoming files");
   });
 
   it("lists intentional deletions only when present", () => {

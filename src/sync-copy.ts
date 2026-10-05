@@ -14,9 +14,12 @@ import { isLegacyDashedRelative, joinRemotePath } from "./remote/path-map.js";
 import { syncKeyToAbsolutePath, planLocalDeletes, applyLocalDeletes } from "./sync-local-deletes.js";
 import {
   isSafeSkillFolderPath,
+  isVacantSkillDirectory,
+  keyUnderSkillPrefix,
   keysCoveredBySkillFolders,
   planSkillFolderWipes,
   skillFolderAbsolutePath,
+  skillFolderPrefix,
 } from "./sync-skill-folders.js";
 import {
   backupSkillDirectories,
@@ -27,7 +30,7 @@ import {
   type BackupEntry,
   type DirectoryRestore,
 } from "./rollback.js";
-import { throwIfAborted } from "./sync-abort.js";
+import { getSyncFileJournal, throwIfAborted } from "./sync-abort.js";
 import { CURSOR_CHAT_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import { CHAT_BUNDLES_GIST_FILE_NAME } from "./chat-bundle-format.js";
 import { CURSOR_CHAT_SYNC_KEY } from "./chat-sync-collection.js";
@@ -38,7 +41,12 @@ import {
   stripExcludedJsonKeys,
 } from "./json-key-filter.js";
 import { writeAtomicFile } from "./atomic-file-write.js";
+import { getLogger } from "./diagnostics.js";
 import { removePathResolvingLocks } from "./path-lock-recovery.js";
+import {
+  clearDirectoryChildren,
+  tryRemoveEmptyDirectory,
+} from "./remove-path-with-retry.js";
 
 const MANIFEST_NAME = "manifest.json";
 const SPECIAL_ROOT_FILES = new Set([
@@ -249,6 +257,8 @@ export function syncKeysDiffer(
 
 export type CursorToCloneResult = {
   writtenKeys: string[];
+  createdKeys: string[];
+  deletedKeys: string[];
   checksums: Record<string, string>;
 };
 
@@ -274,10 +284,19 @@ export async function copyCursorToClone(options: {
 }): Promise<CursorToCloneResult> {
   throwIfAborted();
   const roots = resolveSyncRoots();
+  const { restoreVacantSkillFoldersFromClone } = await import(
+    "./restore-vacant-skill-folders.js"
+  );
+  await restoreVacantSkillFoldersFromClone({
+    clonePath: options.clonePath,
+    basePath: options.basePath,
+    roots,
+  });
   const entries = await enumerateSyncFiles(roots);
   const keepRel = new Set<string>();
   const checksums: Record<string, string> = {};
   const writtenKeys: string[] = [];
+  const createdKeys: string[] = [];
   const manifestFiles: Record<string, ManifestFileEntry> = {};
   const excludeKeys = readExcludeJsonKeys();
 
@@ -286,7 +305,16 @@ export async function copyCursorToClone(options: {
     const buf = await fs.readFile(entry.absolutePath);
     const stripped = stripExcludedJsonKeys(buf, excludeKeys);
     const dest = cloneAbsForSyncKey(options.clonePath, options.basePath, entry.relativeSyncKey);
+    let existed = true;
+    try {
+      await fs.access(dest);
+    } catch {
+      existed = false;
+    }
     await writeAtomic(dest, stripped);
+    if (!existed) {
+      createdKeys.push(entry.relativeSyncKey);
+    }
     const checksum = computeChecksum(stripped);
     checksums[entry.relativeSyncKey] = checksum;
     writtenKeys.push(entry.relativeSyncKey);
@@ -320,14 +348,38 @@ export async function copyCursorToClone(options: {
   keepRel.add(MANIFEST_NAME);
 
   const index = await indexCloneSyncFiles(options.clonePath, options.basePath);
-  const toDelete: string[] = [];
-  for (const [key, abs] of index.nested) {
-    if (!keepRel.has(key) && !isToggleOffPreservedSyncKey(key)) {
-      toDelete.push(abs);
+  const vacantPrefixes: string[] = [];
+  const seenPrefixes = new Set<string>();
+  for (const key of index.nested.keys()) {
+    const prefix = skillFolderPrefix(key);
+    if (!prefix || seenPrefixes.has(prefix)) {
+      continue;
+    }
+    seenPrefixes.add(prefix);
+    const skillDir = skillFolderAbsolutePath(prefix, roots);
+    if (
+      skillDir &&
+      isSafeSkillFolderPath(skillDir, roots) &&
+      (await isVacantSkillDirectory(skillDir))
+    ) {
+      vacantPrefixes.push(prefix);
     }
   }
-  for (const abs of index.dashed.values()) {
+  const toDelete: string[] = [];
+  const deletedKeys: string[] = [];
+  for (const [key, abs] of index.nested) {
+    if (keepRel.has(key) || isToggleOffPreservedSyncKey(key)) {
+      continue;
+    }
+    if (vacantPrefixes.some((prefix) => keyUnderSkillPrefix(key, prefix))) {
+      continue;
+    }
     toDelete.push(abs);
+    deletedKeys.push(key);
+  }
+  for (const [name, abs] of index.dashed) {
+    toDelete.push(abs);
+    deletedKeys.push(gistFileNameToSyncKey(name));
   }
   for (const [name, abs] of index.special) {
     if (name === MANIFEST_NAME) {
@@ -338,6 +390,7 @@ export async function copyCursorToClone(options: {
     }
     if (name === CHAT_BUNDLES_GIST_FILE_NAME) {
       toDelete.push(abs);
+      deletedKeys.push(name);
     }
   }
 
@@ -345,7 +398,7 @@ export async function copyCursorToClone(options: {
     await fs.rm(abs, { force: true });
   }
 
-  return { writtenKeys, checksums };
+  return { writtenKeys, createdKeys, deletedKeys, checksums };
 }
 
 export type PullReplacePlan = {
@@ -448,6 +501,9 @@ export async function planCloneToCursor(
 
 export type ApplyCloneToCursorResult = {
   writtenKeys: string[];
+  createdKeys: string[];
+  updatedKeys: string[];
+  removedKeys: string[];
   deletedKeys: string[];
   checksums: Record<string, string>;
   backupEntries: BackupEntry[];
@@ -461,10 +517,19 @@ export async function applyCloneToCursor(
 ): Promise<ApplyCloneToCursorResult> {
   throwIfAborted();
   const roots = resolveSyncRoots();
-  const wipePrefixes = [...plan.skillReplace, ...plan.skillDeleteLocalOnly];
-  const wipeAbs = wipePrefixes
-    .map((prefix) => skillFolderAbsolutePath(prefix, roots))
-    .filter((p): p is string => typeof p === "string" && isSafeSkillFolderPath(p, roots));
+  const toSkillDir = (prefix: string): string | undefined => {
+    const abs = skillFolderAbsolutePath(prefix, roots);
+    if (!abs || !isSafeSkillFolderPath(abs, roots)) {
+      return undefined;
+    }
+    return abs;
+  };
+  const replaceAbs = plan.skillReplace
+    .map(toSkillDir)
+    .filter((p): p is string => typeof p === "string");
+  const deleteAbs = plan.skillDeleteLocalOnly
+    .map(toSkillDir)
+    .filter((p): p is string => typeof p === "string");
 
   const backupDir = createBackupDirectory(context);
   const writePaths = plan.filesToWrite.map((f) => f.absolutePath);
@@ -476,15 +541,62 @@ export async function applyCloneToCursor(
     [...writePaths, ...deletePaths],
     backupDir
   );
-  const directoryRestores = await backupSkillDirectories(wipeAbs, backupDir);
+  const directoryRestores = await backupSkillDirectories(
+    [...replaceAbs, ...deleteAbs],
+    backupDir
+  );
+  const journal = getSyncFileJournal();
+  if (journal) {
+    journal.backupEntries.push(...backupEntries);
+    journal.directoryRestores = [
+      ...(journal.directoryRestores ?? []),
+      ...directoryRestores,
+    ];
+  }
+
+  const presentBefore = new Set<string>();
+  for (const file of plan.filesToWrite) {
+    try {
+      await fs.access(file.absolutePath);
+      presentBefore.add(file.syncKey);
+    } catch {
+      // The write creates this file.
+    }
+  }
+  const removedBySkill = new Set<string>();
+  for (const prefix of [...plan.skillReplace, ...plan.skillDeleteLocalOnly]) {
+    const abs = toSkillDir(prefix);
+    if (!abs) {
+      continue;
+    }
+    for (const rel of await listFilesRelativePosix(abs)) {
+      removedBySkill.add(`${prefix}/${rel}`);
+    }
+  }
 
   const createdPaths: string[] = [];
   const writtenKeys: string[] = [];
+  const createdKeys: string[] = [];
+  const updatedKeys: string[] = [];
   const checksums: Record<string, string> = { ...plan.remoteChecksums };
 
-  for (const abs of wipeAbs) {
+  const removeChild = (child: string): Promise<void> =>
+    removePathResolvingLocks(child, { recursive: true });
+
+  for (const abs of replaceAbs) {
     throwIfAborted();
-    await removePathResolvingLocks(abs, { recursive: true });
+    await clearDirectoryChildren(abs, removeChild);
+  }
+
+  for (const abs of deleteAbs) {
+    throwIfAborted();
+    await clearDirectoryChildren(abs, removeChild);
+    const outcome = await tryRemoveEmptyDirectory(abs);
+    if (outcome === "kept") {
+      getLogger().appendLine(
+        `[${new Date().toISOString()}] Skill folder left in place after empty rmdir failed: ${abs}`
+      );
+    }
   }
 
   for (const file of plan.filesToWrite) {
@@ -498,18 +610,39 @@ export async function applyCloneToCursor(
     await writeAtomic(file.absolutePath, file.content);
     if (!existed) {
       createdPaths.push(file.absolutePath);
+      journal?.createdPaths.push(file.absolutePath);
     }
     writtenKeys.push(file.syncKey);
+    if (presentBefore.has(file.syncKey)) {
+      updatedKeys.push(file.syncKey);
+    } else {
+      createdKeys.push(file.syncKey);
+    }
   }
 
   const deleteResult = await applyLocalDeletes(context, plan.keysToDelete, roots, {
     backupEntries: [],
   });
+  const written = new Set(writtenKeys);
+  const removedKeys: string[] = [];
+  for (const key of removedBySkill) {
+    if (!written.has(key)) {
+      removedKeys.push(key);
+    }
+  }
+  for (const key of deleteResult.deletedKeys) {
+    if (!written.has(key) && !removedBySkill.has(key)) {
+      removedKeys.push(key);
+    }
+  }
 
   await pruneOldBackups(context);
 
   return {
     writtenKeys,
+    createdKeys,
+    updatedKeys,
+    removedKeys,
     deletedKeys: deleteResult.deletedKeys,
     checksums,
     backupEntries,

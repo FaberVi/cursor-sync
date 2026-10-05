@@ -1,10 +1,16 @@
 import { execFile } from "node:child_process";
+import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
 import { getLogger } from "./diagnostics.js";
 import { removePathWithRetry } from "./remove-path-with-retry.js";
 import { t } from "./sidebar/i18n.js";
+import {
+  LOCK_QUERY_MARKER,
+  LOCK_QUERY_SCRIPT,
+  parseLockQueryStdout,
+} from "./windows-lock-query-script.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,13 +27,105 @@ export function isPathLockError(err: unknown): boolean {
 
 type LockRecoveryChoice = "retry" | "cancel" | "force";
 
-type WindowsProcessRef = {
-  ProcessId: number;
-  Name: string;
-};
+export interface LockingProcess {
+  pid: number;
+  name: string;
+  path: string;
+  /** Restart Manager application type. 1000 is RmCritical and is never closed. */
+  appType?: number;
+}
 
-function escapePowerShellSingleQuoted(value: string): string {
-  return value.replace(/'/g, "''");
+/** Restart Manager `RmCritical`: shutting these down can take the machine with them. */
+export const RESTART_MANAGER_CRITICAL_APP = 1000;
+
+const HOST_PROCESS_NAMES = new Set(["cursor", "code"]);
+
+const CRITICAL_PROCESS_NAMES = new Set([
+  "system",
+  "idle",
+  "registry",
+  "secure system",
+  "memory compression",
+  "csrss",
+  "wininit",
+  "winlogon",
+  "lsass",
+  "lsaiso",
+  "services",
+  "smss",
+  "dwm",
+  "fontdrvhost",
+  "svchost",
+]);
+
+function processKey(name: string): string {
+  return name.trim().toLowerCase().replace(/\.exe$/, "");
+}
+
+/** Cursor and VS Code stay open. Match the executable, not a name that merely contains "cursor". */
+export function isHostIdeProcess(name: string, executablePath: string): boolean {
+  const candidates = [name, executablePath ? path.win32.basename(executablePath) : ""];
+  return candidates.some((candidate) => HOST_PROCESS_NAMES.has(processKey(candidate)));
+}
+
+function isCriticalProcess(proc: LockingProcess): boolean {
+  const keys = [processKey(proc.name)];
+  if (proc.path) {
+    keys.push(processKey(path.win32.basename(proc.path)));
+  }
+  return keys.some((key) => CRITICAL_PROCESS_NAMES.has(key));
+}
+
+/**
+ * Refuses a drive root, a very short path, and the user profile so a bad target
+ * cannot scan the whole disk.
+ */
+export function isSafeLockReleaseTarget(targetPath: string): boolean {
+  const resolved = path.resolve(targetPath);
+  const root = path.parse(resolved).root;
+  if (!root || resolved.toLowerCase() === root.toLowerCase()) {
+    return false;
+  }
+  const parts = path.relative(root, resolved).split(path.sep).filter(Boolean);
+  if (parts.length < 3) {
+    return false;
+  }
+  return resolved.toLowerCase() !== path.resolve(os.homedir()).toLowerCase();
+}
+
+export function selectStoppableLockers(
+  processes: readonly LockingProcess[],
+  protectedIds: readonly number[]
+): LockingProcess[] {
+  const protectedSet = new Set(protectedIds);
+  const selected: LockingProcess[] = [];
+  const seen = new Set<number>();
+  for (const proc of processes) {
+    if (
+      !Number.isInteger(proc.pid) ||
+      proc.pid <= 4 ||
+      seen.has(proc.pid) ||
+      protectedSet.has(proc.pid) ||
+      proc.appType === RESTART_MANAGER_CRITICAL_APP
+    ) {
+      continue;
+    }
+    seen.add(proc.pid);
+    if (isHostIdeProcess(proc.name, proc.path) || isCriticalProcess(proc)) {
+      continue;
+    }
+    selected.push(proc);
+  }
+  return selected;
+}
+
+function sameProcessImage(expected: LockingProcess, liveName: string): boolean {
+  const liveKey = processKey(liveName);
+  const expectedKeys = [processKey(expected.name)];
+  if (expected.path) {
+    expectedKeys.push(processKey(path.win32.basename(expected.path)));
+  }
+  return expectedKeys.includes(liveKey);
 }
 
 function protectedProcessIds(): number[] {
@@ -38,73 +136,88 @@ function protectedProcessIds(): number[] {
   return ids;
 }
 
-async function runPowerShellJson<T>(script: string): Promise<T | undefined> {
+async function listWindowsProcessesUsingPath(absPath: string): Promise<LockingProcess[]> {
+  if (process.platform !== "win32" || !isSafeLockReleaseTarget(absPath)) {
+    return [];
+  }
+  let stdout = "";
+  let detail = "";
+  try {
+    const result = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", LOCK_QUERY_SCRIPT],
+      {
+        windowsHide: true,
+        maxBuffer: 4 * 1024 * 1024,
+        timeout: 20_000,
+        env: { ...process.env, CURSOR_SYNC_LOCK_PATH: path.resolve(absPath) },
+      }
+    );
+    stdout = result.stdout ?? "";
+    detail = (result.stderr ?? "").trim();
+  } catch (err) {
+    const failed = err as { stdout?: string; stderr?: string; message?: string };
+    stdout = failed.stdout ?? "";
+    detail = (failed.stderr || failed.message || String(err)).trim();
+  }
+
+  if (!stdout.includes(LOCK_QUERY_MARKER)) {
+    getLogger().appendLine(
+      `[${new Date().toISOString()}] path-lock-recovery could not list processes locking ${absPath}: ${detail || "no LOCKS_JSON"}`
+    );
+    return [];
+  }
+  return parseLockQueryStdout(stdout);
+}
+
+async function readLiveProcessName(pid: number): Promise<string | undefined> {
   try {
     const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", script],
-      { windowsHide: true, maxBuffer: 4 * 1024 * 1024 }
+      "tasklist.exe",
+      ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"],
+      { windowsHide: true, timeout: 10_000 }
     );
-    const trimmed = stdout.trim();
-    if (!trimmed) {
-      return undefined;
+    for (const line of stdout.split(/\r?\n/)) {
+      const match = line.trim().match(/^"([^"]*)","(\d+)"/);
+      if (match && Number(match[2]) === pid) {
+        return match[1];
+      }
     }
-    return JSON.parse(trimmed) as T;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     getLogger().appendLine(
-      `[${new Date().toISOString()}] path-lock-recovery PowerShell failed: ${msg}`
+      `[${new Date().toISOString()}] path-lock-recovery tasklist failed pid=${pid}: ${msg}`
     );
-    return undefined;
   }
+  return undefined;
 }
 
-async function listWindowsProcessesUsingPath(
-  absPath: string
-): Promise<Array<{ pid: number; name: string }>> {
-  if (process.platform !== "win32") {
-    return [];
-  }
-  const protectedIds = protectedProcessIds();
-  const pathLiteral = escapePowerShellSingleQuoted(absPath);
-  const needle = escapePowerShellSingleQuoted(path.basename(absPath));
-  const script = `
-$path = '${pathLiteral}'
-$needle = '${needle}'
-$protected = @(${protectedIds.join(",")})
-$blockedNames = @('Cursor','Code')
-$matches = Get-CimInstance Win32_Process | Where-Object {
-  $_.ProcessId -notin $protected -and
-  ($blockedNames -notcontains ($_.Name -replace '\\.exe$','')) -and
-  $_.CommandLine -and (
-    $_.CommandLine -like "*$needle*" -or $_.CommandLine -like "*$path*"
-  )
-} | Select-Object ProcessId, Name
-if (-not $matches) { return }
-if ($matches -is [array]) { $matches | ConvertTo-Json -Compress } else { @($matches) | ConvertTo-Json -Compress }
-`;
-  const parsed = await runPowerShellJson<WindowsProcessRef | WindowsProcessRef[]>(script);
-  if (!parsed) {
-    return [];
-  }
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
-  return rows
-    .filter((row) => row && Number.isFinite(row.ProcessId) && row.Name)
-    .map((row) => ({ pid: row.ProcessId, name: row.Name }));
-}
-
-async function stopWindowsProcesses(
-  processes: Array<{ pid: number; name: string }>
-): Promise<string[]> {
+async function stopWindowsProcesses(processes: LockingProcess[]): Promise<string[]> {
   const stopped: string[] = [];
   for (const proc of processes) {
-    try {
-      await execFileAsync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], {
-        windowsHide: true,
-      });
-      stopped.push(`${proc.name} (${proc.pid})`);
+    const liveName = await readLiveProcessName(proc.pid);
+    if (!liveName || !sameProcessImage(proc, liveName)) {
       getLogger().appendLine(
-        `[${new Date().toISOString()}] path-lock-recovery stopped ${proc.name} pid=${proc.pid}`
+        `[${new Date().toISOString()}] path-lock-recovery skipped pid=${proc.pid}: process image changed`
+      );
+      continue;
+    }
+    const stillStoppable = selectStoppableLockers(
+      [{ ...proc, name: liveName, path: liveName }],
+      protectedProcessIds()
+    );
+    if (stillStoppable.length !== 1) {
+      continue;
+    }
+    try {
+      await execFileAsync("taskkill", ["/F", "/PID", String(proc.pid)], {
+        windowsHide: true,
+        timeout: 15_000,
+      });
+      const label = proc.name || path.win32.basename(proc.path) || String(proc.pid);
+      stopped.push(`${label} (${proc.pid})`);
+      getLogger().appendLine(
+        `[${new Date().toISOString()}] path-lock-recovery stopped ${label} pid=${proc.pid}`
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -153,7 +266,10 @@ async function forceUnlockPath(absPath: string): Promise<void> {
     void vscode.window.showInformationMessage(t("pathLockForceUnsupported"));
     return;
   }
-  const candidates = await listWindowsProcessesUsingPath(absPath);
+  const candidates = selectStoppableLockers(
+    await listWindowsProcessesUsingPath(absPath),
+    protectedProcessIds()
+  );
   if (candidates.length === 0) {
     const choice = await vscode.window.showWarningMessage(
       t("pathLockNoExternalProcess", { path: absPath }),
@@ -180,13 +296,36 @@ async function forceUnlockPath(absPath: string): Promise<void> {
   );
 }
 
+async function stopExternalLockers(
+  absPath: string,
+  alreadyTried: Set<number>
+): Promise<string[]> {
+  if (process.platform !== "win32") {
+    return [];
+  }
+  const fresh = selectStoppableLockers(
+    await listWindowsProcessesUsingPath(absPath),
+    protectedProcessIds()
+  ).filter((proc) => !alreadyTried.has(proc.pid));
+  for (const proc of fresh) {
+    alreadyTried.add(proc.pid);
+  }
+  if (fresh.length === 0) {
+    return [];
+  }
+  return stopWindowsProcesses(fresh);
+}
+
 /**
- * Delete path; on Windows lock errors, offer retry or guided process stop (never Cursor/Code).
+ * Delete path. On Windows, processes that have the path open are closed
+ * (never Cursor, VS Code, or this extension host) and the delete is retried.
+ * If nothing else can be closed, the user can retry or reload the window.
  */
 export async function removePathResolvingLocks(
   absPath: string,
   options: { recursive?: boolean; emptyDir?: boolean } = {}
 ): Promise<void> {
+  const alreadyTried = new Set<number>();
   for (;;) {
     try {
       await removePathWithRetry(absPath, options);
@@ -194,6 +333,13 @@ export async function removePathResolvingLocks(
     } catch (err) {
       if (!isPathLockError(err)) {
         throw err;
+      }
+      const stopped = await stopExternalLockers(absPath, alreadyTried);
+      if (stopped.length > 0) {
+        void vscode.window.showInformationMessage(
+          t("pathLockStopped", { processes: stopped.join(", ") })
+        );
+        continue;
       }
       const choice = await promptPathLockRecovery(absPath);
       if (choice === "cancel") {

@@ -45,7 +45,8 @@ export function skillFolderPrefix(syncKey: string): string | undefined {
     return undefined;
   }
   const parts = stripped.rest.split("/").filter(Boolean);
-  if (parts[0] !== "skills" || parts.length < 2) {
+  // `skills/<name>/<file>`. A file that sits directly in `skills/` is not a folder.
+  if (parts[0] !== "skills" || parts.length < 3) {
     return undefined;
   }
   const name = parts[1];
@@ -215,6 +216,23 @@ export function skillConflictExtraLocalFiles(options: {
     }
   }
   return warnings;
+}
+
+/**
+ * True when the skill directory exists and contains no files.
+ * A missing directory is a real removal, not a vacant shell.
+ */
+export async function isVacantSkillDirectory(absDir: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(absDir);
+    if (!stat.isDirectory()) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  const files = await listFilesRelativePosix(absDir);
+  return files.length === 0;
 }
 
 async function listFilesRelativePosix(absDir: string): Promise<string[]> {

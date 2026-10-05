@@ -114,6 +114,10 @@
     if (cmd === "history:delete") {
       ev.preventDefault();
       ev.stopPropagation();
+      var historyList = document.querySelector(".history-list");
+      if (historyList && historyList.getAttribute("data-history-page")) {
+        extra.page = Number(historyList.getAttribute("data-history-page")) || 0;
+      }
       CSW.post(cmd, extra);
       return;
     }
@@ -204,6 +208,10 @@
       var historyBody = document.getElementById("history-section-body");
       if (historyBody && msg.html) {
         historyBody.innerHTML = msg.html;
+      }
+      if (msg.empty === true) {
+        var historyClear = document.querySelector(".history-section-header .clear-btn");
+        if (historyClear) historyClear.remove();
       }
       return;
     }

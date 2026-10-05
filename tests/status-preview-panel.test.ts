@@ -13,9 +13,12 @@ vi.mock("../src/status-preview.js", () => ({
 import * as vscode from "vscode";
 import {
   __resetStatusPreviewPanelForTests,
+  historyPreviewEntries,
   openStatusPreviewPanel,
   renderStatusPreviewHtml,
 } from "../src/status-preview-panel.js";
+import { syncHistoryFromOperations } from "../src/diagnostics.js";
+import type { SyncHistoryEntry } from "../src/types.js";
 
 function context(): vscode.ExtensionContext {
   return {
@@ -127,6 +130,43 @@ describe("renderStatusPreviewHtml", () => {
     expect(html).toContain("1 local only");
     expect(html).toContain("1 missing locally");
     expect(html).toContain('preview-change-modified');
+    expect(html).toContain('preview-change-added');
+    expect(html).toContain('preview-change-removed');
+  });
+
+  it("shows the recorded action for each history file", () => {
+    const recorded = syncHistoryFromOperations({
+      created: ["dot-cursor/skills/foo/NEW.md"],
+      updated: ["cursor-user/settings.json"],
+      deleted: ["dot-cursor/skills/foo/old.txt", "cursor-user/settings.json"],
+    });
+    expect(recorded.fileCount).toBe(3);
+    expect(recorded.operations?.find((row) => row.syncKey === "cursor-user/settings.json")?.action).toBe(
+      "updated"
+    );
+    const entry: SyncHistoryEntry = {
+      timestamp: "2026-10-05T12:00:00.000Z",
+      direction: "pull",
+      trigger: "manual",
+      fileCount: recorded.fileCount,
+      success: true,
+      files: recorded.files,
+      operations: recorded.operations,
+    };
+    const html = renderStatusPreviewHtml({
+      heading: "Pull",
+      body: { kind: "list", entries: historyPreviewEntries(entry) },
+      cssUri: "css",
+      jsUri: "js",
+      csp: "default-src 'none'",
+    });
+    expect(html).toContain("Updated");
+    expect(html).toContain("Added");
+    expect(html).toContain("Deleted");
+    expect(html).toContain("1 updated");
+    expect(html).toContain("1 added");
+    expect(html).toContain("1 deleted");
+    expect(html).toContain('preview-change-incoming');
     expect(html).toContain('preview-change-added');
     expect(html).toContain('preview-change-removed');
   });

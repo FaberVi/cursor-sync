@@ -57,6 +57,8 @@ describe("skillFolderPrefix", () => {
     expect(skillFolderPrefix("cursor-user/settings.json")).toBeUndefined();
     expect(skillFolderPrefix("dot-cursor/rules/foo.mdc")).toBeUndefined();
     expect(skillFolderPrefix("dot-cursor/commands/x.md")).toBeUndefined();
+    expect(skillFolderPrefix("dot-cursor/skills/operations.json")).toBeUndefined();
+    expect(skillFolderPrefix("dot-cursor/skills/.pinned-skills.json")).toBeUndefined();
     expect(skillFolderPrefix("dot-cursor/skills")).toBeUndefined();
     expect(skillFolderPrefix("dot-cursor/skills/.")).toBeUndefined();
     expect(skillFolderPrefix("dot-cursor/skills/../escape/SKILL.md")).toBeUndefined();

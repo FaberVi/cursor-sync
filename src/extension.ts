@@ -20,6 +20,8 @@ import { executeReset } from "./reset.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { getLogger, loadSyncState } from "./diagnostics.js";
 import { migrateAndLogSkillArtifacts } from "./skill-artifacts-migrate.js";
+import { restoreVacantSkillFoldersFromClone } from "./restore-vacant-skill-folders.js";
+import { getSyncClonePath, readRepoIdentity } from "./sync-clone.js";
 import { initializeSidebar, revealSidebar } from "./sidebar/index.js";
 import { initializeStatusBar, updateStatusBar } from "./statusbar.js";
 import { getOrCreateClientId } from "./analytics.js";
@@ -264,6 +266,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   void (async () => {
     try {
       await migrateAndLogSkillArtifacts();
+      const identity = readRepoIdentity();
+      if (identity) {
+        const restored = await restoreVacantSkillFoldersFromClone({
+          clonePath: getSyncClonePath(context),
+          basePath: identity.basePath,
+        });
+        if (restored.length > 0) {
+          logger.appendLine(
+            `[${new Date().toISOString()}] Restored ${restored.length} skill file(s) from the clone into empty local folders`
+          );
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.appendLine(

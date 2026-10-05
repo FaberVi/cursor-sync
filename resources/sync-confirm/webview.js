@@ -32,6 +32,38 @@
     });
   }
 
+  function syncKeyFromEvent(ev) {
+    const t = ev.target;
+    const el = t && t.nodeType === 1 ? t : t && t.parentElement;
+    const row = el && el.closest ? el.closest("[data-sync-key]") : null;
+    return row ? row.getAttribute("data-sync-key") : null;
+  }
+
+  function postOpen(syncKey) {
+    vscode.postMessage({ type: "open", syncKey });
+  }
+
+  document.addEventListener("click", (ev) => {
+    const syncKey = syncKeyFromEvent(ev);
+    if (!syncKey) {
+      return;
+    }
+    ev.preventDefault();
+    postOpen(syncKey);
+  });
+
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") {
+      return;
+    }
+    const syncKey = syncKeyFromEvent(ev);
+    if (!syncKey) {
+      return;
+    }
+    ev.preventDefault();
+    postOpen(syncKey);
+  });
+
   document.querySelector(".confirm-chips")?.addEventListener("click", (ev) => {
     const target = ev.target;
     const el = target && target.nodeType === 1 ? target : target && target.parentElement;

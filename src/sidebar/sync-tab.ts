@@ -115,6 +115,20 @@ export function sliceHistoryPage(
   return history.slice(start, start + pageSize);
 }
 
+export function formatHistoryError(error?: string): string {
+  if (!error) {
+    return t("syncFailed");
+  }
+  const normalized = error.trim().toLowerCase();
+  if (normalized === "cancelled" || normalized === "canceled") {
+    return t("historyErrorCancelled");
+  }
+  if (normalized === "pull required") {
+    return t("historyErrorPullRequired");
+  }
+  return error;
+}
+
 export function formatHistoryFileDetail(entry: {
   fileCount: number;
   totalFileCount?: number;
@@ -122,7 +136,7 @@ export function formatHistoryFileDetail(entry: {
   error?: string;
 }): string {
   if (!entry.success) {
-    return escapeHtml(entry.error ?? t("syncFailed"));
+    return escapeHtml(formatHistoryError(entry.error));
   }
   if (
     typeof entry.totalFileCount === "number" &&

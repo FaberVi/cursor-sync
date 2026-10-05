@@ -1,7 +1,13 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getLogger, addSyncHistoryEntry, saveSyncState, loadSyncState } from "./diagnostics.js";
+import {
+  getLogger,
+  addSyncHistoryEntry,
+  saveSyncState,
+  loadSyncState,
+  syncHistoryFromOperations,
+} from "./diagnostics.js";
 import { notifySyncQuiet } from "./sync-notify.js";
 import { updateStatusBar, restoreStatusBarAfterCancel } from "./statusbar.js";
 import { recordLocalDiffers, removedSyncKeys } from "./cursor-differs.js";
@@ -251,20 +257,32 @@ async function doPush(
     await storeChatSyncFingerprint(context, chatFingerprint);
   }
 
-  const fileCount = copied.writtenKeys.length;
+  const createdOnPush = new Set(copied.createdKeys);
+  const historyFiles = syncHistoryFromOperations({
+    created: copied.createdKeys,
+    updated: copied.writtenKeys.filter((key) => !createdOnPush.has(key)),
+    deleted: copied.deletedKeys,
+  });
   await addSyncHistoryEntry(context, {
     timestamp: next.lastSyncTimestamp,
     direction: "push",
     trigger,
-    fileCount,
-    totalFileCount: fileCount,
+    fileCount: historyFiles.fileCount,
+    totalFileCount: Math.max(Object.keys(copied.checksums).length, historyFiles.fileCount),
     success: true,
-    files: copied.writtenKeys.slice().sort(),
+    files: historyFiles.files,
+    operations: historyFiles.operations,
   });
-  sendEvent(context, "sync_completed", { direction: "push", trigger, file_count: fileCount });
+  sendEvent(context, "sync_completed", {
+    direction: "push",
+    trigger,
+    file_count: historyFiles.fileCount,
+  });
   if (trigger === "manual" || trigger === "scheduled" || trigger === "syncNow") {
     notifySyncQuiet(
-      committed ? `Pushed ${fileCount} file(s).` : "Push complete: already in sync."
+      committed
+        ? `Pushed ${copied.writtenKeys.length} file(s).`
+        : "Push complete: already in sync."
     );
   }
   const { recordRemoteRelation } = await import("./remote-ahead.js");
@@ -297,6 +315,13 @@ export async function stageDeletionsAndRebase(
     return { status: "skipped" };
   }
   await ensureExtensionsJsonOnDisk();
+  const { restoreVacantSkillFoldersFromClone } = await import(
+    "./restore-vacant-skill-folders.js"
+  );
+  await restoreVacantSkillFoldersFromClone({
+    clonePath: prepared.clone.clonePath,
+    basePath: prepared.clone.identity.basePath,
+  });
   const localHashes = await hashCursorSyncFiles();
   const cloneHashes = await hashCloneSyncFiles(
     prepared.clone.clonePath,

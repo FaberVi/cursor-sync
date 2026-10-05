@@ -148,7 +148,7 @@ export async function mergeMissingFromSnapshot(
     return 0;
   }
 
-  await fs.mkdir(destDir, { recursive: true });
+  let createdDest = false;
   for (const entry of entries) {
     const src = path.join(srcDir, entry.name);
     const dest = path.join(destDir, entry.name);
@@ -156,6 +156,10 @@ export async function mergeMissingFromSnapshot(
       copied += await mergeMissingFromSnapshot(src, dest);
     } else if (entry.isFile()) {
       if (!(await pathExists(dest))) {
+        if (!createdDest) {
+          await fs.mkdir(destDir, { recursive: true });
+          createdDest = true;
+        }
         await fs.copyFile(src, dest);
         copied += 1;
       }

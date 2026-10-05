@@ -9,12 +9,14 @@ import * as vscode from "vscode";
 import { dispatchSidebarMessage } from "../src/sidebar/messages.js";
 import { __resetStatusPreviewPanelForTests } from "../src/status-preview-panel.js";
 import {
+  formatHistoryError,
   HISTORY_PAGE_SIZE,
   renderHistoryEntry,
   renderHistorySection,
   renderSyncPane,
   sliceHistoryPage,
 } from "../src/sidebar/sync-tab.js";
+import { t } from "../src/sidebar/i18n.js";
 import type { SyncTabState } from "../src/sidebar/sync-tab.js";
 import type { SyncHistoryEntry } from "../src/types.js";
 
@@ -42,6 +44,24 @@ describe("renderHistoryEntry", () => {
     expect(html).toContain("<svg");
     expect(html).toContain("Show files involved in this sync");
     expect(html).toContain("2 files");
+  });
+
+  it("localizes known failure codes in the history detail line", () => {
+    const entry: SyncHistoryEntry = {
+      timestamp: "2026-07-19T10:00:00.000Z",
+      direction: "pull",
+      trigger: "manual",
+      fileCount: 0,
+      success: false,
+      error: "cancelled",
+      files: [],
+    };
+    const html = renderHistoryEntry(entry);
+    expect(html).toContain(formatHistoryError("cancelled"));
+    expect(html).not.toContain(">cancelled<");
+    expect(formatHistoryError("canceled")).toBe(t("historyErrorCancelled", undefined, "en"));
+    expect(formatHistoryError("pull required")).toBe(t("historyErrorPullRequired", undefined, "en"));
+    expect(t("historyErrorCancelled", undefined, "it")).toBe("Annullato");
   });
 
   it("shows changed / total when totalFileCount is present", () => {
@@ -325,7 +345,8 @@ describe("dispatchSidebarMessage - history delete", () => {
       extensionUri: { fsPath: "/fake" },
     } as any;
 
-    await dispatchSidebarMessage(ctx, mockWebview(), {
+    const webview = mockWebview();
+    await dispatchSidebarMessage(ctx, webview, {
       command: "history:delete",
       timestamp: remove.timestamp,
     });
@@ -334,7 +355,13 @@ describe("dispatchSidebarMessage - history delete", () => {
     const history = await loadSyncHistory(ctx);
     expect(history).toHaveLength(1);
     expect(history[0]?.timestamp).toBe(keep.timestamp);
-    expect(refreshSidebar).toHaveBeenCalled();
+    expect(refreshSidebar).not.toHaveBeenCalled();
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "history:update", empty: false })
+    );
+    const html = webview.postMessage.mock.calls[0][0].html as string;
+    expect(html).toContain(keep.timestamp);
+    expect(html).not.toContain(remove.timestamp);
   });
 
   it("clears all entries after modal confirmation", async () => {
@@ -365,13 +392,17 @@ describe("dispatchSidebarMessage - history delete", () => {
       extensionUri: { fsPath: "/fake" },
     } as any;
 
-    await dispatchSidebarMessage(ctx, mockWebview(), {
+    const webview = mockWebview();
+    await dispatchSidebarMessage(ctx, webview, {
       command: "history:clearAll",
     });
 
     const { loadSyncHistory } = await import("../src/diagnostics.js");
     expect(await loadSyncHistory(ctx)).toEqual([]);
-    expect(refreshSidebar).toHaveBeenCalled();
+    expect(refreshSidebar).not.toHaveBeenCalled();
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "history:update", empty: true })
+    );
   });
 
   it("does not remove when confirmation is cancelled", async () => {
