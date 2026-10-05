@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.2.4
+
+### Changed
+- Raised minimum VS Code/Cursor engine to `^1.140.0` (aligned with `@types/vscode`)
+- Dev dependencies: `@types/node` 26.6.4, `@types/vscode` 1.140.0, `@vscode/vsce` 4.0.0, `vitest` 5.0.3
+
 ## v2.2.3
 
 ### Added
