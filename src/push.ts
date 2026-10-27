@@ -71,6 +71,7 @@ import {
 } from "./sync-clone.js";
 import { buildRepoSyncState } from "./remote/destination.js";
 import { shouldStageDeletionsBeforePull } from "./sync-action.js";
+import { readOriginTreeSyncKeys } from "./pull-confirm.js";
 import { gitResetHard } from "./git-cli.js";
 import { blockOnRelation, failSync, prepareRepoSync, type SyncOpTrigger } from "./sync-prepare.js";
 import { isSyncLocked, leaveSyncLock } from "./sync-lock.js";
@@ -333,7 +334,17 @@ export async function stageDeletionsAndRebase(
     prepared.clone.clonePath,
     prepared.clone.identity.basePath
   );
-  const removed = removedSyncKeys(localHashes, cloneHashes);
+  let removed = removedSyncKeys(localHashes, cloneHashes);
+  if (prepared.relation === "behind" && removed.length > 0) {
+    const originKeys = await readOriginTreeSyncKeys({
+      clonePath: prepared.clone.clonePath,
+      basePath: prepared.clone.identity.basePath,
+      branch: prepared.clone.identity.branch,
+    });
+    if (originKeys) {
+      removed = removed.filter((key) => originKeys.has(key));
+    }
+  }
   if (!shouldStageDeletionsBeforePull(prepared.relation, removed.length)) {
     return { status: "skipped" };
   }

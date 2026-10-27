@@ -92,6 +92,31 @@ export function listLocalOnlyKeys(options: {
     .sort();
 }
 
+export async function readOriginTreeSyncKeys(options: {
+  clonePath: string;
+  basePath: string;
+  branch: string;
+}): Promise<Set<string> | undefined> {
+  try {
+    const tree = await runGit({
+      args: [
+        "ls-tree",
+        "-r",
+        "--name-only",
+        `origin/${options.branch}`,
+        options.basePath,
+      ],
+      cwd: options.clonePath,
+    });
+    if (!tree || typeof tree.stdout !== "string") {
+      return undefined;
+    }
+    return new Set(syncKeysFromDiffNameOnly(tree.stdout, options.basePath));
+  } catch {
+    return undefined;
+  }
+}
+
 export async function readIncomingCommitSummary(options: {
   clonePath: string;
   basePath: string;

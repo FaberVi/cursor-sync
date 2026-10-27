@@ -118,6 +118,38 @@ describe("listStatusPreviewEntries", () => {
     ]);
   });
 
+  it("excludes keys already present on origin/<branch> from localOnly preview when clone HEAD is behind", async () => {
+    readRepoIdentity.mockReturnValue({
+      owner: "o",
+      repo: "r",
+      branch: "main",
+      basePath: "cursor-sync",
+    });
+    getSyncClonePath.mockReturnValue("/tmp/clone");
+    hashCursorSyncFiles.mockResolvedValue({
+      "dot-cursor/skills/on-origin/SKILL.md": "x",
+      "dot-cursor/skills/truly-local/SKILL.md": "z",
+      "cursor-user/settings.json": "y",
+    });
+    hashCloneSyncFiles.mockResolvedValue({
+      "cursor-user/settings.json": "y",
+    });
+    runGit.mockResolvedValue({
+      stdout:
+        "cursor-sync/cursor-user/settings.json\ncursor-sync/dot-cursor/skills/on-origin/SKILL.md\n",
+      stderr: "",
+      code: 0,
+    });
+    expect(await listStatusPreviewEntries(context(), "localOnly")).toEqual([
+      { syncKey: "dot-cursor/skills/truly-local/SKILL.md", change: "added" },
+    ]);
+    expect(runGit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: ["ls-tree", "-r", "--name-only", "origin/main", "cursor-sync"],
+      })
+    );
+  });
+
   it("maps incoming git names to sync keys", async () => {
     readRepoIdentity.mockReturnValue({
       owner: "o",

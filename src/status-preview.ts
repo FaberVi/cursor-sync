@@ -9,7 +9,11 @@ import { loadSyncState } from "./diagnostics.js";
 import { ensureExtensionsJsonOnDisk } from "./extensions.js";
 import { computeChecksum } from "./packaging.js";
 import { runGit } from "./git-cli.js";
-import { syncKeysFromDiffNameOnly } from "./pull-confirm.js";
+import {
+  listLocalOnlyKeys,
+  readOriginTreeSyncKeys,
+  syncKeysFromDiffNameOnly,
+} from "./pull-confirm.js";
 import { getRemoteAheadCache } from "./remote-ahead.js";
 import { getSyncClonePath, readRepoIdentity } from "./sync-clone.js";
 import {
@@ -102,10 +106,21 @@ export async function listStatusPreviewEntries(
   const cloneHashes = await hashCloneSyncFiles(clonePath, identity.basePath);
 
   if (kind === "localOnly") {
-    return Object.keys(localHashes)
-      .filter((key) => !cloneHashes[key] && key !== CURSOR_CHAT_SYNC_KEY)
-      .sort()
-      .map((syncKey) => ({ syncKey, change: "added" as const }));
+    const syncState = await loadSyncState(context);
+    const originKeys = await readOriginTreeSyncKeys({
+      clonePath,
+      basePath: identity.basePath,
+      branch: identity.branch,
+    });
+    const remoteChecksums: Record<string, string> = { ...cloneHashes };
+    for (const key of originKeys ?? []) {
+      remoteChecksums[key] = remoteChecksums[key] ?? "origin";
+    }
+    return listLocalOnlyKeys({
+      localKeys: Object.keys(localHashes),
+      remoteChecksums,
+      previousRemoteChecksums: syncState?.localChecksums ?? {},
+    }).map((syncKey) => ({ syncKey, change: "added" as const }));
   }
 
   const diffs: SyncKeyPreviewEntry[] = listHashDiffs(localHashes, cloneHashes);

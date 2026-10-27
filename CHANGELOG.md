@@ -7,7 +7,8 @@
 
 ### Fixed
 - View-title refresh tooltip no longer shows the raw `%cursorSync.refreshSyncStatus.title%` key; `package.nls*.json` files are included in the VSIX again
-- When `origin` is ahead, `stageDeletionsAndRebase` stages only deleted paths in the clone instead of running a full `copyCursorToClone` (which rewrote `manifest.json` and modified files before rebase, causing rebase conflicts), and falls back cleanly to pull when the deletions are already on `origin` or cannot be rebased directly
+- “Local-only files” preview (`status:preview` `localOnly`) now checks `origin/<branch>` (`git ls-tree`) and previous sync state in addition to the local clone worktree, so files already present on the remote are never listed as local-only when the clone `HEAD` is behind
+- When `origin` is ahead, `stageDeletionsAndRebase` filters out keys already deleted on `origin/<branch>`, stages only remaining deleted paths in the clone instead of running a full `copyCursorToClone` (which rewrote `manifest.json` and modified files before rebase, causing rebase conflicts), and falls back cleanly to pull when the deletions cannot be rebased directly
 - Sidebar “files tracked” count reflects the current enumerated local files on disk after hydration rather than a stale `sync-state.json` checksum count from an older sync
 
 ## v2.2.3
