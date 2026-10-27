@@ -10,15 +10,14 @@ import {
 } from "./chat-workspace-context.js";
 import { resolveSyncRoots } from "./paths.js";
 import { resolveConversationDisplayTitle } from "./transcript-bundle.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
-import { listGlobalStateVscdbPaths } from "./transcripts-sqlite.js";
+import { listGlobalStateVscdbPaths, querySqliteRows } from "./transcripts-sqlite.js";
 
 const HEADERS_SQL =
   "SELECT value FROM ItemTable WHERE key = 'composer.composerHeaders' LIMIT 1";
 
 async function loadComposerNameIndexFromDbPath(dbPath: string): Promise<Map<string, string>> {
   try {
-    const rows = await __chatPersistenceInternals.querySqliteRows(dbPath, HEADERS_SQL);
+    const rows = await querySqliteRows(dbPath, HEADERS_SQL);
     const raw = rows[0]?.value;
     if (typeof raw === "string" && raw.length > 0) {
       return buildComposerNameIndexFromHeadersRaw(raw);

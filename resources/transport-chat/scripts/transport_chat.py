@@ -52,7 +52,10 @@ class WorkspaceResolved:
 
 def folder_to_project_key(folder_fs_path: str) -> str:
     p = Path(folder_fs_path).expanduser().resolve()
-    return str(p).replace("\\", "/").strip("/").replace("/", "-")
+    s = str(p).replace("\\", "/")
+    if len(s) >= 2 and s[1] == ":" and s[0].isalpha():
+        s = s[0].lower() + s[2:]
+    return s.replace(":", "").strip("/").replace("/", "-")
 
 
 def state_db_path(workspace_storage_id: str) -> Path:

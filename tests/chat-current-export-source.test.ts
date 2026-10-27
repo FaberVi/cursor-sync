@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = readFileSync(path.join(root, "src", "chat-persistence.ts"), "utf8");
+const source = readFileSync(path.join(root, "src", "chat-persistence-commands.ts"), "utf8");
 
 function currentExportFunctionBody(): string {
   const start = source.indexOf("export async function executeExportCurrentChatBundle");

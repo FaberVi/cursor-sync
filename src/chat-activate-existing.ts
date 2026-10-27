@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { getLogger } from "./diagnostics.js";
 import {
   buildActivationManifest,
   normalizeActivationManifest,
@@ -9,14 +10,13 @@ import {
 } from "./chat-import-activate.js";
 import {
   buildMinimalComposerDataForOpen,
+  composerDataEntryIsRich,
   filterComposerDataForConversation,
   headersPayloadForImport,
   prepareComposerDataForImport,
   prepareHeadersForImport,
 } from "./chat-import-merge.js";
 import { buildChatBundle, type ChatBundle } from "./chat-persistence.js";
-import { runPythonDiskImport } from "./chat-transport-scripts.js";
-import { resolveSyncRoots } from "./paths.js";
 import {
   decodeStoreDbIndex,
   sidebarSnapshotHasComposerData,
@@ -33,61 +33,23 @@ import {
   stateDbPathForWorkspaceStorageId,
   type WorkspaceContext,
 } from "./chat-workspace-context.js";
+import { querySqliteRows, runSqliteScript } from "./transcripts-sqlite.js";
+import {
+  globalCursorDiskKvHasComposer,
+  syncDiskLayersForOpen,
+} from "./chat-activate-disk.js";
 
 function mergeWorkspaceIdentifier(
   wi: WorkspaceContext["workspaceIdentifier"]
 ): MergeWorkspaceIdentifier {
   return { id: wi.id, uri: wi.uri as unknown as Record<string, unknown> };
 }
-import { getLogger } from "./diagnostics.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
-
-const { querySqliteRows, runSqliteScript } = __chatPersistenceInternals;
 
 type OpenBundleMode = "export-bundle" | "header-only" | "minimal-stub" | "existing-rich";
 
 const noopProgress: vscode.Progress<{ message?: string; increment?: number }> = {
   report: () => {},
 };
-
-async function globalCursorDiskKvHasComposer(conversationId: string): Promise<boolean> {
-  const globalDb = path.join(resolveSyncRoots().cursorUser, "globalStorage", "state.vscdb");
-  try {
-    const keyLit = escapeSqlLiteral(`composerData:${conversationId}`);
-    const rows = await querySqliteRows(
-      globalDb,
-      `SELECT 1 AS ok FROM cursorDiskKV WHERE key = '${keyLit}' LIMIT 1;`,
-      { retries: 1 }
-    );
-    return rows.length > 0;
-  } catch {
-    return false;
-  }
-}
-
-async function syncDiskLayersForOpen(
-  context: vscode.ExtensionContext,
-  bundle: ChatBundle,
-  wsCtx: WorkspaceContext
-): Promise<boolean> {
-  const tmpPath = path.join(
-    os.tmpdir(),
-    `cursor-sync-open-${bundle.conversationId}-${Date.now()}.json`
-  );
-  await fs.writeFile(tmpPath, JSON.stringify(bundle, null, 2), "utf8");
-  const stateDb = stateDbPathForWorkspaceStorageId(wsCtx.workspaceStorageId);
-  const outcome = await runPythonDiskImport({
-    bundlePath: tmpPath,
-    workspaceFolder: wsCtx.folderFsPath,
-    stateDbPath: stateDb,
-    extensionPath: context.extensionPath,
-    syncGlobal: true,
-    pinRecent: true,
-    log: (message) => getLogger().appendLine(message),
-  });
-  await fs.unlink(tmpPath).catch(() => {});
-  return outcome.ok;
-}
 
 function resolveOpenBundleMode(
   bundle: ChatBundle,
@@ -128,15 +90,6 @@ function bundleForActivation(
     storeOnDisk: mode === "header-only",
     existingComposerData,
   }).bundle;
-}
-
-function composerDataEntryIsRich(entry: Record<string, unknown>): boolean {
-  const headers = entry.fullConversationHeadersOnly;
-  if (Array.isArray(headers) && headers.length > 0) {
-    return true;
-  }
-  const map = entry.conversationMap;
-  return !!map && typeof map === "object" && !Array.isArray(map) && Object.keys(map).length > 0;
 }
 
 async function readExistingComposerDataEntry(
@@ -361,7 +314,9 @@ export async function activateExistingChat(
   );
   await ensureSidebarStateForOpen(conversationId, wsCtx, activationBundle);
 
-  const raw = buildActivationManifest(activationBundle, conversationId, wsCtx);
+  const raw = buildActivationManifest(activationBundle, conversationId, wsCtx, {
+    openInNewTab: true,
+  });
   const manifest = normalizeActivationManifest(
     raw as unknown as Record<string, unknown>
   );

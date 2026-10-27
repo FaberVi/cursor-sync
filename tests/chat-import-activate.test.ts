@@ -361,6 +361,40 @@ describe("chat-import-activate", () => {
     expect(result).toEqual({ ok: true, composerId: FIXTURE_CID });
   });
 
+  it("runComposerActivation does not fall back to id-only open when openInNewTab is true", async () => {
+    const { OPEN_COMPOSER_COMMAND_ID } = await import("../src/chat-import-activate.js");
+    const executeSpy = vi.fn(async (command: string, _id?: string, opts?: unknown) => {
+      if (command === OPEN_COMPOSER_COMMAND_ID) {
+        if (opts && typeof opts === "object") {
+          throw new Error("open with options rejected");
+        }
+        return undefined;
+      }
+      if (command === COMPOSER_GET_HANDLE_COMMAND_ID) {
+        return { composerId: FIXTURE_CID };
+      }
+      return undefined;
+    });
+    __setRegisteredCommands([OPEN_COMPOSER_COMMAND_ID, COMPOSER_GET_HANDLE_COMMAND_ID]);
+    __setExecuteCommandImpl(executeSpy);
+
+    const raw = buildActivationManifest(headerOnlyBundle, FIXTURE_CID, workspaceCtx, {
+      openInNewTab: true,
+    });
+    const manifest = normalizeActivationManifest(raw as Record<string, unknown>);
+    await runComposerActivation(manifest, { paths });
+
+    expect(executeSpy).toHaveBeenCalledWith(
+      OPEN_COMPOSER_COMMAND_ID,
+      FIXTURE_CID,
+      expect.objectContaining({ openInNewTab: true, openExistingOnly: true })
+    );
+    const idOnlyCalls = executeSpy.mock.calls.filter(
+      (call) => call[0] === OPEN_COMPOSER_COMMAND_ID && call.length === 2
+    );
+    expect(idOnlyCalls).toHaveLength(0);
+  });
+
   it("composerUriForId uses cursor.composer scheme", () => {
     expect(composerUriForId(FIXTURE_CID).scheme).toBe(COMPOSER_URI_SCHEME);
     expect(composerUriForId(FIXTURE_CID).path).toBe(FIXTURE_CID);

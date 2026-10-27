@@ -1,4 +1,7 @@
-import { __chatPersistenceInternals } from "./transcripts.js";
+import {
+  querySqliteRows as querySqliteRowsImpl,
+  resolveStateDbCandidates as resolveStateDbCandidatesImpl,
+} from "./transcripts-sqlite.js";
 
 async function querySqliteRows(
   dbPath: string,
@@ -6,12 +9,12 @@ async function querySqliteRows(
   opts?: { retries?: number }
 ): Promise<Array<Record<string, unknown>>> {
   return opts === undefined
-    ? __chatPersistenceInternals.querySqliteRows(dbPath, sql)
-    : __chatPersistenceInternals.querySqliteRows(dbPath, sql, opts);
+    ? querySqliteRowsImpl(dbPath, sql)
+    : querySqliteRowsImpl(dbPath, sql, opts);
 }
 
 async function resolveStateDbCandidates(): Promise<string[]> {
-  return __chatPersistenceInternals.resolveStateDbCandidates();
+  return resolveStateDbCandidatesImpl();
 }
 
 export function escapeSqlLiteral(value: string): string {

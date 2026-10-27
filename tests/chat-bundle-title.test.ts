@@ -35,6 +35,16 @@ vi.mock("../src/chat-disk-kv-export.js", () => ({
   exportDiskKvSnapshot: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock("../src/transcripts-sqlite.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/transcripts-sqlite.js")>();
+  return {
+    ...actual,
+    querySqliteRows: (...args: unknown[]) => querySqliteRowsMock(...args),
+    resolveStateDbCandidates: () => resolveStateDbCandidatesMock(),
+    listGlobalStateVscdbPaths: () => listGlobalStateVscdbPathsMock(),
+  };
+});
+
 vi.mock("../src/transcripts.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/transcripts.js")>();
   return {

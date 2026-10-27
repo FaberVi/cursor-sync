@@ -1,12 +1,17 @@
 import * as vscode from "vscode";
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import { clearToken } from "./auth.js";
 import { clearSyncState } from "./diagnostics.js";
+import { clearLastRemoteExtensions } from "./extensions.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
+import { removeSyncClone } from "./sync-clone.js";
+import { requestSyncCancel, waitForSyncAbortIdle } from "./sync-abort.js";
+import { releaseSyncLockIfGeneration, resetSyncLock } from "./sync-lock.js";
 
 export async function executeReset(context: vscode.ExtensionContext): Promise<void> {
   const confirmation = await vscode.window.showWarningMessage(
-    "Are you sure you want to reset Cursor Sync? This will remove your GitHub token, sync state, and reset extension settings to their defaults.",
+    `Are you sure you want to reset ${EXTENSION_LABEL}? This will remove your GitHub token, sync state, local git clone, and reset extension settings to their defaults.`,
     { modal: true },
     "Reset"
   );
@@ -15,32 +20,51 @@ export async function executeReset(context: vscode.ExtensionContext): Promise<vo
     return;
   }
 
-  // Clear GitHub Token
-  await clearToken(context);
+  requestSyncCancel();
+  const generation = resetSyncLock();
+  await waitForSyncAbortIdle();
 
-  // Clear Sync State (Gist ID, timestamps, checksums)
-  await clearSyncState(context);
+  try {
+    await clearToken(context);
+    await clearSyncState(context);
+    await clearLastRemoteExtensions(context);
+    await removeSyncClone(context);
 
-  // Reset Configuration Settings
-  const config = vscode.workspace.getConfiguration("cursorSync");
-  const keys = [
-    "enabledPaths",
-    "excludeGlobs",
-    "schedule.enabled",
-    "schedule.intervalMin",
-    "maxFileSizeKB",
-    "syncProfileName",
-    "safeMode"
-  ];
+    const config = vscode.workspace.getConfiguration("cursorSync");
+    const keys = [
+      "enabledPaths",
+      "excludeGlobs",
+      "excludeJsonKeys",
+      "schedule.enabled",
+      "schedule.interval",
+      "schedule.intervalUnit",
+      "schedule.intervalMin",
+      "destination.repo",
+      "destination.branch",
+      "destination.path",
+      "ui.language",
+      "maxFileSizeKB",
+      "syncProfileName",
+      "chats.encrypt",
+      "chats.syncEnabled",
+      "chats.syncOnlyFullBackups",
+      "chats.pullUpdates",
+      "chats.pullUpdatePolicy",
+      "chats.maxCollectionSizeKB",
+      "mcp.syncEnabled",
+      "chatGist.encrypt",
+    ];
 
-  for (const key of keys) {
-    await config.update(key, undefined, vscode.ConfigurationTarget.Global);
+    for (const key of keys) {
+      await config.update(key, undefined, vscode.ConfigurationTarget.Global);
+    }
+
+    await vscode.commands.executeCommand("setContext", "cursorSync.configured", false);
+    updateStatusBar("unconfigured");
+    refreshSidebar();
+
+    vscode.window.showInformationMessage(`${EXTENSION_LABEL} has been fully reset.`);
+  } finally {
+    releaseSyncLockIfGeneration(generation);
   }
-
-  // Update UI Context
-  await vscode.commands.executeCommand("setContext", "cursorSync.configured", false);
-  updateStatusBar("unconfigured");
-  refreshSidebar();
-
-  vscode.window.showInformationMessage("Cursor Sync has been fully reset.");
 }

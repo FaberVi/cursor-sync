@@ -1,0 +1,124 @@
+{
+  "audit": "2026-08-04-sidebar-chat-packaging",
+  "commit_hash": "7713dc7b147bfe35fd8c9d28139b92de55ef3c9a",
+  "background_composer_id": "bc-78adfa2d-7164-4551-b620-98af81943c0c",
+  "report": "docs/security/2026-08-04-sidebar-chat-packaging-audit.md",
+  "scoped_files": [
+    "src/sidebar/messages.ts",
+    "src/sidebar/chats-tab.ts",
+    "src/chat-import-sidebar-writeback.ts",
+    "src/chat-import-ux.ts",
+    "src/chat-persistence-restore.ts",
+    "src/export-gist-chat.ts",
+    "src/import-gist-chat.ts",
+    "src/chat-workspace-context.ts",
+    "src/retry.ts",
+    "src/scheduler.ts",
+    "src/packaging.ts",
+    "src/extensions.ts"
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "location": "src/sidebar/messages.ts",
+      "title": "Unallowlisted settings:set from webview can write any cursorSync Global setting",
+      "description": "dispatchSidebarMessage handles settings:set by calling updateSettingValue(msg.key, msg.value) with no key allowlist and no value type validation. updateSettingValue writes ConfigurationTarget.Global under the cursorSync namespace. A crafted webview postMessage can set chatImport.pythonPath, chatGist.encrypt, syncExtensions.autoInstall, safeMode, and other security-sensitive keys. Messages are cast to SidebarMessage without runtime schema validation; the webview has enableScripts:true and no Content-Security-Policy meta tag.",
+      "impact": "Defense-in-depth failure that amplifies known workspace settings injection and pythonPath RCE. Webview XSS or future message-handling bugs become Global config write primitives affecting sync safety and encryption.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker obtains code execution in the sidebar webview (XSS) or otherwise causes a postMessage\n2. Sends { command: \"settings:set\", key: \"chatImport.pythonPath\", value: \"/path/to/evil\" }\n3. updateSettingValue writes Global cursorSync.chatImport.pythonPath\n4. Subsequent chat import spawnSync executes the attacker binary",
+      "evidence": [
+        "src/sidebar/messages.ts:16",
+        "src/sidebar/messages.ts:127-130",
+        "src/sidebar/settings-tab.ts:23-28",
+        "src/sidebar/index.ts:26-28"
+      ],
+      "remediation": "Allowlist settings:set keys to the five keys rendered in settings-tab. Validate value types. Add webview CSP. Runtime-validate message shape before dispatch.",
+      "reported_link": "https://cursorambassadors.slack.com/archives/D0AJNLWDSAX/p1785835109062969"
+    },
+    {
+      "severity": "medium",
+      "location": "src/sidebar/chats-tab.ts",
+      "title": "Path traversal via unsanitized conversationId in transcript reveal/open",
+      "description": "revealTranscriptsForConversation and openTranscriptForConversation join conversationId into ~/.cursor/projects/<proj>/agent-transcripts/<conversationId> without UUID or isSafeSegment validation. Webview chats:revealTranscripts and chats:reactivate forward msg.conversationId unchanged. Node path.join resolves .. segments, escaping the agent-transcripts directory.",
+      "impact": "Arbitrary file open via vscode.open and arbitrary directory reveal via revealInExplorer within the user's readable filesystem. Information disclosure and unexpected file access from a crafted webview message.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker causes webview postMessage { command: \"chats:revealTranscripts\", conversationId: \"../../../.ssh\" } (or XSS)\n2. path.join resolves outside projects/<proj>/agent-transcripts\n3. revealInExplorer / vscode.open operates on the escaped path",
+      "evidence": [
+        "src/sidebar/chats-tab.ts:118-131",
+        "src/sidebar/chats-tab.ts:154-164",
+        "src/sidebar/messages.ts:112-115",
+        "src/sidebar/messages.ts:90-96"
+      ],
+      "remediation": "Require COMPOSER_ID_RE (UUID) on conversationId at the message boundary. After path.resolve, assert containment under projectsRoot.",
+      "reported_link": "https://cursorambassadors.slack.com/archives/D0AJNLWDSAX/p1785835109062969"
+    },
+    {
+      "severity": "low",
+      "location": "src/retry.ts",
+      "title": "Uncapped Retry-After delays can stall GitHub API retry loops",
+      "description": "withRetry sleeps result.error.retryAfter * 1000 with no upper bound. gist.ts parses the Retry-After response header via parseInt without capping. A large numeric header produces an extremely long await sleep for that API operation (up to MAX_ATTEMPTS-1 times).",
+      "impact": "Denial of service / hang of the affected sync or gist operation in the extension host until timeout fires (effectively unbounded for huge values).",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker MitMs or otherwise controls a 429 response Retry-After header with a huge integer (or compromised intermediary)\n2. GistClient sets error.retryAfter from parseInt\n3. withRetry awaits sleep(retryAfter * 1000) blocking the operation",
+      "evidence": [
+        "src/retry.ts:27-31",
+        "src/gist.ts:130-139"
+      ],
+      "remediation": "Clamp retryAfter to a sane max (e.g. 60-120s). Ignore non-finite parse results and use default backoff.",
+      "reported_link": "https://cursorambassadors.slack.com/archives/D0AJNLWDSAX/p1785835109062969"
+    }
+  ],
+  "reconfirmed_findings": [
+    {
+      "severity": "high",
+      "location": "src/chat-persistence-restore.ts",
+      "title": "conversationId path traversal enables arbitrary file write on import",
+      "prior_ref": "cursor-sync---flagged-vulnerabilities.json / chat-bundle-format + chat-persistence-restore"
+    },
+    {
+      "severity": "medium",
+      "location": "src/chat-persistence-restore.ts",
+      "title": "Workspace pythonPath settings injection enables RCE on import",
+      "prior_ref": "cursor-sync---flagged-vulnerabilities.json"
+    },
+    {
+      "severity": "medium",
+      "location": "src/export-gist-chat.ts",
+      "title": "Workspace can disable chatGist.encrypt forcing plaintext export",
+      "prior_ref": "chat-encryption-auth.ts finding"
+    },
+    {
+      "severity": "medium",
+      "location": "src/import-gist-chat.ts",
+      "title": "Encrypted gist import triggers attacker-controlled Argon2 DoS",
+      "prior_ref": "chat-gist-crypto.ts finding"
+    },
+    {
+      "severity": "high",
+      "location": "src/extensions.ts",
+      "title": "findMissingExtensions feeds pull auto-install without publisher allowlist",
+      "prior_ref": "pull.ts syncExtensionsAfterPull finding"
+    }
+  ],
+  "cleared": [
+    {
+      "location": "src/chat-import-ux.ts",
+      "reason": "No shell/spawn; workspace folder from vscode.workspaceFolders only; titles used in UI strings only"
+    },
+    {
+      "location": "src/chat-import-sidebar-writeback.ts",
+      "reason": "UUID gate + pending path containment on queue/flush; residual applyImmediate UUID inconsistency is low"
+    },
+    {
+      "location": "src/packaging.ts",
+      "reason": "Reads caller-supplied SyncFileEntry paths; no injection surface in-module"
+    },
+    {
+      "location": "src/import-gist-chat.ts#extractGistId",
+      "reason": "Gist ID restricted to [A-Za-z0-9-]+"
+    }
+  ]
+}

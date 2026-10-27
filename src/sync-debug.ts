@@ -1,6 +1,5 @@
+import { EXTENSION_LABEL } from "./extension-branding.js";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import * as vscode from "vscode";
 import {
   COMPOSER_GET_HANDLE_COMMAND_ID,
@@ -11,10 +10,13 @@ import {
   parseComposerIdFromCommandResult,
 } from "./chat-import-activate.js";
 import { getLogger } from "./diagnostics.js";
+import { readExtensionVersion } from "./extension-version.js";
+
+export { readExtensionVersion } from "./extension-version.js";
 
 export type SyncDebugOperation = "syncNow" | "push" | "pull" | "scheduler";
 export type SyncDebugDirection = "push" | "pull";
-export type SyncDebugTrigger = "manual" | "scheduled";
+export type SyncDebugTrigger = "manual" | "scheduled" | "syncNow";
 
 export type SyncDebugFailure = {
   operation: SyncDebugOperation;
@@ -40,23 +42,6 @@ const GIST_ID_PATTERN = /\b[a-f0-9]{32}\b/gi;
 const TILDE_PATH_PATTERN = /~(?:\/|\\)[^\s"'`,;:]+/g;
 const ABSOLUTE_PATH_PATTERN =
   /(?:\/(?:home|Users|root|etc|tmp|var|opt|private|Volumes)(?:\/[^\s"'`,;:]+)*|(?:[A-Za-z]:[\\/][^\s"'`,;:]+)+)/g;
-
-let cachedExtensionVersion: string | undefined;
-
-export function readExtensionVersion(): string {
-  if (cachedExtensionVersion !== undefined) {
-    return cachedExtensionVersion;
-  }
-  try {
-    const packageJson = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8")
-    ) as { version: string };
-    cachedExtensionVersion = packageJson.version;
-  } catch {
-    cachedExtensionVersion = "unknown";
-  }
-  return cachedExtensionVersion;
-}
 
 export function buildSyncDebugFailure(
   operation: SyncDebugOperation,
@@ -94,7 +79,7 @@ function triggerDescription(trigger: SyncDebugTrigger): string {
 export function buildSyncDebugPrompt(failure: SyncDebugFailure): string {
   const sanitizedMessage = sanitizeSyncDebugMessage(failure.message);
   const lines = [
-    "Cursor Sync failed. Please diagnose why this sync operation failed and help resolve it.",
+    `${EXTENSION_LABEL} failed. Please diagnose why this sync operation failed and help resolve it.`,
     "",
     "## Failure context",
     `- operation: ${failure.operation}`,
@@ -121,20 +106,21 @@ export function buildSyncDebugPrompt(failure: SyncDebugFailure): string {
     `- extensionVersion: ${failure.extensionVersion}`,
     "",
     "## What to inspect",
-    "Review the Cursor Sync implementation and local state, including:",
+    `Review the ${EXTENSION_LABEL} implementation and local state, including:`,
     "- src/push.ts",
     "- src/pull.ts",
     "- src/scheduler.ts",
+    "- src/sync-clone.ts",
+    "- src/git-cli.ts",
     "- src/extension.ts",
     "- src/diagnostics.ts",
-    "- src/gist.ts",
-    "- Cursor Sync output channel",
+    `- ${EXTENSION_LABEL} output channel`,
     "- sync history JSON in extension global storage",
     "",
     "## Expected outcome",
     "Prefer a permanent code or configuration fix when appropriate.",
     "If no code fix applies, explain the exact user action required.",
-    "Do not include or request secrets such as GitHub tokens, raw Gist IDs, or private file paths unless the user explicitly provides them."
+    "Do not include or request secrets such as GitHub tokens or private file paths unless the user explicitly provides them."
   );
 
   return lines.join("\n");
@@ -287,6 +273,9 @@ export async function showSyncFailureWithDebug(
   failure: SyncDebugFailure,
   options?: { level?: "error" | "warning"; title?: string }
 ): Promise<void> {
+  if (failure.category === "CANCELLED") {
+    return;
+  }
   const prompt = buildSyncDebugPrompt(failure);
   const message = options?.title ?? failure.message;
   const level = options?.level ?? "error";
@@ -295,7 +284,9 @@ export async function showSyncFailureWithDebug(
       ? vscode.window.showWarningMessage.bind(vscode.window)
       : vscode.window.showErrorMessage.bind(vscode.window);
 
-  const selection = await showMessage(message, DEBUG_WITH_CURSOR_ACTION);
+  const actions = [DEBUG_WITH_CURSOR_ACTION];
+
+  const selection = await showMessage(message, ...actions);
   if (selection === DEBUG_WITH_CURSOR_ACTION) {
     await openComposerWithPrefilledPrompt(prompt);
   }

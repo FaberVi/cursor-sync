@@ -1,7 +1,12 @@
 golden-chat-store.template.db is generated from golden-store-template.sql.
 
 Regenerate (Python):
-  python -c "import sqlite3, pathlib; p=pathlib.Path('resources/golden-chat-store.template.db'); p.unlink(missing_ok=True); c=sqlite3.connect(p); c.executescript(open('resources/golden-store-template.sql',encoding='utf-8').read()); c.close()"
+
+  Windows (PowerShell):
+    py -3 -c "import sqlite3, pathlib; p=pathlib.Path('resources/golden-chat-store.template.db'); p.unlink(missing_ok=True); c=sqlite3.connect(p); c.executescript(open('resources/golden-store-template.sql',encoding='utf-8').read()); c.close()"
+
+  macOS / Linux:
+    python3 -c "import sqlite3, pathlib; p=pathlib.Path('resources/golden-chat-store.template.db'); p.unlink(missing_ok=True); c=sqlite3.connect(p); c.executescript(open('resources/golden-store-template.sql',encoding='utf-8').read()); c.close()"
 
 Or: node scripts/create-golden-store-template.mjs (requires sqlite3 on PATH).
 

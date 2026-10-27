@@ -29,9 +29,112 @@ const DENYLIST_DIRS = [
 
 const DENYLIST_FILES = ["TransportSecurity"];
 
-const DENYLIST_GLOBS = ["Cookies*", "*.db", "*.db-journal", "*.db-wal", "*.log"];
+const DENYLIST_GLOBS = [
+  "Cookies*",
+  "*.db",
+  "*.db-journal",
+  "*.db-wal",
+  "*.log",
+  "*.pyc",
+];
+
+/** Path segments that must never be synced (matched anywhere in the relative path). */
+const DENYLIST_PATH_SEGMENTS = ["__pycache__", "node_modules", ".git"];
+
+/** skill-creator / skill-forge backup folder names (matched as path segments). */
+const SKILL_BACKUP_SEGMENT_RE = /^skill-.+-backup$/;
 
 const MAX_SYNC_VSIX_BYTES = 50 * 1024 * 1024;
+
+/** True for skill-creator snapshot/backup directory names. */
+export function isSkillArtifactSegment(name: string): boolean {
+  return (
+    name === "skill-snapshot" ||
+    name.startsWith("skill-snapshot-") ||
+    SKILL_BACKUP_SEGMENT_RE.test(name)
+  );
+}
+
+function isSkillCreatorActivitySegment(name: string): boolean {
+  return (
+    name.startsWith("iteration-") ||
+    name.startsWith("eval-") ||
+    name === "outputs"
+  );
+}
+
+/**
+ * skill-creator/skill-forge eval workspaces nest SKILL.md under skill-snapshot/
+ * (or skill-*-backup/). Cursor names skills after the immediate parent folder, so
+ * syncing those artifacts registers bogus skills named "skill-snapshot".
+ *
+ * A legitimate skill whose folder name ends with `-workspace` (e.g.
+ * `skills/my-agent-workspace/SKILL.md`) is still synced — only skill-creator
+ * layouts (artifact / iteration / eval / outputs segments) are excluded.
+ */
+export function isSkillSyncArtifact(relativePath: string): boolean {
+  const parts = relativePath.split("/").filter(Boolean);
+  if (parts[0] !== "skills" || parts.length < 2) {
+    return false;
+  }
+
+  if (parts.some((part) => isSkillArtifactSegment(part))) {
+    return true;
+  }
+
+  // Top-level directory is itself an artifact name (bogus skill folder).
+  if (isSkillArtifactSegment(parts[1]!)) {
+    return true;
+  }
+
+  if (parts[1]!.endsWith("-workspace")) {
+    return parts.some((part) => isSkillCreatorActivitySegment(part));
+  }
+
+  return false;
+}
+
+/**
+ * True when a sync key must not be pushed or restored (hard denylist + user excludeGlobs).
+ * Accepts full keys (`dot-cursor/skills/...`) or root-relative paths (`skills/...`).
+ */
+export function isExcludedSyncKey(
+  syncKey: string,
+  excludeGlobs?: string[]
+): boolean {
+  let rel = syncKey;
+  if (rel.startsWith("dot-cursor/")) {
+    rel = rel.slice("dot-cursor/".length);
+  } else if (rel.startsWith("cursor-user/")) {
+    rel = rel.slice("cursor-user/".length);
+  }
+
+  if (isDenylisted(rel) || isSkillSyncArtifact(rel)) {
+    return true;
+  }
+
+  if (isMcpSyncKey(syncKey) && !isMcpSyncEnabled()) {
+    return true;
+  }
+
+  const globs =
+    excludeGlobs ??
+    vscode.workspace.getConfiguration("cursorSync").get<string[]>("excludeGlobs") ??
+    [];
+  return globs.some((g) => minimatch(rel, g));
+}
+
+/** Sync keys under `dot-cursor/skills/` that are skill-creator artifacts. */
+export function listSkillArtifactSyncKeys(
+  manifestFiles: Record<string, unknown>
+): string[] {
+  return Object.keys(manifestFiles).filter((key) => {
+    if (!key.startsWith("dot-cursor/")) {
+      return false;
+    }
+    return isSkillSyncArtifact(key.slice("dot-cursor/".length));
+  });
+}
 
 export function resolveSyncRoots(
   platform: NodeJS.Platform = process.platform
@@ -60,37 +163,48 @@ export function resolveSyncRoots(
   };
 }
 
+export function isMcpSyncEnabled(): boolean {
+  return (
+    vscode.workspace.getConfiguration("cursorSync").get<boolean>("mcp.syncEnabled") ??
+    false
+  );
+}
+
+/** Root-only MCP config files (`dot-cursor/mcp.json` and `cursor-user/mcp.json`). */
+export function isMcpSyncKey(syncKey: string): boolean {
+  return syncKey === "dot-cursor/mcp.json" || syncKey === "cursor-user/mcp.json";
+}
+
+export const MCP_PRESERVE_SYNC_KEYS = [
+  "dot-cursor/mcp.json",
+  "cursor-user/mcp.json",
+] as const;
+
+/** Clone/remote copies kept when the matching sync toggle is off (not deleted, not pulled). */
+export function isToggleOffPreservedSyncKey(syncKey: string): boolean {
+  return isMcpSyncKey(syncKey) && !isMcpSyncEnabled();
+}
+
 export async function enumerateSyncFiles(
   roots?: SyncRoots
 ): Promise<SyncFileEntry[]> {
   const resolved = roots ?? resolveSyncRoots();
   const config = vscode.workspace.getConfiguration("cursorSync");
-  const enabledPaths = config.get<string[]>("enabledPaths") ?? getDefaultEnabledPaths();
+  let enabledPaths = config.get<string[]>("enabledPaths") ?? getDefaultEnabledPaths();
   const excludeGlobs = config.get<string[]>("excludeGlobs") ?? [];
   const maxFileSizeKB = config.get<number>("maxFileSizeKB") ?? 512;
   const maxBytes = maxFileSizeKB * 1024;
 
-  const cursorUserGlobs = enabledPaths.filter(
-    (g) =>
-      g === "settings.json" ||
-      g === "keybindings.json" ||
-      g === "extensions.json" ||
-      g.startsWith("snippets") ||
-      g.startsWith("vsix")
-  );
-  const dotCursorGlobs = enabledPaths.filter(
-    (g) =>
-      g.startsWith("skills") ||
-      g.startsWith("commands") ||
-      g.startsWith("rules")
-  );
+  if (isMcpSyncEnabled() && !enabledPaths.includes("mcp.json")) {
+    enabledPaths = [...enabledPaths, "mcp.json"];
+  }
 
   const entries: SyncFileEntry[] = [];
 
   await collectFiles(
     resolved.cursorUser,
     "cursor-user",
-    cursorUserGlobs,
+    enabledPaths,
     excludeGlobs,
     maxBytes,
     entries
@@ -98,7 +212,7 @@ export async function enumerateSyncFiles(
   await collectFiles(
     resolved.dotCursor,
     "dot-cursor",
-    dotCursorGlobs,
+    enabledPaths,
     excludeGlobs,
     maxBytes,
     entries
@@ -125,6 +239,10 @@ async function collectFiles(
     const rel = path.relative(rootDir, absPath).split(path.sep).join("/");
 
     if (isDenylisted(rel)) {
+      continue;
+    }
+
+    if (rel === "mcp.json" && !isMcpSyncEnabled()) {
       continue;
     }
 
@@ -165,6 +283,14 @@ function isDenylisted(relativePath: string): boolean {
     return true;
   }
 
+  if (parts.some((part) => DENYLIST_PATH_SEGMENTS.includes(part))) {
+    return true;
+  }
+
+  if (isSkillSyncArtifact(relativePath)) {
+    return true;
+  }
+
   const fileName = parts[parts.length - 1];
   if (fileName && DENYLIST_FILES.includes(fileName)) {
     return true;
@@ -192,6 +318,9 @@ async function walkDirectory(dir: string): Promise<string[]> {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (DENYLIST_PATH_SEGMENTS.includes(entry.name)) {
+        continue;
+      }
       const sub = await walkDirectory(fullPath);
       results.push(...sub);
     } else if (entry.isFile()) {
@@ -218,9 +347,12 @@ export function getDefaultEnabledPaths(): string[] {
     "extensions.json",
     "vsix/**",
     "skills/**",
-    "skills-cursor/**/SKILL.md",
     "commands/**/*.md",
     "rules/*.mdc",
+    "agents/*.md",
+    "cli-config.json",
+    "hooks.json",
+    "tasks.json",
   ];
 }
 

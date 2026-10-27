@@ -3,18 +3,13 @@ import type { ChatBundle } from "../src/chat-persistence.js";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
-const querySqliteRowsMock = vi.fn();
-const listGlobalStateVscdbPathsMock = vi.fn();
-const buildChatsKeyToFolderMapMock = vi.fn();
-const scanWorkspaceStorageForIdMock = vi.fn();
-
-vi.mock("../src/transcripts.js", () => ({
-  __chatPersistenceInternals: {
-    querySqliteRows: (...args: unknown[]) => querySqliteRowsMock(...args),
-  },
-}));
+const querySqliteRowsMock = vi.hoisted(() => vi.fn());
+const listGlobalStateVscdbPathsMock = vi.hoisted(() => vi.fn());
+const buildChatsKeyToFolderMapMock = vi.hoisted(() => vi.fn());
+const scanWorkspaceStorageForIdMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/transcripts-sqlite.js", () => ({
+  querySqliteRows: (...args: unknown[]) => querySqliteRowsMock(...args),
   listGlobalStateVscdbPaths: () => listGlobalStateVscdbPathsMock(),
 }));
 
@@ -43,7 +38,8 @@ describe("resolveComposerConversationTitle", () => {
     );
     scanWorkspaceStorageForIdMock.mockResolvedValue("ws-storage-1");
     querySqliteRowsMock.mockImplementation(async (dbPath: string) => {
-      if (dbPath.includes("workspaceStorage/ws-storage-1")) {
+      const normalized = dbPath.replace(/\\/g, "/");
+      if (normalized.includes("workspaceStorage/ws-storage-1")) {
         return [
           {
             value: JSON.stringify({
