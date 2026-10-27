@@ -6,7 +6,7 @@ Sync user-level Cursor settings and selected `~/.cursor` assets to a **private G
 
 **Highlights (2.2.x):** sync review panel with file-level actions and editor open; honor local deletions across machines (review tab + push); Windows lock recovery on pull deletes; live **files tracked** count in the sidebar; Italian UI including localized view-title refresh; `package.nls` bundles shipped in the VSIX.
 
-Current version: **2.2.4**. Development happens on the **`dev`** branch; **`main`** tracks stable releases. Requires **VS Code / Cursor 1.128+** (`engines.vscode`), **Git on PATH** (Git for Windows on Windows), and a GitHub PAT with **`repo`** scope (or fine-grained Contents access to the target repository).
+Current version: **2.2.5**. Development happens on the **`dev`** branch; **`main`** tracks stable releases. Requires **VS Code / Cursor 1.128+** (`engines.vscode`), **Git on PATH** (Git for Windows on Windows), and a GitHub PAT with **`repo`** scope (or fine-grained Contents access to the target repository).
 
 ## Upstream
 
@@ -48,7 +48,7 @@ This runs the production build (`esbuild`) and packages with `@vscode/vsce`. Out
 cursor-sync-<version>.vsix
 ```
 
-For example: `cursor-sync-2.2.4.vsix` in the repository root.
+For example: `cursor-sync-2.2.5.vsix` in the repository root.
 
 On macOS or Linux you can also run `./package-vsix.sh`.
 
@@ -57,21 +57,21 @@ On macOS or Linux you can also run `./package-vsix.sh`.
 **Cursor** (recommended):
 
 ```bash
-cursor --install-extension ./cursor-sync-2.2.4.vsix --force
+cursor --install-extension ./cursor-sync-2.2.5.vsix --force
 ```
 
 **VS Code**:
 
 ```bash
-code --install-extension ./cursor-sync-2.2.4.vsix --force
+code --install-extension ./cursor-sync-2.2.5.vsix --force
 ```
 
-Replace `2.2.4` with the version from `package.json`. Use `--force` to upgrade an existing install.
+Replace `2.2.5` with the version from `package.json`. Use `--force` to upgrade an existing install.
 
 **Windows (PowerShell)**:
 
 ```powershell
-cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-2.2.4.vsix" --force
+cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-2.2.5.vsix" --force
 ```
 
 ### 4. Reload the window

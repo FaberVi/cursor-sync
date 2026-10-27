@@ -2,7 +2,7 @@
   "name": "cursor-sync",
   "displayName": "Cursor Sync (Community)",
   "description": "Community fork: sync Cursor user settings and ~/.cursor assets (skills, rules, agents, VSIX extensions) to a private GitHub repo—pull review, intentional deletions, optional encrypted chat backup, extension list sync, and English/Italian sidebar UI.",
-  "version": "2.2.4",
+  "version": "2.2.5",
   "icon": "assets/icon.png",
   "publisher": "FaberVi",
   "author": {
