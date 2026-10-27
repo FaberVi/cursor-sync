@@ -43,6 +43,8 @@ resources/transport-chat/scripts/build_golden_store.sh
 resources/transport-chat/scripts/gen_*.py
 resources/transport-chat/docs/**
 !package.json
+!package.nls.json
+!package.nls.*.json
 !README.md
 !CHANGELOG.md
 !LICENSE

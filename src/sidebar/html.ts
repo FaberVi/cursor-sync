@@ -19,6 +19,7 @@ import { renderSettingsPane, readSettingsValues } from "./settings-tab.js";
 import { t, webviewI18nPayload } from "./i18n.js";
 import { escapeHtml } from "./sync-tab.js";
 import { readCloneChatRaw } from "../sync-copy.js";
+import { enumerateSyncFiles } from "../paths.js";
 import { getSyncClonePath, readRepoIdentity } from "../sync-clone.js";
 import {
   getRemoteAheadCache,
@@ -104,7 +105,16 @@ export async function buildSyncTabState(
   }
 
   const cursorDiffers = await resolveCursorDiffersForTab(context, deferHeavyMetrics);
+  let fileCount = syncState ? Object.keys(syncState.localChecksums).length : 0;
   if (!deferHeavyMetrics) {
+    if (syncState) {
+      try {
+        const localEntries = await enumerateSyncFiles();
+        fileCount = localEntries.length;
+      } catch {
+        // Keep syncState checksum count fallback
+      }
+    }
     const lastSync = syncState
       ? new Date(syncState.lastSyncTimestamp)
       : undefined;
@@ -116,7 +126,7 @@ export async function buildSyncTabState(
       status: "not-synced",
       lastSyncTime: syncState?.lastSyncTimestamp,
       lastSyncDirection: syncState?.lastSyncDirection,
-      fileCount: syncState ? Object.keys(syncState.localChecksums).length : 0,
+      fileCount,
       remoteLabel: syncState ? syncStateIdentity(syncState) || undefined : undefined,
       remoteUrl: syncState ? remoteUrlForState(syncState) : undefined,
       destinationKind,

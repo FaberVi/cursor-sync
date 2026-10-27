@@ -222,4 +222,84 @@ describe("git fast-forward clone", () => {
       "keep"
     );
   });
+
+  it.skipIf(!gitAvailable())(
+    "stageDeletionsAndRebase stages only removed paths without manifest conflict and skips when origin already deleted them",
+    async () => {
+      const { runGit, gitRevParse } = await import("../src/git-cli.js");
+      const { stageDeletionsAndRebase } = await import("../src/push.js");
+      const syncPrepare = await import("../src/sync-prepare.js");
+      const extensions = await import("../src/extensions.js");
+      const syncCopy = await import("../src/sync-copy.js");
+
+      tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-sync-stage-del-"));
+      const bare = path.join(tmp, "origin.git");
+      const origin = path.join(tmp, "origin-work");
+      const local = path.join(tmp, "local");
+
+      await runGit({ args: ["init", "--bare", "-b", "main", bare] });
+      await runGit({ args: ["clone", fileUrl(bare), origin] });
+      await fs.mkdir(path.join(origin, "sync-data", "dot-cursor", "skills", "foo"), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(origin, "sync-data", "dot-cursor", "skills", "foo", "SKILL.md"),
+        "skill"
+      );
+      await fs.writeFile(
+        path.join(origin, "sync-data", "manifest.json"),
+        JSON.stringify({ schemaVersion: 1, createdAt: "t1", files: {} })
+      );
+      await runGit({ args: ["add", "."], cwd: origin });
+      await runGit({
+        args: ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "initial"],
+        cwd: origin,
+        env: gitIdentity,
+      });
+      await runGit({ args: ["push", "-u", "origin", "HEAD:main"], cwd: origin });
+
+      await runGit({ args: ["clone", "-b", "main", fileUrl(bare), local] });
+      const baseSha = await gitRevParse(local, "HEAD");
+
+      // Origin updates manifest.json and also deletes the same skill file
+      await fs.rm(path.join(origin, "sync-data", "dot-cursor", "skills", "foo", "SKILL.md"));
+      await fs.writeFile(
+        path.join(origin, "sync-data", "manifest.json"),
+        JSON.stringify({ schemaVersion: 1, createdAt: "t2", files: {} })
+      );
+      await runGit({ args: ["add", "-A"], cwd: origin });
+      await runGit({
+        args: ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "origin delete"],
+        cwd: origin,
+        env: gitIdentity,
+      });
+      await runGit({ args: ["push", "origin", "HEAD:main"], cwd: origin });
+      await runGit({ args: ["fetch", "origin"], cwd: local });
+
+      vi.spyOn(syncPrepare, "prepareRepoSync").mockResolvedValue({
+        token: "ghp_test",
+        clone: {
+          clonePath: local,
+          identity: { owner: "o", repo: "r", branch: "main", basePath: "sync-data" },
+          empty: false,
+        },
+        relation: "behind",
+        userName: "t",
+        userEmail: "t@t",
+      });
+      vi.spyOn(extensions, "ensureExtensionsJsonOnDisk").mockResolvedValue(undefined);
+      vi.spyOn(syncCopy, "hashCursorSyncFiles").mockResolvedValue({});
+      vi.spyOn(syncCopy, "hashCloneSyncFiles").mockResolvedValue({
+        "dot-cursor/skills/foo/SKILL.md": "hash1",
+      });
+
+      const res = await stageDeletionsAndRebase(
+        {} as import("vscode").ExtensionContext,
+        { report: () => {} }
+      );
+      expect(res).toEqual({ status: "skipped" });
+      expect(await gitRevParse(local, "HEAD")).toBe(baseSha);
+      vi.restoreAllMocks();
+    }
+  );
 });

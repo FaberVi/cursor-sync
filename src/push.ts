@@ -53,7 +53,13 @@ import {
   storeChatSyncFingerprint,
   computeChatSyncLocalFingerprint,
 } from "./chat-sync.js";
-import { copyCursorToClone, hashCloneSyncFiles, hashCursorSyncFiles, readCloneChatRaw } from "./sync-copy.js";
+import {
+  cloneAbsForSyncKey,
+  copyCursorToClone,
+  hashCloneSyncFiles,
+  hashCursorSyncFiles,
+  readCloneChatRaw,
+} from "./sync-copy.js";
 import { pendingDeletionsAfterPush } from "./intentional-deletions.js";
 import {
   commitCloneChanges,
@@ -335,25 +341,14 @@ export async function stageDeletionsAndRebase(
   const preSha = (await currentHeadSha(prepared.clone.clonePath)) ?? "HEAD";
   await resetCloneWorktree(prepared.clone.clonePath);
   progress.report({ message: "Recording local deletions…" });
-  await writeLocalExtensionsJson(context);
-  await migrateAndLogSkillArtifacts();
-  let chatContent: string | undefined;
-  if (isChatSyncEnabled()) {
-    chatContent = (await resolveChatPushContent(
-      context,
+  for (const syncKey of removed) {
+    const abs = cloneAbsForSyncKey(
       prepared.clone.clonePath,
       prepared.clone.identity.basePath,
-      progress
-    )).content;
+      syncKey
+    );
+    await fs.rm(abs, { force: true });
   }
-  const profileName =
-    vscode.workspace.getConfiguration("cursorSync").get<string>("syncProfileName") ?? "default";
-  await copyCursorToClone({
-    clonePath: prepared.clone.clonePath,
-    basePath: prepared.clone.identity.basePath,
-    chatContent,
-    profileName,
-  });
   const committed = await commitCloneChanges({
     clonePath: prepared.clone.clonePath,
     basePath: prepared.clone.identity.basePath,
@@ -366,11 +361,17 @@ export async function stageDeletionsAndRebase(
   try {
     progress.report({ message: "Replaying local deletions onto origin…" });
     await rebaseOntoOrigin(prepared.clone.clonePath, prepared.clone.identity.branch);
-  } catch (err) {
+  } catch {
     await gitResetHard(prepared.clone.clonePath, preSha);
-    const message = err instanceof Error ? err.message : String(err);
-    await failSync(context, "push", "syncNow", message, "CONFLICT");
-    return { status: "failed" };
+    return { status: "skipped" };
+  }
+  const relationAfterRebase = await relationToOrigin(
+    prepared.clone.clonePath,
+    prepared.clone.identity.branch
+  );
+  if (relationAfterRebase !== "ahead") {
+    await gitResetHard(prepared.clone.clonePath, preSha);
+    return { status: "skipped" };
   }
   return {
     status: "staged",

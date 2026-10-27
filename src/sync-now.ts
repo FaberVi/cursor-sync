@@ -79,8 +79,6 @@ export async function executeSyncNow(
             pat: staged.token,
             setUpstream: false,
           });
-          progress.complete(true);
-          break;
         }
         const followUp = await determineSyncAction(context);
         if (followUp.action === "push") {

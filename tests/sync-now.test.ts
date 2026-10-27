@@ -115,7 +115,9 @@ describe("executeSyncNow", () => {
       token: "ghp_test_token",
       preSha: "abc",
     });
-    determineSyncActionMock.mockResolvedValue({ action: "pull" });
+    determineSyncActionMock
+      .mockResolvedValueOnce({ action: "pull" })
+      .mockResolvedValueOnce({ action: "none" });
     await executeSyncNow(mockContext());
     expect(executePullMock).toHaveBeenCalledTimes(1);
     expect(pushCloneMock).toHaveBeenCalledWith({
@@ -128,6 +130,23 @@ describe("executeSyncNow", () => {
     expect(stageDeletionsMock.mock.invocationCallOrder[0]).toBeLessThan(
       executePullMock.mock.invocationCallOrder[0]
     );
+  });
+
+  it("also runs follow-up push after staged deletions when local changes remain", async () => {
+    stageDeletionsMock.mockResolvedValue({
+      status: "staged",
+      clonePath: "/tmp/clone",
+      branch: "main",
+      token: "ghp_test_token",
+      preSha: "abc",
+    });
+    determineSyncActionMock
+      .mockResolvedValueOnce({ action: "pull" })
+      .mockResolvedValueOnce({ action: "push" });
+    await executeSyncNow(mockContext());
+    expect(executePullMock).toHaveBeenCalledTimes(1);
+    expect(pushCloneMock).toHaveBeenCalledTimes(1);
+    expect(executePushMock).toHaveBeenCalledTimes(1);
   });
 
   it("rolls the clone back when pull fails after deletions were staged", async () => {

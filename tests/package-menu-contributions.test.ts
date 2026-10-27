@@ -143,6 +143,12 @@ describe("package menu contributions", () => {
     expect(nlsIt["cursorSync.refreshSyncStatus.title"]).toMatch(/Aggiorna stato sincronizzazione/);
   });
 
+  it("includes package nls bundles in the VSIX allowlist", () => {
+    const ignore = readFileSync(path.join(root, ".vscodeignore"), "utf8");
+    expect(ignore).toMatch(/!package\.nls\.json/);
+    expect(ignore).toMatch(/!package\.nls\.\*\.json/);
+  });
+
   it("declares set chat encryption password command", () => {
     const pkg = readPackageJson();
     const command = pkg.contributes.commands.find(
