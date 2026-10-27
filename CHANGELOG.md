@@ -2,6 +2,9 @@
 
 ## v2.2.4
 
+### Changed
+- README and marketplace `description` in `package.json` describe current 2.2.x capabilities (review flow, deletions, chats, Italian UI)
+
 ### Fixed
 - View-title refresh tooltip no longer shows the raw `%cursorSync.refreshSyncStatus.title%` key; `package.nls*.json` files are included in the VSIX again
 - When `origin` is ahead, `stageDeletionsAndRebase` stages only deleted paths in the clone instead of running a full `copyCursorToClone` (which rewrote `manifest.json` and modified files before rebase, causing rebase conflicts), and falls back cleanly to pull when the deletions are already on `origin` or cannot be rebased directly

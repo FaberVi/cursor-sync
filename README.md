@@ -4,7 +4,9 @@ Community fork of [**Cursor Sync**](https://github.com/Marcelo-Barella/cursor-sy
 
 Sync user-level Cursor settings and selected `~/.cursor` assets to a **private GitHub repository** via a local `git` clone, with manual push/pull, optional scheduled sync, extension list sync, and a **Chats** sidebar for discovering, exporting, importing, and syncing Composer conversations across machines.
 
-Current version: **2.1.0**. Development happens on the **`dev`** branch; **`main`** tracks stable releases. Requires **VS Code / Cursor 1.128+** (`engines.vscode`), **Git on PATH** (Git for Windows on Windows), and a GitHub PAT with **`repo`** scope (or fine-grained Contents access to the target repository).
+**Highlights (2.2.x):** sync review panel with file-level actions and editor open; honor local deletions across machines (review tab + push); Windows lock recovery on pull deletes; live **files tracked** count in the sidebar; Italian UI including localized view-title refresh; `package.nls` bundles shipped in the VSIX.
+
+Current version: **2.2.4**. Development happens on the **`dev`** branch; **`main`** tracks stable releases. Requires **VS Code / Cursor 1.128+** (`engines.vscode`), **Git on PATH** (Git for Windows on Windows), and a GitHub PAT with **`repo`** scope (or fine-grained Contents access to the target repository).
 
 ## Upstream
 
@@ -46,7 +48,7 @@ This runs the production build (`esbuild`) and packages with `@vscode/vsce`. Out
 cursor-sync-<version>.vsix
 ```
 
-For example: `cursor-sync-2.1.0.vsix` in the repository root.
+For example: `cursor-sync-2.2.4.vsix` in the repository root.
 
 On macOS or Linux you can also run `./package-vsix.sh`.
 
@@ -55,21 +57,21 @@ On macOS or Linux you can also run `./package-vsix.sh`.
 **Cursor** (recommended):
 
 ```bash
-cursor --install-extension ./cursor-sync-2.1.0.vsix --force
+cursor --install-extension ./cursor-sync-2.2.4.vsix --force
 ```
 
 **VS Code**:
 
 ```bash
-code --install-extension ./cursor-sync-2.1.0.vsix --force
+code --install-extension ./cursor-sync-2.2.4.vsix --force
 ```
 
-Replace `2.1.0` with the version from `package.json`. Use `--force` to upgrade an existing install.
+Replace `2.2.4` with the version from `package.json`. Use `--force` to upgrade an existing install.
 
 **Windows (PowerShell)**:
 
 ```powershell
-cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-2.1.0.vsix" --force
+cursor --install-extension "C:\path\to\cursor-sync\cursor-sync-2.2.4.vsix" --force
 ```
 
 ### 4. Reload the window
@@ -175,7 +177,8 @@ The **Cursor Sync** activity bar view has three tabs:
 
 ### Sync
 
-- Status card (relative last sync, direction, file count). On first open the tab shows **Loading…** until sync metadata is hydrated — not a false “never synced” state.
+- Status card (relative last sync, direction, **files tracked** from the live file scan after hydration — not a stale checksum count from an old sync). On first open the tab shows **Loading…** until sync metadata is hydrated — not a false “never synced” state.
+- View title: **refresh sync status** only (localized in Italian when `cursorSync.ui.language` is `it`).
 - **Sync Now**, then Push, Pull, and Reset to remote. Open clone and Cursor folder sit in a separate Folders row; they only reveal a directory
 - Sync history: click a row to open its file list in the file panel (the same one used for commit and status files). Click a file there to open it in the editor. Delete one entry (trash icon) or **Clear** all via the control next to the History title (both ask for modal confirmation)
 - Live progress with elapsed time and absolute percent on pull/push; large repo pushes upload Git trees in chunks to avoid GitHub timeouts
