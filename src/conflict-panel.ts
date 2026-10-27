@@ -6,6 +6,12 @@ import { resolveSyncRoots } from "./paths.js";
 import { syncKeyToAbsolutePath } from "./sync-local-deletes.js";
 import { cloneAbsForSyncKey } from "./sync-copy.js";
 import {
+  applyResolutionToFolder,
+  buildConflictTree,
+  folderPickState,
+  type ConflictTreeNode,
+} from "./conflict-tree.js";
+import {
   allConflictsResolved,
   conflictDisplayPath,
 } from "./sync-conflicts.js";
@@ -76,21 +82,11 @@ export function renderConflictPanelHtml(options: {
   const canApply = allConflictsResolved(conflicts, resolutions);
   const selected = conflicts.find((row) => row.relativeSyncKey === selectedKey);
 
-  const rows = conflicts
-    .map((row) => {
-      const res = resolutions[row.relativeSyncKey];
-      const active = row.relativeSyncKey === selectedKey ? " is-selected" : "";
-      const localPressed = res === "keepLocal" ? "true" : "false";
-      const remotePressed = res === "keepRemote" ? "true" : "false";
-      return `<div class="conflict-row${active}" data-key="${escapeHtml(row.relativeSyncKey)}" role="button" tabindex="0">
-        <span class="conflict-path">${escapeHtml(conflictDisplayPath(row.relativeSyncKey))}</span>
-        <span class="conflict-kind">${escapeHtml(kindLabel(row.kind))}</span>
-        <span class="conflict-picks">
-          <button type="button" class="pick${res === "keepLocal" ? " is-on" : ""}" data-side="local" aria-pressed="${localPressed}">${escapeHtml(t("keepLocal"))}</button>
-          <button type="button" class="pick${res === "keepRemote" ? " is-on" : ""}" data-side="remote" aria-pressed="${remotePressed}">${escapeHtml(t("keepRemote"))}</button>
-        </span>
-      </div>`;
-    })
+  const tree = buildConflictTree(conflicts);
+  const rows = tree.children
+    .map((node) =>
+      renderConflictTreeNode(node, conflicts, resolutions, selectedKey)
+    )
     .join("");
 
   const localPane = previewPane(
@@ -150,6 +146,55 @@ export function renderConflictPanelHtml(options: {
   <script src="${jsUri}"></script>
 </body>
 </html>`;
+}
+
+function renderConflictTreeNode(
+  node: ConflictTreeNode,
+  conflicts: ConflictEntry[],
+  resolutions: Record<string, ConflictResolution | undefined>,
+  selectedKey: string | undefined
+): string {
+  if (node.type === "file") {
+    const row = node.entry;
+    const res = resolutions[row.relativeSyncKey];
+    const active = row.relativeSyncKey === selectedKey ? " is-selected" : "";
+    const localPressed = res === "keepLocal" ? "true" : "false";
+    const remotePressed = res === "keepRemote" ? "true" : "false";
+    const fileName =
+      row.relativeSyncKey.split("/").pop() ?? row.relativeSyncKey;
+    return `<div class="conflict-row conflict-file${active}" data-key="${escapeHtml(row.relativeSyncKey)}" role="button" tabindex="0">
+        <span class="conflict-path">${escapeHtml(fileName)}</span>
+        <span class="conflict-kind">${escapeHtml(kindLabel(row.kind))}</span>
+        <span class="conflict-picks">
+          <button type="button" class="pick${res === "keepLocal" ? " is-on" : ""}" data-side="local" aria-pressed="${localPressed}">${escapeHtml(t("keepLocal"))}</button>
+          <button type="button" class="pick${res === "keepRemote" ? " is-on" : ""}" data-side="remote" aria-pressed="${remotePressed}">${escapeHtml(t("keepRemote"))}</button>
+        </span>
+      </div>`;
+  }
+
+  const pick = folderPickState(conflicts, resolutions, node.syncKeyPrefix);
+  const localClass =
+    pick === "local" ? " is-on" : pick === "mixed" ? " is-mixed" : "";
+  const remoteClass =
+    pick === "remote" ? " is-on" : pick === "mixed" ? " is-mixed" : "";
+  const localPressed = pick === "local" ? "true" : "false";
+  const remotePressed = pick === "remote" ? "true" : "false";
+  const childHtml = node.children
+    .map((child) =>
+      renderConflictTreeNode(child, conflicts, resolutions, selectedKey)
+    )
+    .join("");
+  return `<div class="conflict-folder" data-prefix="${escapeHtml(node.syncKeyPrefix)}">
+      <div class="conflict-folder-head">
+        <button type="button" class="folder-toggle" aria-expanded="true" aria-label="${escapeHtml(t("conflictFolderToggle"))}">▾</button>
+        <span class="folder-name" title="${escapeHtml(conflictDisplayPath(node.syncKeyPrefix))}">${escapeHtml(node.name)}/</span>
+        <span class="conflict-picks">
+          <button type="button" class="pick${localClass}" data-side="local" aria-pressed="${localPressed}">${escapeHtml(t("keepLocal"))}</button>
+          <button type="button" class="pick${remoteClass}" data-side="remote" aria-pressed="${remotePressed}">${escapeHtml(t("keepRemote"))}</button>
+        </span>
+      </div>
+      <div class="conflict-folder-children">${childHtml}</div>
+    </div>`;
 }
 
 function kindLabel(kind: ConflictKind): string {
@@ -399,7 +444,12 @@ export async function openConflictPanel(options: {
       if (!raw || typeof raw !== "object") {
         return;
       }
-      const msg = raw as { type?: string; key?: string; side?: string };
+      const msg = raw as {
+        type?: string;
+        key?: string;
+        prefix?: string;
+        side?: string;
+      };
       if (msg.type === "select" && typeof msg.key === "string") {
         current.selectedKey = msg.key;
         void render();
@@ -409,6 +459,16 @@ export async function openConflictPanel(options: {
         current.resolutions[msg.key] =
           msg.side === "remote" ? "keepRemote" : "keepLocal";
         current.selectedKey = msg.key;
+        void render();
+        return;
+      }
+      if (msg.type === "chooseFolder" && typeof msg.prefix === "string") {
+        applyResolutionToFolder(
+          current.conflicts,
+          current.resolutions,
+          msg.prefix,
+          msg.side === "remote" ? "keepRemote" : "keepLocal"
+        );
         void render();
         return;
       }

@@ -220,6 +220,7 @@ export type MessageKey =
   | "keepAllRemote"
   | "keepLocal"
   | "keepRemote"
+  | "conflictFolderToggle"
   | "applyConflicts"
   | "cancelSync"
   | "thisMachine"

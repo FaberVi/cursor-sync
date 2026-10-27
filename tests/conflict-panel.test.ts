@@ -36,6 +36,8 @@ describe("conflict panel html", () => {
       csp: "default-src 'none'",
     });
     expect(html).toContain('id="apply" disabled');
+    expect(html).toContain('data-prefix="cursor-user"');
+    expect(html).toContain('data-key="cursor-user/settings.json"');
     expect(html).not.toContain("Skip");
     expect(allConflictsResolved(conflicts, {})).toBe(false);
   });

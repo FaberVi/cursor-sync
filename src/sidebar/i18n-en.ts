@@ -243,6 +243,7 @@ export const EN: Record<MessageKey, string> = {
   keepAllRemote: "Keep all remote",
   keepLocal: "Local",
   keepRemote: "Remote",
+  conflictFolderToggle: "Expand or collapse folder",
   applyConflicts: "Apply",
   cancelSync: "Cancel sync",
   thisMachine: "This machine",
