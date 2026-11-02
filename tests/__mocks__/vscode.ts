@@ -120,6 +120,7 @@ export const workspace = {
     dispose: () => {},
   }),
   onDidChangeWorkspaceFolders: (_cb: () => void) => ({ dispose: () => {} }),
+  registerTextDocumentContentProvider: () => ({ dispose: () => {} }),
   getConfiguration: (_section?: string) => ({
     get: <T>(key: string, defaultValue?: T): T | undefined => {
       if (Object.prototype.hasOwnProperty.call(mockGlobalConfig, key)) {
@@ -337,10 +338,11 @@ export enum ExtensionKind {
 export const Uri = {
   file: (p: string) => ({ fsPath: p, scheme: "file", path: p }),
   parse: (value: string) => ({ fsPath: value, scheme: "file", path: value }),
-  from: (parts: { scheme: string; path: string }) => ({
+  from: (parts: { scheme: string; path: string; query?: string }) => ({
     fsPath: parts.path,
     scheme: parts.scheme,
     path: parts.path,
+    query: parts.query ?? "",
   }),
   joinPath: (base: { fsPath: string }, ...segments: string[]) => {
     const fsPath = [base.fsPath, ...segments].join("/");

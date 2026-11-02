@@ -1,8 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const listStatusPreviewEntries = vi.hoisted(() => vi.fn());
+const openSyncKeyComparison = vi.hoisted(() => vi.fn(async () => {}));
+const openSyncKeyFile = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
+vi.mock("../src/sync-key-diff.js", () => ({
+  openSyncKeyComparison,
+}));
+vi.mock("../src/sync-key-picker.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/sync-key-picker.js")>();
+  return {
+    ...actual,
+    openSyncKeyFile,
+  };
+});
 vi.mock("../src/status-preview.js", () => ({
   listStatusPreviewEntries,
   STATUS_PREVIEW_KINDS: ["local", "incoming", "localOnly", "diverged"],
@@ -11,9 +23,11 @@ vi.mock("../src/status-preview.js", () => ({
 }));
 
 import * as vscode from "vscode";
+import * as diagnostics from "../src/diagnostics.js";
 import {
   __resetStatusPreviewPanelForTests,
   historyPreviewEntries,
+  openHistoryFilesPanel,
   openStatusPreviewPanel,
   renderStatusPreviewHtml,
 } from "../src/status-preview-panel.js";
@@ -177,6 +191,8 @@ describe("openStatusPreviewPanel", () => {
     __resetStatusPreviewPanelForTests();
     vi.restoreAllMocks();
     listStatusPreviewEntries.mockReset();
+    openSyncKeyComparison.mockClear();
+    openSyncKeyFile.mockClear();
   });
 
   it("assigns loading HTML before the listing promise resolves", async () => {
@@ -301,5 +317,55 @@ describe("openStatusPreviewPanel", () => {
     resolveList([]);
     await pending;
     expect(listStatusPreviewEntries).toHaveBeenCalledTimes(1);
+  });
+
+  it("compares local rows and opens history rows as a single file", async () => {
+    const { htmlWrites, getMessageHandler } = stubPanel();
+    listStatusPreviewEntries.mockResolvedValue([
+      { syncKey: "cursor-user/settings.json", change: "modified" },
+    ]);
+    await openStatusPreviewPanel(context(), "local");
+    expect(htmlWrites.at(-1)).toContain("only when both sides exist");
+    getMessageHandler()?.({ type: "open", syncKey: "cursor-user/settings.json" });
+    expect(openSyncKeyComparison).toHaveBeenCalledWith(
+      "cursor-user/settings.json",
+      expect.anything(),
+      "local"
+    );
+    expect(openSyncKeyFile).not.toHaveBeenCalled();
+
+    __resetStatusPreviewPanelForTests();
+    openSyncKeyComparison.mockClear();
+    vi.spyOn(diagnostics, "loadSyncHistory").mockResolvedValue([
+      {
+        timestamp: "2026-11-02T00:00:00.000Z",
+        direction: "pull",
+        trigger: "manual",
+        fileCount: 1,
+        success: true,
+        files: ["cursor-user/settings.json"],
+      },
+    ]);
+    await openHistoryFilesPanel(context(), "2026-11-02T00:00:00.000Z");
+    getMessageHandler()?.({ type: "open", syncKey: "cursor-user/settings.json" });
+    expect(openSyncKeyFile).toHaveBeenCalledWith(
+      "cursor-user/settings.json",
+      expect.anything()
+    );
+    expect(openSyncKeyComparison).not.toHaveBeenCalled();
+  });
+
+  it("opens local-only rows as a single file", async () => {
+    const { getMessageHandler } = stubPanel();
+    listStatusPreviewEntries.mockResolvedValue([
+      { syncKey: "dot-cursor/skills/foo/SKILL.md", change: "added" },
+    ]);
+    await openStatusPreviewPanel(context(), "localOnly");
+    getMessageHandler()?.({ type: "open", syncKey: "dot-cursor/skills/foo/SKILL.md" });
+    expect(openSyncKeyFile).toHaveBeenCalledWith(
+      "dot-cursor/skills/foo/SKILL.md",
+      expect.anything()
+    );
+    expect(openSyncKeyComparison).not.toHaveBeenCalled();
   });
 });

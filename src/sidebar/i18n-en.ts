@@ -89,6 +89,9 @@ export const EN: Record<MessageKey, string> = {
   connectRepository: "Connect repository",
   connectRepoHint:
     "Connect verifies the PAT and repo access. Git must be installed. If the repo is missing you can create it (private or public). Format: acme/cursor-backup.",
+  storedTokenRejected:
+    "Stored GitHub token cannot access the configured repository. Reconfigure it (repo scope required).",
+  reconfigureToken: "Reconfigure token",
   language: "Language",
   languageEn: "English",
   languageIt: "Italiano",
@@ -215,7 +218,10 @@ export const EN: Record<MessageKey, string> = {
   statusPreviewIncomingTitle: "Incoming remote files",
   statusPreviewLocalOnlyTitle: "Local-only files",
   statusPreviewDivergedTitle: "Files that differ from origin",
-  statusPreviewPlaceholder: "Select a file to open it",
+  statusPreviewPlaceholder:
+    "A comparison opens only for local, incoming, or diverged changes, and only when both sides exist. Otherwise the file opens.",
+  syncKeyDiffTitle: "{name} (Remote ↔ Local)",
+  remoteBlobUnavailable: "Remote copy is missing, binary, or too large.",
   statusPreviewEmpty: "No files to list for this warning.",
   statusPreviewFailed: "Could not list files: {error}",
   statusPreviewLoading: "Loading…",

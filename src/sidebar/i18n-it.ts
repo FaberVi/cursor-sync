@@ -89,6 +89,9 @@ export const IT: Record<MessageKey, string> = {
   connectRepository: "Collega repository",
   connectRepoHint:
     "Collega verifica il PAT e l'accesso al repo. Git deve essere installato. Se manca puoi crearlo (privato o pubblico). Formato: acme/cursor-backup.",
+  storedTokenRejected:
+    "Il token GitHub salvato non può accedere al repository configurato. Riconfiguralo (serve lo scope repo).",
+  reconfigureToken: "Riconfigura token",
   language: "Lingua",
   languageEn: "English",
   languageIt: "Italiano",
@@ -215,7 +218,10 @@ export const IT: Record<MessageKey, string> = {
   statusPreviewIncomingTitle: "File in arrivo dal remoto",
   statusPreviewLocalOnlyTitle: "File solo-locali",
   statusPreviewDivergedTitle: "File diversi da origin",
-  statusPreviewPlaceholder: "Seleziona un file per aprirlo",
+  statusPreviewPlaceholder:
+    "Il confronto si apre solo per le modifiche locali, in arrivo o divergenti, e solo se esistono entrambi i lati. Altrimenti si apre il file.",
+  syncKeyDiffTitle: "{name} (Remoto ↔ Locale)",
+  remoteBlobUnavailable: "La copia remota manca, è binaria o è troppo grande.",
   statusPreviewEmpty: "Nessun file da elencare per questo avviso.",
   statusPreviewFailed: "Impossibile elencare i file: {error}",
   statusPreviewLoading: "Caricamento…",

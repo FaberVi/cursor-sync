@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+## v2.2.6
+
+### Added
+- Local, incoming, and diverged file-list rows open a remote-versus-local diff when both sides exist. Added, removed, local-only, and history rows still open the single file. An origin blob that is missing, binary, or larger than 1 MiB does not open as text.
+
+### Fixed
+- A stored GitHub token that cannot access the repository offers Reconfigure token. Pull and push stop instead of continuing with that token and showing Authentication failed (401) with only Debug with Cursor. The same action is on any later 401 or 403 failure toast.
+
+### Changed
+- Dependencies: `@types/node` 26.6.6, `@vscode/vsce` 4.1.0, and `minimatch` 11.0.4. Sync globs still call `minimatch(path, pattern)` with the same patterns.
+
 ## v2.2.5
 
 ### Changed

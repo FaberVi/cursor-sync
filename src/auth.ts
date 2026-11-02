@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { withRetry } from "./retry.js";
 import { getLogger, loadSyncState, saveSyncState } from "./diagnostics.js";
+import { t } from "./sidebar/i18n.js";
 import { updateStatusBar } from "./statusbar.js";
 import { refreshSidebar } from "./sidebar/index.js";
 import { sendEvent } from "./analytics.js";
@@ -171,8 +172,14 @@ export async function clearToken(
   await context.secrets.delete(SECRET_KEY);
 }
 
+async function markTokenUnconfigured(): Promise<void> {
+  await vscode.commands.executeCommand("setContext", "cursorSync.configured", false);
+  updateStatusBar("unconfigured");
+}
+
 export async function validateStoredToken(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
+  options?: { prompt?: boolean }
 ): Promise<boolean> {
   const token = await getToken(context);
   if (!token) {
@@ -186,13 +193,31 @@ export async function validateStoredToken(
   }
   const client = new GitHubRepoClient(token, parsed.owner, parsed.repo);
   const result = await withRetry(() => client.validateAccess());
-  if (!result.ok) {
-    vscode.window.showErrorMessage(
-      "Stored GitHub token cannot access the configured repository. Please reconfigure (repo scope required)."
-    );
-    await vscode.commands.executeCommand("setContext", "cursorSync.configured", false);
-    updateStatusBar("unconfigured");
+  if (result.ok) {
+    return true;
+  }
+  if (result.error.category === "CANCELLED") {
     return false;
   }
-  return true;
+  const authRejected =
+    result.error.category === "AUTH_FAILED" ||
+    result.error.statusCode === 401 ||
+    result.error.statusCode === 403;
+  if (!authRejected) {
+    return true;
+  }
+
+  const prompt = options?.prompt !== false;
+  if (prompt) {
+    const action = await vscode.window.showErrorMessage(
+      t("storedTokenRejected"),
+      t("reconfigureToken")
+    );
+    if (action === t("reconfigureToken")) {
+      await configureGithub(context);
+      return validateStoredToken(context, { prompt: false });
+    }
+  }
+  await markTokenUnconfigured();
+  return false;
 }

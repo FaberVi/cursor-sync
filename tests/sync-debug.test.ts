@@ -16,13 +16,14 @@ import { CREATE_COMPOSER_COMMAND_ID } from "../src/chat-import-activate.js";
 import {
   buildSyncDebugPrompt,
   DEBUG_WITH_CURSOR_ACTION,
+  offersTokenReconfigure,
   openComposerWithPrefilledPrompt,
   readExtensionVersion,
   sanitizeSyncDebugMessage,
   showSyncFailureWithDebug,
   type SyncDebugFailure,
 } from "../src/sync-debug.js";
-import type * as vscode from "vscode";
+import * as vscode from "vscode";
 
 function baseFailure(overrides: Partial<SyncDebugFailure> = {}): SyncDebugFailure {
   return {
@@ -230,6 +231,44 @@ describe("sync-debug", () => {
       );
 
       expect(executed).toEqual([]);
+    });
+
+    it("offers reconfigure before debug when authentication failed", async () => {
+      const showError = vi.spyOn(vscode.window, "showErrorMessage");
+      __setShowErrorMessageResult(undefined);
+
+      await showSyncFailureWithDebug(
+        mockContext,
+        baseFailure({
+          message: "Authentication failed (401)",
+          category: undefined,
+          statusCode: undefined,
+        })
+      );
+
+      expect(offersTokenReconfigure(baseFailure({
+        message: "Authentication failed (401)",
+        category: undefined,
+        statusCode: undefined,
+      }))).toBe(true);
+      expect(showError).toHaveBeenCalledWith(
+        "Authentication failed (401)",
+        "Reconfigure token",
+        DEBUG_WITH_CURSOR_ACTION
+      );
+    });
+
+    it("opens GitHub configuration when Reconfigure token is selected", async () => {
+      __setShowErrorMessageResult("Reconfigure token");
+      const executed: string[] = [];
+      __setExecuteCommandImpl(async (command) => {
+        executed.push(command);
+        return undefined;
+      });
+
+      await showSyncFailureWithDebug(mockContext, baseFailure());
+
+      expect(executed).toEqual(["cursorSync.configureGithub"]);
     });
   });
 

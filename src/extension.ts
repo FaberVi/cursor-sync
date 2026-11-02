@@ -48,6 +48,7 @@ import {
   syncStatusBarWithRemoteAheadCache,
 } from "./remote-ahead.js";
 import { resetSyncLock } from "./sync-lock.js";
+import { registerRemoteSyncKeyProvider } from "./sync-key-diff.js";
 
 export { executeSyncNow } from "./sync-now.js";
 
@@ -57,6 +58,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const logger = getLogger();
 
   resetSyncLock();
+  context.subscriptions.push(registerRemoteSyncKeyProvider(context));
 
   initializeStatusBar(context);
 

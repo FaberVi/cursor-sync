@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { requireToken, validateStoredToken } from "./auth.js";
+import { getToken, requireToken, validateStoredToken } from "./auth.js";
 import { GitHubRepoClient, githubCommitIdentity } from "./github-repo.js";
 import { ensureRepoExistsInteractive } from "./remote/ensure-repo.js";
 import { parseOwnerRepo, readDestinationSettings } from "./remote/destination.js";
@@ -93,12 +93,17 @@ export async function prepareRepoSync(
   const authFailedMessage = "GitHub token not configured. Configure your token to sync.";
 
   progress.report({ message: "Checking GitHub token…" });
-  if (!(await validateStoredToken(context))) {
+  const storedToken = await getToken(context);
+  if (!storedToken) {
     const token = await requireToken(context);
     if (!token) {
       await failAuth(context, direction, trigger, authFailedMessage);
       return undefined;
     }
+  } else if (!(await validateStoredToken(context))) {
+    // The rejection dialog already offered reconfigure. Do not continue
+    // with the rejected token and raise a second 401 toast.
+    return undefined;
   }
 
   const token = await requireToken(context);

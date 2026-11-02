@@ -1,4 +1,5 @@
 import { EXTENSION_LABEL } from "./extension-branding.js";
+import { t } from "./sidebar/i18n.js";
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import {
@@ -31,6 +32,16 @@ export type SyncDebugFailure = {
 };
 
 export const DEBUG_WITH_CURSOR_ACTION = "Debug with Cursor";
+
+export function offersTokenReconfigure(failure: SyncDebugFailure): boolean {
+  if (failure.category === "AUTH_FAILED") {
+    return true;
+  }
+  if (failure.statusCode === 401 || failure.statusCode === 403) {
+    return true;
+  }
+  return /authentication failed\s*\(40[13]\)/i.test(failure.message);
+}
 
 const CLIPBOARD_FALLBACK_MESSAGE =
   "The debug prompt was copied to your clipboard. Paste it into Cursor chat to continue debugging.";
@@ -284,9 +295,17 @@ export async function showSyncFailureWithDebug(
       ? vscode.window.showWarningMessage.bind(vscode.window)
       : vscode.window.showErrorMessage.bind(vscode.window);
 
-  const actions = [DEBUG_WITH_CURSOR_ACTION];
+  const actions: string[] = [];
+  if (offersTokenReconfigure(failure)) {
+    actions.push(t("reconfigureToken"));
+  }
+  actions.push(DEBUG_WITH_CURSOR_ACTION);
 
   const selection = await showMessage(message, ...actions);
+  if (selection === t("reconfigureToken")) {
+    await vscode.commands.executeCommand("cursorSync.configureGithub");
+    return;
+  }
   if (selection === DEBUG_WITH_CURSOR_ACTION) {
     await openComposerWithPrefilledPrompt(prompt);
   }

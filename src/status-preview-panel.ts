@@ -6,6 +6,7 @@ import {
   type StatusPreviewKind,
 } from "./status-preview.js";
 import { loadSyncHistory } from "./diagnostics.js";
+import { openSyncKeyComparison } from "./sync-key-diff.js";
 import {
   openSyncKeyFile,
   syncKeyChangeLabel,
@@ -350,6 +351,10 @@ function wirePanel(current: PanelSession): void {
       return;
     }
     if (msg.type === "open" && typeof msg.syncKey === "string") {
+      if (current.source.type === "status" && current.source.kind !== "localOnly") {
+        void openSyncKeyComparison(msg.syncKey, current.context, current.source.kind);
+        return;
+      }
       void openSyncKeyFile(msg.syncKey, current.context);
       return;
     }
