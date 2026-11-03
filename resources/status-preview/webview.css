@@ -124,6 +124,45 @@ body {
   flex-direction: column;
   gap: 6px;
 }
+.preview-folder-children {
+  margin-left: 10px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(237, 236, 236, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.preview-folder.is-collapsed > .preview-folder-children {
+  display: none;
+}
+.preview-folder-head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(237, 236, 236, 0.06);
+  background: rgba(28, 26, 19, 0.65);
+  cursor: default;
+}
+.folder-toggle {
+  padding: 0 4px;
+  min-width: 22px;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  color: rgba(237, 236, 236, 0.7);
+  font: inherit;
+  cursor: pointer;
+}
+.preview-folder-name {
+  font-weight: 600;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .preview-row {
   display: flex;
   align-items: baseline;

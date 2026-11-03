@@ -117,6 +117,9 @@ describe("renderStatusPreviewHtml", () => {
       csp: "default-src 'none'",
     });
     expect(list).toContain('data-sync-key="cursor-user/settings.json"');
+    expect(list).toContain('class="preview-path">settings.json<');
+    expect(list).not.toContain('class="preview-path">cursor-user/settings.json<');
+    expect(list).toContain('data-prefix="cursor-user"');
     expect(list).toContain('class="preview-change preview-change-modified"');
     expect(list).toContain('data-command="refresh"');
     expect(list).toContain("1 changed");
@@ -183,6 +186,47 @@ describe("renderStatusPreviewHtml", () => {
     expect(html).toContain('preview-change-incoming');
     expect(html).toContain('preview-change-added');
     expect(html).toContain('preview-change-removed');
+  });
+
+  it("renders nested sync keys as folders and keeps duplicate keys", () => {
+    const nested = renderStatusPreviewHtml({
+      heading: "Local changes",
+      body: {
+        kind: "list",
+        entries: [
+          { syncKey: "cursor-user/skills/foo/SKILL.md", change: "modified" },
+        ],
+      },
+      cssUri: "css",
+      jsUri: "js",
+      csp: "default-src 'none'",
+    });
+    expect(nested).toContain('data-prefix="cursor-user"');
+    expect(nested).toContain('data-prefix="cursor-user/skills"');
+    expect(nested).toContain('data-prefix="cursor-user/skills/foo"');
+    expect(nested).toContain('class="preview-path">SKILL.md<');
+    expect(nested).not.toContain('class="preview-path">cursor-user/skills/foo/SKILL.md<');
+    expect(nested).toContain('data-sync-key="cursor-user/skills/foo/SKILL.md"');
+    expect(nested).toContain("preview-change-modified");
+    expect(nested).toContain('aria-label="Expand or collapse folder"');
+
+    const duplicated = renderStatusPreviewHtml({
+      heading: "Pull",
+      body: {
+        kind: "list",
+        entries: [
+          { syncKey: "cursor-user/settings.json", change: "updated" },
+          { syncKey: "cursor-user/settings.json", change: "deleted" },
+        ],
+      },
+      cssUri: "css",
+      jsUri: "js",
+      csp: "default-src 'none'",
+    });
+    const keyMatches = duplicated.match(/data-sync-key="cursor-user\/settings.json"/g) ?? [];
+    expect(keyMatches).toHaveLength(2);
+    expect(duplicated).toContain("preview-change-incoming");
+    expect(duplicated).toContain("preview-change-removed");
   });
 });
 

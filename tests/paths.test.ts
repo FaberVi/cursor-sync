@@ -134,6 +134,44 @@ describe("paths", () => {
       await fs.rm(tmpDir, { recursive: true, force: true });
     });
 
+    it("appends large directory listings without spreading them onto the stack", async () => {
+      const { appendWalkedFiles } = await import("../src/paths.js");
+      const target: string[] = [];
+      const extra = Array.from({ length: 150_000 }, (_, index) => `file-${index}`);
+      expect(() => appendWalkedFiles(target, extra)).not.toThrow();
+      expect(target).toHaveLength(150_000);
+      expect(target[149_999]).toBe("file-149999");
+    });
+
+    it("prunes root directories that cannot match the include globs", async () => {
+      const { includedRootDirectories } = await import("../src/paths.js");
+      expect(
+        includedRootDirectories(["settings.json", "skills/**", "rules/*.mdc"])
+      ).toEqual(new Set(["skills", "rules"]));
+      expect(includedRootDirectories(["**/*", "skills/**"])).toBeUndefined();
+    });
+
+    it("keeps included nested files and skips unrelated root folders", async () => {
+      const extra = path.join(tmpDir, "dotCursor", "skill-forge-workspaces", "nested");
+      await fs.mkdir(extra, { recursive: true });
+      await fs.writeFile(path.join(extra, "note.txt"), "x");
+      const commands = path.join(tmpDir, "dotCursor", "commands", "docs");
+      await fs.mkdir(commands, { recursive: true });
+      await fs.writeFile(path.join(commands, "note.md"), "cmd");
+
+      const { enumerateSyncFiles } = await import("../src/paths.js");
+      const keys = (
+        await enumerateSyncFiles({
+          cursorUser: path.join(tmpDir, "cursorUser"),
+          dotCursor: path.join(tmpDir, "dotCursor"),
+        })
+      ).map((file) => file.relativeSyncKey);
+
+      expect(keys).toContain("dot-cursor/commands/docs/note.md");
+      expect(keys).not.toContain("dot-cursor/skill-forge-workspaces/nested/note.txt");
+      expect(keys).not.toContain("dot-cursor/extensions/ext.json");
+    });
+
     it("includes matching files and excludes denylisted directories", async () => {
       const { enumerateSyncFiles } = await import("../src/paths.js");
       const roots = {

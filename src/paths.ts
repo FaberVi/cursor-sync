@@ -234,7 +234,9 @@ async function collectFiles(
     return;
   }
 
-  const allFiles = await walkDirectory(rootDir);
+  const allFiles = await walkDirectory(rootDir, {
+    rootDirs: includedRootDirectories(includeGlobs),
+  });
   for (const absPath of allFiles) {
     const rel = path.relative(rootDir, absPath).split(path.sep).join("/");
 
@@ -307,7 +309,37 @@ function isDenylisted(relativePath: string): boolean {
   return false;
 }
 
-async function walkDirectory(dir: string): Promise<string[]> {
+/**
+ * Root directory names an include glob can enter.
+ * `undefined` means a pattern starts with a wildcard, so every root directory
+ * may match and the walk cannot prune.
+ */
+export function includedRootDirectories(includeGlobs: string[]): Set<string> | undefined {
+  const dirs = new Set<string>();
+  for (const glob of includeGlobs) {
+    const slash = glob.indexOf("/");
+    const first = slash === -1 ? glob : glob.slice(0, slash);
+    if (!first || first.includes("*") || first.includes("?") || first.includes("[")) {
+      return undefined;
+    }
+    if (slash !== -1) {
+      dirs.add(first);
+    }
+  }
+  return dirs;
+}
+
+/** Append without spreading. A large directory exceeds the argument limit and throws. */
+export function appendWalkedFiles(target: string[], extra: readonly string[]): void {
+  for (const file of extra) {
+    target.push(file);
+  }
+}
+
+async function walkDirectory(
+  dir: string,
+  options?: { rootDirs?: Set<string> }
+): Promise<string[]> {
   const results: string[] = [];
   let entries: import("node:fs").Dirent[];
   try {
@@ -315,14 +347,23 @@ async function walkDirectory(dir: string): Promise<string[]> {
   } catch {
     return results;
   }
+  const atRoot = options !== undefined;
+  const rootDirs = options?.rootDirs;
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (DENYLIST_PATH_SEGMENTS.includes(entry.name)) {
         continue;
       }
+      if (
+        atRoot &&
+        (DENYLIST_DIRS.includes(entry.name) ||
+          (rootDirs !== undefined && !rootDirs.has(entry.name)))
+      ) {
+        continue;
+      }
       const sub = await walkDirectory(fullPath);
-      results.push(...sub);
+      appendWalkedFiles(results, sub);
     } else if (entry.isFile()) {
       results.push(fullPath);
     }

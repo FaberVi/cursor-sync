@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v2.2.7
+
+### Added
+- Status file lists (local changes, incoming remote files, and the other lists in that panel) show a collapsible folder tree.
+
+### Fixed
+- Sync no longer crashes with “Maximum call stack size exceeded” while scanning `~/.cursor`. Large folders outside the include globs, such as `skill-forge-workspaces`, are not walked, and directory listings are appended without spreading them onto the call stack.
+
 ## v2.2.6
 
 ### Added

@@ -6,11 +6,10 @@ import {
   type StatusPreviewKind,
 } from "./status-preview.js";
 import { loadSyncHistory } from "./diagnostics.js";
+import { renderStatusPreviewTree } from "./status-preview-tree.js";
 import { openSyncKeyComparison } from "./sync-key-diff.js";
 import {
   openSyncKeyFile,
-  syncKeyChangeLabel,
-  syncKeyChangeTone,
   type SyncKeyPreviewEntry,
 } from "./sync-key-picker.js";
 import type { SyncHistoryEntry } from "./types.js";
@@ -202,21 +201,7 @@ function renderBody(body: StatusPreviewBody): string {
       t("statusPreviewFailed", { error: body.error })
     )}</p>`;
   }
-  const rows = body.entries
-    .map((entry) => {
-      const change = syncKeyChangeLabel(entry.change);
-      const tone = syncKeyChangeTone(entry.change);
-      const changeClass =
-        change && tone
-          ? `preview-change preview-change-${tone}`
-          : "preview-change";
-      return `<div class="preview-row" data-sync-key="${escapeHtml(entry.syncKey)}" role="button" tabindex="0">
-        <span class="preview-path">${escapeHtml(entry.syncKey)}</span>
-        ${change ? `<span class="${changeClass}">${escapeHtml(change)}</span>` : ""}
-      </div>`;
-    })
-    .join("");
-  return `<div class="preview-list" id="preview-list">${rows}</div>`;
+  return renderStatusPreviewTree(body.entries);
 }
 
 export function renderStatusPreviewHtml(options: {
