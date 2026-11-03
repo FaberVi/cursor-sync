@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { isComposerConversationId, isSafePathSegment } from "./composer-id.js";
 
 export const SYNC_MANIFEST_SCHEMA_VERSION = 1 as const;
 
@@ -54,13 +55,7 @@ export interface ParseSyncManifestErr {
 export type ParseSyncManifestResult = ParseSyncManifestOk | ParseSyncManifestErr;
 
 function isSafeSegment(seg: string): boolean {
-  if (seg.length === 0 || seg === "." || seg === "..") {
-    return false;
-  }
-  if (seg.includes("/") || seg.includes("\\") || seg.includes("\0")) {
-    return false;
-  }
-  return true;
+  return isSafePathSegment(seg);
 }
 
 function resolveLandingPath(landingZoneRoot: string, relative: string): string {
@@ -148,8 +143,8 @@ export function parseSyncManifestJson(
       if (typeof wk !== "string" || !isSafeSegment(wk)) {
         errors.push(`chat_history[${i}].workspace_key invalid`);
       }
-      if (typeof cid !== "string" || cid.trim().length === 0) {
-        errors.push(`chat_history[${i}].conversation_id invalid`);
+      if (typeof cid !== "string" || !isComposerConversationId(cid.trim())) {
+        errors.push(`chat_history[${i}].conversation_id must be a UUID`);
       }
       if (sdf !== undefined && typeof sdf !== "string") {
         errors.push(`chat_history[${i}].store_db_file must be string`);
@@ -177,7 +172,7 @@ export function parseSyncManifestJson(
         typeof wk === "string" &&
         isSafeSegment(wk) &&
         typeof cid === "string" &&
-        cid.trim().length > 0
+        isComposerConversationId(cid.trim())
       ) {
         if (hasFile) {
           chat_history.push({

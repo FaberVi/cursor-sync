@@ -1,7 +1,11 @@
 import { randomBytes, createDecipheriv, createCipheriv } from "node:crypto";
 import { argon2id } from "hash-wasm";
 
-export type PlaintextKind = "chat-bundle" | "chat-bundles-collection";
+export type PlaintextKind =
+  | "chat-bundle"
+  | "chat-bundles-collection"
+  | "cursor-chat"
+  | "cursor-chat-collection";
 
 export const CHAT_GIST_KDF = {
   name: "argon2id" as const,
@@ -76,7 +80,9 @@ function parseEnvelope(raw: string): EnvelopeV1 {
   }
   if (
     encrypted.plaintextKind !== "chat-bundle" &&
-    encrypted.plaintextKind !== "chat-bundles-collection"
+    encrypted.plaintextKind !== "chat-bundles-collection" &&
+    encrypted.plaintextKind !== "cursor-chat" &&
+    encrypted.plaintextKind !== "cursor-chat-collection"
   ) {
     throw new ChatGistCryptoError("Invalid plaintextKind.", "INVALID_ENVELOPE");
   }

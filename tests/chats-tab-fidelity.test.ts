@@ -5,7 +5,7 @@ vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 import {
   fidelityFieldsForImportHistory,
   publishImportFidelitySummary,
-} from "../src/sidebar/chats-tab.js";
+} from "../src/sidebar/chats-tab-fidelity.js";
 import { onChatImportProgress } from "../src/chat-progress-events.js";
 import type { ChatBundleFidelitySummary } from "../src/chat-bundle-fidelity.js";
 

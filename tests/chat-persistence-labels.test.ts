@@ -4,15 +4,39 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 const showQuickPickMock = vi.fn();
-const testEnv = { home: "" };
+const testEnv = { home: "", cursorUser: "" };
+const folderMapHolder = vi.hoisted(() => ({ map: new Map<string, string>() }));
 
-vi.mock("vscode", () => ({
-  window: { showQuickPick: showQuickPickMock, showErrorMessage: vi.fn() },
-}));
+vi.mock("vscode", async () => {
+  const base = await import("./__mocks__/vscode.js");
+  return {
+    ...base,
+    window: { ...base.window, showQuickPick: showQuickPickMock, showErrorMessage: vi.fn() },
+  };
+});
 
 vi.mock("node:os", async () => {
   const actual = await vi.importActual<typeof import("node:os")>("node:os");
   return { ...actual, homedir: () => testEnv.home };
+});
+
+vi.mock("../src/chat-workspace-context.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/chat-workspace-context.js")>();
+  return {
+    ...actual,
+    buildChatsKeyToFolderMap: async () => folderMapHolder.map,
+  };
+});
+
+vi.mock("../src/paths.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/paths.js")>();
+  return {
+    ...actual,
+    resolveSyncRoots: () => ({
+      cursorUser: testEnv.cursorUser || path.join(testEnv.home, "Cursor", "User"),
+      dotCursor: path.join(testEnv.home, ".cursor"),
+    }),
+  };
 });
 
 vi.mock("../src/transcripts.js", async () => {
@@ -47,6 +71,7 @@ describe("chat persistence project picker labels", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    folderMapHolder.map = new Map();
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "chat-persistence-labels-"));
     testEnv.home = tmpRoot;
     vi.resetModules();
@@ -56,25 +81,24 @@ describe("chat persistence project picker labels", () => {
     const folder = path.join(tmpRoot, "dev", "cursor-sync");
     await fs.mkdir(folder, { recursive: true });
     const cursorUser = path.join(tmpRoot, "Cursor", "User");
+    testEnv.cursorUser = cursorUser;
     const wsDir = path.join(cursorUser, "workspaceStorage", "id1");
     await fs.mkdir(wsDir, { recursive: true });
     const { pathToFileURL } = await import("node:url");
+    const { createHash } = await import("node:crypto");
+    const resolvedFolder = path.resolve(folder);
     await fs.writeFile(
       path.join(wsDir, "workspace.json"),
-      JSON.stringify({ folder: pathToFileURL(path.resolve(folder)).href }),
+      JSON.stringify({ folder: pathToFileURL(resolvedFolder).href }),
       "utf8"
     );
+    folderMapHolder.map = new Map([
+      [createHash("md5").update(resolvedFolder, "utf8").digest("hex"), resolvedFolder],
+    ]);
 
     const projectsRoot = path.join(tmpRoot, ".cursor", "projects");
     const projectDirName = "home-user-dev-cursor-sync-abcdef12";
     await fs.mkdir(path.join(projectsRoot, projectDirName), { recursive: true });
-
-    vi.doMock("../src/paths.js", () => ({
-      resolveSyncRoots: () => ({
-        cursorUser,
-        dotCursor: path.join(tmpRoot, ".cursor"),
-      }),
-    }));
 
     showQuickPickMock.mockResolvedValueOnce({ description: "skip" });
 
@@ -86,7 +110,7 @@ describe("chat persistence project picker labels", () => {
       description: string;
     }>;
     const localRow = picks.find((p) => p.description !== "skip");
-    expect(localRow!.label).toBe(path.join("~", "dev", "cursor-sync"));
+    expect(localRow!.label).toBe("~/dev/cursor-sync");
     expect(localRow!.description).toBe(projectDirName);
   });
 });
