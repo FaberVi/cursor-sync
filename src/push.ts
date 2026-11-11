@@ -100,6 +100,14 @@ export async function executePush(
     return false;
   }
 
+  if (trigger === "manual") {
+    const { confirmUnsyncedBulkProceed } = await import("./unsynced-bulk.js");
+    if (!(await confirmUnsyncedBulkProceed("manual"))) {
+      leaveSyncLock(lockHold);
+      return false;
+    }
+  }
+
   updateStatusBar("syncing");
   beginSyncAbort();
   const progress = createSidebarSyncProgress("push");

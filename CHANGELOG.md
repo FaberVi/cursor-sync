@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- A sidebar notice lists local folders outside the sync set that contain at least 500 files. Sync, Push, and Pull ask before continuing so those folders can be reviewed first.
+
 ## v2.2.7
 
 ### Added

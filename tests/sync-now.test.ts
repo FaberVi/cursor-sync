@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
+vi.mock("../src/unsynced-bulk.js", () => ({
+  confirmUnsyncedBulkProceed: vi.fn().mockResolvedValue(true),
+}));
+
 const executePushMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const stageDeletionsMock = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ status: "skipped" })

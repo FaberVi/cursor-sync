@@ -150,7 +150,8 @@ body {
 .status-card.diverged .status-warning {
   color: #fecaca;
 }
-.conflicts-reopen {
+.conflicts-reopen,
+.unsynced-bulk {
   width: 100%;
   margin-bottom: 12px;
   padding: 8px 10px;

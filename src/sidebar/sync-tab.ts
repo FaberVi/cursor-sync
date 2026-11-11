@@ -1,4 +1,5 @@
 import type { SyncHistoryEntry } from "../types.js";
+import { BULK_FILE_MIN, formatUnsyncedBulkList } from "../unsynced-bulk.js";
 import { formatRelativeTime, t } from "./i18n.js";
 
 /** Visible sync-history rows per page in the sidebar. */
@@ -26,6 +27,8 @@ export interface SyncTabState {
   chatCountsLoading?: boolean;
   behindCount?: number;
   conflictCount?: number;
+  /** Large workspace-copy folders that this sync does not include. */
+  unsyncedBulk?: { label: string; fileCount: number; capped: boolean }[];
 }
 
 export function relativeTime(isoString: string): string {
@@ -303,6 +306,16 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
   const warningHtml = warningMarkup
     ? `<p class="status-warning" role="status">${warningMarkup}</p>`
     : "";
+  const bulk = state.unsyncedBulk ?? [];
+  const bulkHtml =
+    bulk.length > 0
+      ? `<button type="button" class="unsynced-bulk" data-command="bulk:reveal">${escapeHtml(
+          t("unsyncedBulkBadge", {
+            min: BULK_FILE_MIN,
+            names: formatUnsyncedBulkList(bulk),
+          })
+        )}</button>`
+      : "";
   const conflictRow =
     conflictCount > 0
       ? `<button type="button" class="conflicts-reopen" data-command="conflicts:reveal">${escapeHtml(
@@ -312,6 +325,7 @@ export function renderSyncPane(state: SyncTabState, historyPage: number = 0): st
 
   return `<div id="sync-pane" class="tab-pane" data-remote-ahead="${escapeHtml(remoteAhead)}" data-conflict-count="${conflictCount}" data-sync-badge="${escapeHtml(badgeText)}">
   ${conflictRow}
+  ${bulkHtml}
   <div class="status-card ${state.status}">
     <div class="status-icon-wrapper">
       ${state.status === "synced" ? cursorLogoSvg : `<span class="codicon codicon-${statusIcon}"></span>`}

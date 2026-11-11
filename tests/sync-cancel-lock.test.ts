@@ -5,6 +5,10 @@ import * as fs from "node:fs/promises";
 
 vi.mock("vscode", () => import("./__mocks__/vscode.js"));
 
+vi.mock("../src/unsynced-bulk.js", () => ({
+  confirmUnsyncedBulkProceed: vi.fn().mockResolvedValue(true),
+}));
+
 vi.mock("../src/sidebar/index.js", () => ({
   refreshSidebar: vi.fn(),
 }));

@@ -211,6 +211,14 @@ export const IT: Record<MessageKey, string> = {
     "Questo clone e origin sono {link}. Usa Reset dal remoto per allineare (mirror: i file solo-locali syncati vengono cancellati), oppure apri il clone e sistema git a mano.",
   localUnsyncedWarning: "Ci sono {link} non ancora nel repository.",
   localUnsyncedLink: "modifiche locali",
+  unsyncedBulkBadge:
+    "Cartelle locali fuori dal sync con almeno {min} file: {names}. Controllale prima di Sincronizza, Push o Pull.",
+  unsyncedBulkConfirm:
+    "Queste cartelle locali non entrano nel sync e hanno almeno {min} file ciascuna: {names}. Controllale prima di continuare.",
+  unsyncedBulkFileCount: "{n} file",
+  unsyncedBulkFileCountOne: "{n} file",
+  unsyncedBulkFileCountCapped: "{n}+ file",
+  unsyncedBulkPick: "Apri una cartella da controllare",
   remoteAheadUpdatesLink: "aggiornamenti",
   remoteAheadLocalOnlyLink: "file solo-locali",
   remoteDivergedLink: "divergenti",

@@ -38,6 +38,12 @@ export async function executeSyncNow(
     return;
   }
 
+  const { confirmUnsyncedBulkProceed } = await import("./unsynced-bulk.js");
+  if (!(await confirmUnsyncedBulkProceed("syncNow"))) {
+    leaveSyncLock(lockHold);
+    return;
+  }
+
   const progress = createSidebarSyncProgress("syncNow");
   beginSyncAbort();
   try {

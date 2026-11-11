@@ -52,7 +52,8 @@ export type SidebarMessage =
   | { command: "settings:get" }
   | { command: "settings:set"; key: string; value: unknown }
   | { command: "sync:cancel" }
-  | { command: "conflicts:reveal" };
+  | { command: "conflicts:reveal" }
+  | { command: "bulk:reveal" };
 
 const KNOWN_COMMANDS = new Set<string>([
   "syncNow",
@@ -82,6 +83,7 @@ const KNOWN_COMMANDS = new Set<string>([
   "settings:set",
   "sync:cancel",
   "conflicts:reveal",
+  "bulk:reveal",
 ]);
 
 function assertSafeChatIds(msg: {
@@ -158,6 +160,11 @@ export async function dispatchSidebarMessage(
     case "conflicts:reveal": {
       const { revealConflictPanel } = await import("../conflict-panel.js");
       revealConflictPanel();
+      break;
+    }
+    case "bulk:reveal": {
+      const { revealUnsyncedBulk } = await import("../unsynced-bulk.js");
+      await revealUnsyncedBulk();
       break;
     }
     case "openSyncClone":

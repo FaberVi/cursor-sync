@@ -211,6 +211,14 @@ export const EN: Record<MessageKey, string> = {
     "This clone and origin have {link}. Use Reset to remote to match origin (mirror: local-only synced files are deleted), or open the clone and fix git by hand.",
   localUnsyncedWarning: "There are {link} not yet in the repository.",
   localUnsyncedLink: "local changes",
+  unsyncedBulkBadge:
+    "Local folders outside this sync have at least {min} files: {names}. Review them before Sync, Push, or Pull.",
+  unsyncedBulkConfirm:
+    "These local folders are not included in sync and each has at least {min} files: {names}. Review them before continuing.",
+  unsyncedBulkFileCount: "{n} files",
+  unsyncedBulkFileCountOne: "{n} file",
+  unsyncedBulkFileCountCapped: "{n}+ files",
+  unsyncedBulkPick: "Open a folder to review",
   remoteAheadUpdatesLink: "updates",
   remoteAheadLocalOnlyLink: "files that exist only on this machine",
   remoteDivergedLink: "diverged",

@@ -20,6 +20,7 @@ import { t, webviewI18nPayload } from "./i18n.js";
 import { escapeHtml } from "./sync-tab.js";
 import { readCloneChatRaw } from "../sync-copy.js";
 import { enumerateSyncFiles } from "../paths.js";
+import { findUnsyncedBulkDirs } from "../unsynced-bulk.js";
 import { getSyncClonePath, readRepoIdentity } from "../sync-clone.js";
 import {
   getRemoteAheadCache,
@@ -121,6 +122,20 @@ export async function buildSyncTabState(
     syncStatusBarWithRemoteAheadCache(lastSync);
   }
 
+  let unsyncedBulk: SyncTabState["unsyncedBulk"];
+  if (!deferHeavyMetrics) {
+    try {
+      const found = await findUnsyncedBulkDirs();
+      unsyncedBulk = found.map(({ label, fileCount, capped }) => ({
+        label,
+        fileCount,
+        capped,
+      }));
+    } catch {
+      unsyncedBulk = [];
+    }
+  }
+
   return applyRemoteAheadToTabState(
     {
       status: "not-synced",
@@ -136,6 +151,7 @@ export async function buildSyncTabState(
       localChatCount,
       remoteChatCount,
       chatCountsLoading,
+      unsyncedBulk,
     },
     { hasSyncState: Boolean(syncState), cursorDiffers }
   );
