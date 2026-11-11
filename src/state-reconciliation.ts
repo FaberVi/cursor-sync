@@ -10,7 +10,6 @@ import {
   GOLDEN_TEMPLATE_CAPTURED_FOR_CURSOR,
   hydrateGoldenStoreTemplate,
 } from "./store-template-hydrate.js";
-import { __chatPersistenceInternals } from "./transcripts.js";
 import {
   copyStateDbTriple,
   mergeComposerHeadersIntoDb,
@@ -18,8 +17,7 @@ import {
   runWalCheckpointFull,
 } from "./sync-engine-ops.js";
 import { validateWorkspaceKeysForImport } from "./chat-id-sync.js";
-
-const { resolveChatsRoot } = __chatPersistenceInternals;
+import { resolveChatsRoot } from "./transcripts-cursor-paths.js";
 
 export const PENDING_BUNDLE_SCHEMA = 1 as const;
 const PENDING_BUNDLE_FILE = "pending-state-bundle.json";

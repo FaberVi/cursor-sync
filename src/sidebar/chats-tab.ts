@@ -1,56 +1,52 @@
 import * as vscode from "vscode";
-import * as crypto from "node:crypto";
-import * as path from "node:path";
-import * as os from "node:os";
-import { listConversationsForWorkspace } from "../chat-export-ux.js";
-import { __chatPersistenceInternals } from "../transcripts.js";
-import { resolveSyncRoots } from "../paths.js";
-import type { ConversationExportRow } from "../chat-export-ux.js";
 import type { BundleDiscoveryEntry } from "./bundle-discovery.js";
 import { listLocalBundles } from "./bundle-discovery.js";
 import { listImports } from "./import-history.js";
 import type { ChatImportHistoryEntry } from "./import-history.js";
-import { emitChatImportProgress } from "../chat-progress-events.js";
+import { t } from "./i18n.js";
 import {
-  formatFidelityDetailLine,
-  type ChatBundleFidelitySummary,
-} from "../chat-bundle-fidelity.js";
+  discoverConversationsGroupedByProject,
+  discoverConversationsForProject,
+  discoveredToExportRows,
+  resolveProjectsRoot,
+  type ConversationExportRow,
+} from "../chat-discovery.js";
+import { discoverProjects } from "../transcripts-discovery.js";
+import { buildChatsKeyToFolderMap } from "../chat-workspace-context.js";
+import { resolveSyncRoots } from "../paths.js";
+import { resolveChatsRoot } from "../transcripts-cursor-paths.js";
+import {
+  clearGroupedDiscoveryCache,
+  getGroupedDiscoveryCache,
+  setGroupedDiscoveryCache,
+} from "./chats-group-cache.js";
+import {
+  openTranscriptForConversation,
+  revealConversationFiles,
+} from "./chats-tab-locations.js";
+export {
+  publishImportFidelitySummary,
+  fidelityFieldsForImportHistory,
+} from "./chats-tab-fidelity.js";
+export {
+  resolveConversationFileTargets,
+  openTranscriptForConversation,
+  revealConversationFiles,
+  type ConversationFileTargets,
+} from "./chats-tab-locations.js";
 
-export function publishImportFidelitySummary(
-  conversationId: string,
-  summary: ChatBundleFidelitySummary
-): void {
-  emitChatImportProgress({
-    conversationId,
-    phase: "B",
-    step: "fidelity-summary",
-    detail: formatFidelityDetailLine(summary),
-    ok: !summary.textOnlyLayer4,
-    fidelity: summary,
-  });
-}
-
-export function fidelityFieldsForImportHistory(
-  summary: ChatBundleFidelitySummary
-): Pick<
-  ChatImportHistoryEntry,
-  "schemaVersion" | "diskKvRowCount" | "toolBubbleCount" | "textOnlyLayer4" | "fidelityWarnings"
-> {
-  return {
-    schemaVersion: summary.schemaVersion,
-    diskKvRowCount: summary.diskKvRowCount,
-    toolBubbleCount: summary.toolBubbleCount,
-    textOnlyLayer4: summary.textOnlyLayer4,
-    fidelityWarnings: summary.warnings.length > 0 ? summary.warnings : undefined,
-  };
-}
-
-function resolveChatsRoot(): string {
-  return __chatPersistenceInternals.resolveChatsRoot();
-}
-
-export interface ChatsRecentResult {
+export interface ChatsProjectGroup {
+  projectKey: string;
+  label: string;
+  pathHint?: string;
+  isCurrentWorkspace: boolean;
+  conversationCount: number;
   rows: ConversationExportRow[];
+}
+
+export interface ChatsGroupedResult {
+  groups: ChatsProjectGroup[];
+  totalConversations: number;
 }
 
 export interface ChatsImportsResult {
@@ -61,31 +57,61 @@ export interface ChatsBundlesResult {
   entries: BundleDiscoveryEntry[];
 }
 
-function resolveProjectsRoot(): string {
-  const { dotCursor } = resolveSyncRoots();
-  return path.join(dotCursor, "projects");
+export async function loadConversationGroupRows(
+  projectKey: string
+): Promise<ConversationExportRow[]> {
+  let group = getGroupedDiscoveryCache()?.find((g) => g.projectKey === projectKey);
+  if (!group) {
+    const projectsRoot = resolveProjectsRoot();
+    const project = (await discoverProjects(projectsRoot)).find(
+      (p) => p.folderName === projectKey
+    );
+    if (!project) {
+      return [];
+    }
+    const { cursorUser } = resolveSyncRoots();
+    const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+    const discovered = await discoverConversationsForProject(project, {
+      projectsRoot,
+      chatsRoot: resolveChatsRoot(),
+      folderMap,
+    });
+    if (!discovered) {
+      return [];
+    }
+    group = discovered;
+    const cache = getGroupedDiscoveryCache() ?? [];
+    const next = cache.filter((g) => g.projectKey !== projectKey);
+    next.push(discovered);
+    setGroupedDiscoveryCache(next);
+  }
+  return discoveredToExportRows(group.conversations, {
+    projectKey: group.projectKey,
+    probeDiskKv: false,
+  });
 }
 
-export async function listLocalConversations(): Promise<ChatsRecentResult> {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) {
-    return { rows: [] };
-  }
-  const folder = folders[0];
-  if (!folder) {
-    return { rows: [] };
-  }
-  const workspaceKey = crypto
-    .createHash("md5")
-    .update(folder.uri.fsPath)
-    .digest("hex");
-  const chatsRoot = resolveChatsRoot();
-  const projectsRoot = resolveProjectsRoot();
+export async function listLocalConversationsGrouped(): Promise<ChatsGroupedResult> {
   try {
-    const rows = await listConversationsForWorkspace(workspaceKey, chatsRoot, projectsRoot);
-    return { rows };
+    const groups = await discoverConversationsGroupedByProject();
+    setGroupedDiscoveryCache(groups);
+    const built: ChatsProjectGroup[] = [];
+    let totalConversations = 0;
+    for (const group of groups) {
+      built.push({
+        projectKey: group.projectKey,
+        label: group.label,
+        pathHint: group.pathHint,
+        isCurrentWorkspace: group.isCurrentWorkspace,
+        conversationCount: group.conversations.length,
+        rows: [],
+      });
+      totalConversations += group.conversations.length;
+    }
+    return { groups: built, totalConversations };
   } catch {
-    return { rows: [] };
+    clearGroupedDiscoveryCache();
+    return { groups: [], totalConversations: 0 };
   }
 }
 
@@ -102,72 +128,136 @@ export async function listBundles(
   return { entries };
 }
 
-export async function openTranscriptForConversation(
-  conversationId: string
-): Promise<boolean> {
-  const { dotCursor } = resolveSyncRoots();
-  const projectsRoot = path.join(dotCursor, "projects");
-  let projectDirs: import("node:fs").Dirent[];
-  try {
-    const fs = await import("node:fs/promises");
-    projectDirs = await fs.readdir(projectsRoot, { withFileTypes: true });
-  } catch {
-    return false;
-  }
-  for (const proj of projectDirs) {
-    if (!proj.isDirectory()) continue;
-    const transcriptDir = path.join(
-      projectsRoot,
-      proj.name,
-      "agent-transcripts",
-      conversationId
-    );
-    try {
-      const fs = await import("node:fs/promises");
-      const files = await fs.readdir(transcriptDir);
-      const jsonl = files.find((f) => f.endsWith(".jsonl"));
-      if (!jsonl) continue;
-      const uri = vscode.Uri.file(path.join(transcriptDir, jsonl));
-      await vscode.commands.executeCommand("vscode.open", uri);
-      return true;
-    } catch {
-      continue;
-    }
-  }
-  return false;
+async function tryQuickOpenComposer(conversationId: string): Promise<boolean> {
+  const { openExistingComposerInNewTab } = await import("../chat-import-activate.js");
+  const logger = (await import("../diagnostics.js")).getLogger();
+  return openExistingComposerInNewTab(conversationId, {
+    log: (message) => logger.appendLine(message),
+  });
 }
 
+async function resolveWorkspaceUriForOpenChat(options: {
+  workspaceKey?: string;
+  projectKey?: string;
+}): Promise<vscode.Uri | undefined> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return undefined;
+  }
+  const { buildChatsKeyToFolderMap, pathsReferToSameFolder } = await import(
+    "../chat-workspace-context.js"
+  );
+  const { resolveSyncRoots } = await import("../paths.js");
+  const { cursorUser } = resolveSyncRoots();
+  const folderMap = await buildChatsKeyToFolderMap(cursorUser);
+
+  const pickOpenUri = (mappedPath: string): vscode.Uri => {
+    const openMatch = folders.find((f) => pathsReferToSameFolder(f.uri.fsPath, mappedPath));
+    return openMatch?.uri ?? vscode.Uri.file(mappedPath);
+  };
+
+  const workspaceKey = options.workspaceKey?.trim();
+  if (workspaceKey) {
+    const mapped = folderMap.get(workspaceKey);
+    if (!mapped) {
+      return undefined;
+    }
+    return pickOpenUri(mapped);
+  }
+
+  const projectKey = options.projectKey?.trim();
+  if (projectKey) {
+    if (folderMap.has(projectKey)) {
+      return pickOpenUri(folderMap.get(projectKey)!);
+    }
+    const { folderToProjectKey } = await import("../chat-workspace-context.js");
+    for (const [chatsKey, mappedPath] of folderMap) {
+      if (folderToProjectKey(mappedPath) === projectKey || chatsKey === projectKey) {
+        return pickOpenUri(mappedPath);
+      }
+    }
+    return undefined;
+  }
+
+  return folders[0]?.uri;
+}
+
+export async function openConversation(
+  context: vscode.ExtensionContext,
+  conversationId: string,
+  options: {
+    workspaceKey?: string;
+    projectKey?: string;
+    backupTier?: string;
+  } = {}
+): Promise<void> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    void vscode.window.showWarningMessage(t("openWorkspaceFirst"));
+    return;
+  }
+
+  const hasIdentityHint = Boolean(options.workspaceKey?.trim() || options.projectKey?.trim());
+  const folderUri = await resolveWorkspaceUriForOpenChat(options);
+  if (!folderUri) {
+    void vscode.window.showWarningMessage(
+      hasIdentityHint ? t("couldNotResolveChatFolder") : t("openWorkspaceFirst")
+    );
+    return;
+  }
+
+  const tier = options.backupTier as
+    | import("../chat-backup-eligibility.js").BackupTier
+    | undefined;
+  const {
+    shouldWarnBeforeOpeningChat,
+    openChatTierWarningMessage,
+  } = await import("../chat-backup-eligibility.js");
+  if (shouldWarnBeforeOpeningChat(tier)) {
+    const openAnyway = t("openAnyway");
+    const proceed = await vscode.window.showWarningMessage(
+      openChatTierWarningMessage(tier!),
+      openAnyway,
+      t("cancel")
+    );
+    if (proceed !== openAnyway) {
+      return;
+    }
+  }
+
+  try {
+    const { activateExistingChat } = await import("../chat-activate-existing.js");
+    const outcome = await activateExistingChat(context, conversationId, folderUri);
+    if (outcome.ok) {
+      return;
+    }
+  } catch (err) {
+    const logger = (await import("../diagnostics.js")).getLogger();
+    logger.appendLine(`activateExistingChat failed: ${String(err)}`);
+  }
+
+  if (await tryQuickOpenComposer(conversationId)) {
+    return;
+  }
+
+  const opened = await openTranscriptForConversation(
+    conversationId,
+    options.workspaceKey,
+    options.projectKey
+  );
+  if (opened) {
+    void vscode.window.showInformationMessage(t("openedTranscriptReload"));
+    return;
+  }
+
+  void vscode.window.showWarningMessage(
+    t("couldNotOpenChatDisk", { id: conversationId })
+  );
+}
+
+/** @deprecated Use revealConversationFiles */
 export async function revealTranscriptsForConversation(
   conversationId: string
 ): Promise<void> {
-  const { dotCursor } = resolveSyncRoots();
-  const projectsRoot = path.join(dotCursor, "projects");
-  let projectDirs: import("node:fs").Dirent[];
-  try {
-    const fs = await import("node:fs/promises");
-    projectDirs = await fs.readdir(projectsRoot, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const proj of projectDirs) {
-    if (!proj.isDirectory()) continue;
-    const transcriptDir = path.join(
-      projectsRoot,
-      proj.name,
-      "agent-transcripts",
-      conversationId
-    );
-    try {
-      const fs = await import("node:fs/promises");
-      await fs.stat(transcriptDir);
-      const uri = vscode.Uri.file(transcriptDir);
-      await vscode.commands.executeCommand("revealInExplorer", uri);
-      return;
-    } catch {
-      continue;
-    }
-  }
-  vscode.window.showWarningMessage(
-    `No transcript directory found for conversation ${conversationId}`
-  );
+  await revealConversationFiles(conversationId);
 }

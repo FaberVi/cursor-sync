@@ -1,0 +1,269 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as vscode from "vscode";
+import { revealFsPathInOs } from "../reveal-fs-path.js";
+import { createHash } from "node:crypto";
+import {
+  discoverProjects,
+  enumerateTranscriptFilesInConversation,
+  findProjectMatchingOpenWorkspaceFolder,
+  resolveProjectsRoot,
+} from "../transcripts-discovery.js";
+import { findStoreDbForConversation, resolveChatsRoot } from "../transcripts-cursor-paths.js";
+import {
+  assertPathUnderRoot,
+  isComposerConversationId,
+  isSafePathSegment,
+} from "../composer-id.js";
+import { t } from "./i18n.js";
+
+export interface ConversationFileTargets {
+  transcriptDir?: string;
+  primaryJsonl?: string;
+  chatDataDir?: string;
+  storeDbPath?: string;
+  projectDir?: string;
+  agentTranscriptsDir?: string;
+}
+
+const TRANSCRIPT_SCAN_MAX_BYTES = 256 * 1024 * 1024;
+
+export { isComposerConversationId } from "../composer-id.js";
+
+function projectPaths(projectKey: string): {
+  projectDir: string;
+  agentTranscriptsDir: string;
+} {
+  const projectDir = path.join(resolveProjectsRoot(), projectKey);
+  return {
+    projectDir,
+    agentTranscriptsDir: path.join(projectDir, "agent-transcripts"),
+  };
+}
+
+export async function resolveConversationFileTargets(
+  conversationId: string,
+  workspaceKeyHint?: string,
+  projectKeyHint?: string
+): Promise<ConversationFileTargets> {
+  if (!isComposerConversationId(conversationId)) {
+    return {};
+  }
+  if (workspaceKeyHint && !isSafePathSegment(workspaceKeyHint)) {
+    return {};
+  }
+  if (projectKeyHint && !isSafePathSegment(projectKeyHint)) {
+    return {};
+  }
+
+  const projectsRoot = resolveProjectsRoot();
+  const projects = await discoverProjects(projectsRoot);
+  let orderedProjects = projects;
+  if (projectKeyHint) {
+    const match = projects.filter((p) => p.folderName === projectKeyHint);
+    orderedProjects = match.length > 0 ? match : projects;
+  } else {
+    const preferredProject = findProjectMatchingOpenWorkspaceFolder(projects);
+    orderedProjects = preferredProject
+      ? [preferredProject, ...projects.filter((p) => p.folderName !== preferredProject.folderName)]
+      : projects;
+  }
+
+  let transcriptDir: string | undefined;
+  let primaryJsonl: string | undefined;
+  let projectDir: string | undefined;
+  let agentTranscriptsDir: string | undefined;
+  for (const project of orderedProjects) {
+    const agentRoot = path.join(project.fullPath, "agent-transcripts");
+    const convDirRaw = path.join(agentRoot, conversationId);
+    const convDir = assertPathUnderRoot(convDirRaw, agentRoot);
+    if (!convDir) {
+      continue;
+    }
+    projectDir = project.fullPath;
+    agentTranscriptsDir = agentRoot;
+    const files = await enumerateTranscriptFilesInConversation(
+      project.fullPath,
+      conversationId,
+      TRANSCRIPT_SCAN_MAX_BYTES
+    );
+    if (files.length > 0) {
+      transcriptDir = convDir;
+      const preferred =
+        files.find((f) => path.basename(f.absolutePath, ".jsonl") === conversationId) ??
+        files[0];
+      primaryJsonl = preferred?.absolutePath;
+      break;
+    }
+    try {
+      const stat = await fs.stat(convDir);
+      if (stat.isDirectory()) {
+        transcriptDir = convDir;
+      }
+    } catch {
+      continue;
+    }
+    if (transcriptDir) {
+      break;
+    }
+  }
+
+  if (projectKeyHint && !projectDir) {
+    const paths = projectPaths(projectKeyHint);
+    projectDir = paths.projectDir;
+    agentTranscriptsDir = paths.agentTranscriptsDir;
+  }
+
+  const store = await findStoreDbForConversation(conversationId);
+  let chatDataDir: string | undefined;
+  let storeDbPath: string | undefined;
+  if (store) {
+    storeDbPath = store.absolutePath;
+    chatDataDir = path.dirname(store.absolutePath);
+  } else if (workspaceKeyHint) {
+    const chatsRoot = resolveChatsRoot();
+    const hintedDirRaw = path.join(chatsRoot, workspaceKeyHint, conversationId);
+    const hintedDir = assertPathUnderRoot(hintedDirRaw, chatsRoot);
+    if (hintedDir) {
+      const hintedStore = path.join(hintedDir, "store.db");
+      try {
+        const stat = await fs.stat(hintedStore);
+        if (stat.isFile()) {
+          storeDbPath = hintedStore;
+          chatDataDir = hintedDir;
+        }
+      } catch {
+        // no store on disk for this workspace key
+      }
+    }
+  }
+
+  return {
+    transcriptDir,
+    primaryJsonl,
+    chatDataDir,
+    storeDbPath,
+    projectDir,
+    agentTranscriptsDir,
+  };
+}
+
+async function pathExists(fsPath: string): Promise<boolean> {
+  try {
+    await fs.stat(fsPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function md5FolderKey(folderFsPath: string): string {
+  return createHash("md5").update(folderFsPath).digest("hex");
+}
+
+export async function openTranscriptForConversation(
+  conversationId: string,
+  workspaceKeyHint?: string,
+  projectKeyHint?: string
+): Promise<boolean> {
+  const targets = await resolveConversationFileTargets(
+    conversationId,
+    workspaceKeyHint,
+    projectKeyHint
+  );
+  if (!targets.primaryJsonl) {
+    return false;
+  }
+  await vscode.commands.executeCommand(
+    "vscode.open",
+    vscode.Uri.file(targets.primaryJsonl)
+  );
+  return true;
+}
+
+export async function revealConversationFiles(
+  conversationId: string,
+  workspaceKeyHint?: string,
+  projectKeyHint?: string
+): Promise<void> {
+  if (!isComposerConversationId(conversationId)) {
+    void vscode.window.showWarningMessage(t("invalidConversationId"));
+    return;
+  }
+  if (workspaceKeyHint && !isSafePathSegment(workspaceKeyHint)) {
+    void vscode.window.showWarningMessage(t("invalidWorkspaceKey"));
+    return;
+  }
+  if (projectKeyHint && !isSafePathSegment(projectKeyHint)) {
+    void vscode.window.showWarningMessage(t("invalidProjectKey"));
+    return;
+  }
+
+  const targets = await resolveConversationFileTargets(
+    conversationId,
+    workspaceKeyHint,
+    projectKeyHint
+  );
+  if (targets.primaryJsonl && (await pathExists(targets.primaryJsonl))) {
+    await revealFsPathInOs(targets.primaryJsonl);
+    return;
+  }
+  if (targets.storeDbPath && (await pathExists(targets.storeDbPath))) {
+    await revealFsPathInOs(targets.storeDbPath);
+    return;
+  }
+  if (targets.transcriptDir && (await pathExists(targets.transcriptDir))) {
+    await revealFsPathInOs(targets.transcriptDir);
+    return;
+  }
+  if (targets.chatDataDir && (await pathExists(targets.chatDataDir))) {
+    await revealFsPathInOs(targets.chatDataDir);
+    return;
+  }
+
+  if (targets.agentTranscriptsDir && (await pathExists(targets.agentTranscriptsDir))) {
+    await revealFsPathInOs(targets.agentTranscriptsDir);
+    void vscode.window.showInformationMessage(t("revealHeaderOnlyAgentTranscripts"));
+    return;
+  }
+
+  if (targets.projectDir && (await pathExists(targets.projectDir))) {
+    await revealFsPathInOs(targets.projectDir);
+    void vscode.window.showInformationMessage(t("revealNoTranscriptProject"));
+    return;
+  }
+
+  if (projectKeyHint) {
+    const paths = projectPaths(projectKeyHint);
+    if (await pathExists(paths.agentTranscriptsDir)) {
+      await revealFsPathInOs(paths.agentTranscriptsDir);
+      void vscode.window.showInformationMessage(t("revealComposerOnlyAgentTranscripts"));
+      return;
+    }
+    if (await pathExists(paths.projectDir)) {
+      await revealFsPathInOs(paths.projectDir);
+      void vscode.window.showInformationMessage(t("revealComposerOnlyProject"));
+      return;
+    }
+  }
+
+  const folders = vscode.workspace.workspaceFolders;
+  const workspaceKey =
+    workspaceKeyHint ??
+    (folders?.[0]
+      ? md5FolderKey(path.resolve(folders[0].uri.fsPath))
+      : undefined);
+  const fallbackDirRaw =
+    workspaceKey && path.join(resolveChatsRoot(), workspaceKey, conversationId);
+  const fallbackDir =
+    fallbackDirRaw &&
+    assertPathUnderRoot(fallbackDirRaw, resolveChatsRoot());
+  if (fallbackDir && (await pathExists(fallbackDir))) {
+    await revealFsPathInOs(fallbackDir);
+    return;
+  }
+
+  void vscode.window.showWarningMessage(
+    t("revealNoDiskFolder", { id: conversationId })
+  );
+}
